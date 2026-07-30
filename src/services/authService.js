@@ -1,36 +1,86 @@
-import { signInWithPopup, signInWithCredential, GoogleAuthProvider, signOut } from 'firebase/auth';
+import {
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
+  updateProfile,
+  signOut,
+} from 'firebase/auth';
 import { auth, googleProvider, API_URL } from '../config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const USER_STORAGE_KEY = 'wayraa_user';
 
 /**
+ * Check if an email already exists in Firebase.
+ * Returns: { exists: boolean, methods: string[] }
+ */
+export async function checkEmailExists(email) {
+  try {
+    const methods = await fetchSignInMethodsForEmail(auth, email);
+    return { exists: methods.length > 0, methods };
+  } catch (error) {
+    // Firebase may return an error for invalid emails
+    return { exists: false, methods: [], error: error.message };
+  }
+}
+
+/**
+ * Sign in with existing email and password.
+ */
+export async function signInWithEmail(email, password) {
+  try {
+    const result = await signInWithEmailAndPassword(auth, email, password);
+    const token = await result.user.getIdToken();
+    return await loginWithBackend(token);
+  } catch (error) {
+    let errorMessage = 'Sign-in failed';
+    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      errorMessage = 'Incorrect password. Please try again.';
+    } else if (error.code === 'auth/too-many-requests') {
+      errorMessage = 'Too many attempts. Please try again later.';
+    } else if (error.code === 'auth/user-not-found') {
+      errorMessage = 'No account found with this email.';
+    }
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Create a new account with email and password.
+ */
+export async function createAccountWithEmail(email, password, name) {
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email, password);
+
+    // Update the display name in Firebase
+    if (name) {
+      await updateProfile(result.user, { displayName: name });
+    }
+
+    const token = await result.user.getIdToken(true); // force refresh to get updated claims
+    return await loginWithBackend(token);
+  } catch (error) {
+    let errorMessage = 'Account creation failed';
+    if (error.code === 'auth/email-already-in-use') {
+      errorMessage = 'An account with this email already exists.';
+    } else if (error.code === 'auth/weak-password') {
+      errorMessage = 'Password should be at least 6 characters.';
+    } else if (error.code === 'auth/invalid-email') {
+      errorMessage = 'Please enter a valid email address.';
+    }
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
  * Sign in with Google using Firebase, then register/login with backend.
- * On web: uses popup. On mobile: will use expo-auth-session redirect.
  */
 export async function signInWithGoogle() {
   try {
-    // Firebase Google sign-in (popup works on web)
     const result = await signInWithPopup(auth, googleProvider);
     const token = await result.user.getIdToken();
-
-    // Send token to backend
-    const response = await fetch(`${API_URL}/Auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Backend login failed');
-    }
-
-    const user = await response.json();
-
-    // Store user locally
-    await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
-
-    return { success: true, user };
+    return await loginWithBackend(token);
   } catch (error) {
     let errorMessage = 'Google sign-in failed';
     if (error.code === 'auth/popup-closed-by-user') {
@@ -40,6 +90,25 @@ export async function signInWithGoogle() {
     }
     return { success: false, error: errorMessage };
   }
+}
+
+/**
+ * Send Firebase token to backend and store user.
+ */
+async function loginWithBackend(token) {
+  const response = await fetch(`${API_URL}/Auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Backend login failed');
+  }
+
+  const user = await response.json();
+  await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+  return { success: true, user };
 }
 
 /**

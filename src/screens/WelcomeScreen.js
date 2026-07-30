@@ -12,10 +12,11 @@ import {
   FlatList,
   Animated,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { COLORS, SIZES } from '../constants';
 import { Ionicons } from '@expo/vector-icons';
-import { signInWithGoogle } from '../services';
+import { signInWithGoogle, checkEmailExists } from '../services';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -59,6 +60,11 @@ export default function WelcomeScreen({ navigation }) {
   const [showSplash, setShowSplash] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAuthSheet, setShowAuthSheet] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [authError, setAuthError] = useState(null);
+  const [emailInput, setEmailInput] = useState('');
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTranslateY = useRef(new Animated.Value(20)).current;
   const flatListRef = useRef(null);
   const scrollX = useRef(new Animated.Value(0)).current;
   const bottomSlideAnim = useRef(new Animated.Value(0)).current;
@@ -165,17 +171,58 @@ export default function WelcomeScreen({ navigation }) {
     // TODO: Navigate to Sign In screen
   };
 
-  const handleCreateAccount = () => {
-    // TODO: Navigate to Sign Up screen
+  const handleCreateAccount = async () => {
+    if (!emailInput.trim()) {
+      showToast('Please enter your email address.');
+      return;
+    }
+    setIsLoading(true);
+    const result = await checkEmailExists(emailInput.trim());
+    setIsLoading(false);
+
+    if (result.error) {
+      showToast('Please enter a valid email address.');
+      return;
+    }
+
+    if (result.exists) {
+      if (result.methods.includes('google.com')) {
+        navigation.navigate('Login', { email: emailInput.trim(), method: 'google' });
+      } else {
+        navigation.navigate('Login', { email: emailInput.trim(), method: 'password' });
+      }
+    } else {
+      navigation.navigate('SignUp', { email: emailInput.trim() });
+    }
   };
 
   const handleGoogleSignIn = async () => {
+    setIsLoading(true);
+    setAuthError(null);
     const result = await signInWithGoogle();
+    setIsLoading(false);
     if (result.success) {
       navigation.replace('Explore', { user: result.user });
     } else {
-      console.log('Error:', result.error);
+      showToast(result.error);
     }
+  };
+
+  const showToast = (message) => {
+    setAuthError(message);
+    toastOpacity.setValue(0);
+    toastTranslateY.setValue(20);
+    Animated.parallel([
+      Animated.timing(toastOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(toastTranslateY, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(toastOpacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+          Animated.timing(toastTranslateY, { toValue: 20, duration: 400, useNativeDriver: true }),
+        ]).start(() => setAuthError(null));
+      }, 3000);
+    });
   };
 
   const handleExplore = () => {
@@ -413,6 +460,8 @@ export default function WelcomeScreen({ navigation }) {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                value={emailInput}
+                onChangeText={setEmailInput}
                 accessibilityLabel="Email address"
               />
             </View>
@@ -461,8 +510,25 @@ export default function WelcomeScreen({ navigation }) {
             <Text style={styles.termsText}>
               By continuing, you agree to Wayraa's Terms and Privacy Policy.
             </Text>
+
+            {/* Loading Overlay */}
+            {isLoading && (
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color={COLORS.accent} />
+                <Text style={styles.loadingText}>Signing you in...</Text>
+              </View>
+            )}
           </Animated.View>
         </>
+      )}
+      {/* Error Toast */}
+      {authError && (
+        <Animated.View style={[styles.toast, {
+          opacity: toastOpacity,
+          transform: [{ translateY: toastTranslateY }],
+        }]}>
+          <Text style={styles.toastText}>{authError}</Text>
+        </Animated.View>
       )}
     </SafeAreaView>
   );
@@ -645,8 +711,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   secondaryButton: {
-    paddingVertical: SIZES.spacing_md,
+    paddingVertical: SIZES.spacing_sm,
     alignItems: 'center',
+    marginTop: SIZES.spacing_sm,
   },
   secondaryButtonText: {
     color: COLORS.textMuted,
@@ -778,5 +845,46 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: SIZES.spacing_base,
     lineHeight: 18,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    gap: SIZES.spacing_base,
+  },
+  loadingText: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  errorContainer: {
+    // unused — kept for reference
+  },
+  errorText: {
+    // unused
+  },
+  toast: {
+    position: 'absolute',
+    bottom: 40,
+    alignSelf: 'center',
+    backgroundColor: '#1a1a1a',
+    paddingVertical: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_lg,
+    borderRadius: SIZES.radius_full,
+    alignItems: 'center',
+    zIndex: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  toastText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.white,
   },
 });

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useFonts } from 'expo-font';
 import {
   PlayfairDisplay_700Bold,
@@ -12,7 +13,10 @@ import {
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { WelcomeScreen, ExploreScreen } from './src/screens';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './src/config';
+import { getStoredUser } from './src/services';
+import { WelcomeScreen, ExploreScreen, LoginScreen, SignUpScreen } from './src/screens';
 import { COLORS } from './src/constants';
 
 const Stack = createNativeStackNavigator();
@@ -27,7 +31,28 @@ export default function App() {
     Poppins_700Bold,
   });
 
-  if (!fontsLoaded) {
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [initialRoute, setInitialRoute] = useState('Welcome');
+  const [storedUser, setStoredUser] = useState(null);
+
+  useEffect(() => {
+    // Listen for Firebase auth state
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // User is signed in — check for stored user data
+        const user = await getStoredUser();
+        if (user) {
+          setStoredUser(user);
+          setInitialRoute('Explore');
+        }
+      }
+      setIsAuthReady(true);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  if (!fontsLoaded || !isAuthReady) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color={COLORS.accent} />
@@ -38,11 +63,18 @@ export default function App() {
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName="Welcome"
+        initialRouteName={initialRoute}
         screenOptions={{ headerShown: false }}
       >
         <Stack.Screen name="Welcome" component={WelcomeScreen} />
-        <Stack.Screen name="Explore" component={ExploreScreen} />
+        <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="SignUp" component={SignUpScreen} />
+        <Stack.Screen
+          name="Explore"
+          component={ExploreScreen}
+          initialParams={{ user: storedUser }}
+          options={{ gestureEnabled: false }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
