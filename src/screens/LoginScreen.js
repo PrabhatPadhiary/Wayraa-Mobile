@@ -36,7 +36,7 @@ export default function LoginScreen({ navigation, route }) {
     const result = await signInWithEmail(email, password);
     setIsLoading(false);
     if (result.success) {
-      navigation.replace('Explore', { user: result.user });
+      navigation.replace('Main', { user: result.user });
     } else {
       setError(result.error);
     }
@@ -48,7 +48,7 @@ export default function LoginScreen({ navigation, route }) {
     const result = await signInWithGoogle();
     setIsLoading(false);
     if (result.success) {
-      navigation.replace('Explore', { user: result.user });
+      navigation.replace('Main', { user: result.user });
     } else {
       setError(result.error);
     }

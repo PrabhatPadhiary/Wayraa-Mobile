@@ -45,7 +45,7 @@ export default function SignUpScreen({ navigation, route }) {
     const result = await createAccountWithEmail(email, password, name.trim());
     setIsLoading(false);
     if (result.success) {
-      navigation.replace('Explore', { user: result.user });
+      navigation.replace('Main', { user: result.user });
     } else {
       setError(result.error);
     }

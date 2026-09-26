@@ -202,7 +202,7 @@ export default function WelcomeScreen({ navigation }) {
     const result = await signInWithGoogle();
     setIsLoading(false);
     if (result.success) {
-      navigation.replace('Explore', { user: result.user });
+      navigation.replace('Main', { user: result.user });
     } else {
       showToast(result.error);
     }
@@ -226,7 +226,7 @@ export default function WelcomeScreen({ navigation }) {
   };
 
   const handleExplore = () => {
-    navigation.replace('Explore', { user: null });
+    navigation.replace('Main', { user: null });
   };
 
   const handleNext = () => {

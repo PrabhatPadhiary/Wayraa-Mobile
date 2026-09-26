@@ -16,6 +16,7 @@ import {
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES } from '../constants';
 import { searchPlaces, getCurrentLocation, getNearbyPlaces } from '../services';
@@ -112,7 +113,7 @@ const POPULAR_DESTINATIONS = [
 /**
  * ExploreScreen - Main home screen with search, destinations, and journals.
  */
-export default function ExploreScreen({ route }) {
+export default function ExploreScreen({ route, navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
@@ -142,6 +143,84 @@ export default function ExploreScreen({ route }) {
     loadRecentSearches();
     loadJournals();
   }, []);
+
+  // Backfill missing photos for recent searches that have no image yet.
+  // Heals entries saved before an image was resolved AND text-submit entries
+  // (placeId === null) by first looking up a placeId from the name.
+  useEffect(() => {
+    const needsPhoto = recentSearches
+      .map((s, index) => ({ s, index }))
+      .filter(({ s }) => s && typeof s === 'object' && !s.imageUrl && (s.placeId || s.name));
+    if (needsPhoto.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const resolved = await Promise.all(
+        needsPhoto.map(async ({ s, index }) => ({
+          index,
+          ...(await resolvePhotoUrl(s.placeId, s.name)),
+        }))
+      );
+      if (cancelled) return;
+
+      const patchByIndex = {};
+      resolved.forEach((r) => {
+        if (r.imageUrl || r.placeId) patchByIndex[r.index] = r;
+      });
+      if (Object.keys(patchByIndex).length === 0) return;
+
+      setRecentSearches((prev) => {
+        let changed = false;
+        const updated = prev.map((s, i) => {
+          const patch = patchByIndex[i];
+          if (!patch || !s || typeof s !== 'object') return s;
+          // Only apply if it actually adds something new (avoids re-render loops).
+          const next = { ...s };
+          if (patch.imageUrl && !s.imageUrl) { next.imageUrl = patch.imageUrl; changed = true; }
+          if (patch.placeId && !s.placeId) { next.placeId = patch.placeId; changed = true; }
+          return next;
+        });
+        if (!changed) return prev;
+        AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    })();
+
+    return () => { cancelled = true; };
+  }, [recentSearches]);
+
+  // Resolve a placeId from a free-text name using the search endpoint.
+  const resolvePlaceId = async (name) => {
+    if (!name) return null;
+    try {
+      const results = await searchPlaces(name.trim());
+      return results?.[0]?.placeId || null;
+    } catch (e) {
+      console.log('resolvePlaceId error:', e);
+      return null;
+    }
+  };
+
+  // Resolve a displayable photo URL for a place. Accepts a placeId and/or a name;
+  // if no placeId is given it will look one up from the name first.
+  const resolvePhotoUrl = async (placeId, name) => {
+    let id = placeId;
+    if (!id && name) id = await resolvePlaceId(name);
+    if (!id) return { imageUrl: null, placeId: null };
+    try {
+      const resp = await fetch(`${API_URL}/Destinations/details?placeId=${id}`);
+      if (!resp.ok) return { imageUrl: null, placeId: id };
+      const details = await resp.json();
+      const photoUrl = details.photos?.[0]?.url;
+      if (!photoUrl) return { imageUrl: null, placeId: id };
+      const refMatch = photoUrl.match(/photo_reference=([^&]+)/);
+      if (!refMatch) return { imageUrl: null, placeId: id };
+      return { imageUrl: `${API_URL}/Destinations/photo?reference=${refMatch[1]}&maxWidth=200`, placeId: id };
+    } catch (e) {
+      console.log('resolvePhotoUrl error:', e);
+      return { imageUrl: null, placeId: id };
+    }
+  };
 
   const loadRecentSearches = async () => {
     try {
@@ -222,30 +301,10 @@ export default function ExploreScreen({ route }) {
   const handleResultTap = async (item) => {
     // Close search first for responsiveness
     closeSearch();
-    
+
     // Fetch photo in background and update stored search
-    let imageUrl = null;
-    if (item.placeId) {
-      try {
-        const detailsUrl = `${API_URL}/Destinations/details?placeId=${item.placeId}`;
-        const resp = await fetch(detailsUrl);
-        if (resp.ok) {
-          const details = await resp.json();
-          console.log('Details response:', details.photos?.length, 'photos');
-          if (details.photos && details.photos.length > 0) {
-            const photoUrl = details.photos[0].url;
-            const refMatch = photoUrl.match(/photo_reference=([^&]+)/);
-            console.log('Photo reference found:', !!refMatch);
-            if (refMatch) {
-              imageUrl = `${API_URL}/Destinations/photo?reference=${refMatch[1]}&maxWidth=200`;
-            }
-          }
-        }
-      } catch (e) {
-        console.log('Photo fetch error:', e);
-      }
-    }
-    
+    const { imageUrl } = await resolvePhotoUrl(item.placeId, item.name);
+
     const entry = { name: item.name, placeId: item.placeId, secondary: item.secondary || '', imageUrl };
     const stored = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
     const existing = stored ? JSON.parse(stored) : [];
@@ -572,21 +631,14 @@ export default function ExploreScreen({ route }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Bottom Navigation */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="home" size={22} color={COLORS.accent} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="journal-outline" size={22} color={COLORS.textMuted} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="heart-outline" size={22} color={COLORS.textMuted} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Ionicons name="person-outline" size={22} color={COLORS.textMuted} />
-        </TouchableOpacity>
-      </View>
+      {/* Progressive blur strip: content softly frosts as it scrolls up toward the bar. */}
+      <BlurView
+        intensity={60}
+        tint="light"
+        style={styles.scrollBlurStrip}
+        pointerEvents="none"
+      />
+
     </SafeAreaView>
   );
 }
@@ -894,7 +946,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   categoryCard: {
-    width: (SCREEN_WIDTH - SIZES.spacing_lg * 2 - 12) / 2,
+    // Use flex-basis so two cards always sit side by side regardless of the
+    // actual viewport width (fixes web/responsive-emulator stacking issue).
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: 0,
+    maxWidth: '48%',
     height: 120,
     borderRadius: SIZES.radius_md,
     overflow: 'hidden',
@@ -1037,17 +1095,20 @@ const styles = StyleSheet.create({
   },
 
   // Bottom Nav
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
-    paddingVertical: SIZES.spacing_base,
-    paddingBottom: SIZES.spacing_lg,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
+  // Progressive-blur strip above the bar. On web, a gradient mask makes the blur
+  // ramp up toward the bottom so content dissolves as it scrolls into the bar area.
+  scrollBlurStrip: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 140,
+    ...(Platform.OS === 'web'
+      ? {
+          maskImage: 'linear-gradient(to top, rgba(0,0,0,1) 35%, rgba(0,0,0,0) 100%)',
+          WebkitMaskImage: 'linear-gradient(to top, rgba(0,0,0,1) 35%, rgba(0,0,0,0) 100%)',
+        }
+      : {}),
   },
-  navItem: {
-    padding: SIZES.spacing_sm,
-  },
+
 });

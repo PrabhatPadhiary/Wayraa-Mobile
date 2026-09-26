@@ -9,3 +9,5 @@ export {
 } from './authService';
 export { searchPlaces } from './placesService';
 export { getCurrentLocation, getNearbyPlaces } from './locationService';
+export { getMyTrips } from './tripsService';
+export { getFavourites, removeFavourite } from './favouritesService';
