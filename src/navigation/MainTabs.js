@@ -50,7 +50,19 @@ export default function MainTabs({ route }) {
   return (
     <Tab.Navigator
       tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{ headerShown: false }}
+      screenOptions={{
+        headerShown: false,
+        // The floating GlassTabBar is drawn on top via absolute positioning.
+        // Make React Navigation's default tab bar container fully transparent
+        // (and borderless) so it doesn't show as a solid white block behind
+        // the floating pill — the screen content shows through instead.
+        tabBarStyle: {
+          position: 'absolute',
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
+          elevation: 0,
+        },
+      }}
     >
       {MAIN_TABS.map((tab) => (
         <Tab.Screen

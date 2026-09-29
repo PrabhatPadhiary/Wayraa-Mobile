@@ -3,11 +3,13 @@
     "name": "Wayraa-Mobile",
     "slug": "Wayraa-Mobile",
     "version": "1.0.0",
+    "scheme": "wayraa",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.wayraa.mobile"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +23,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ]
   }
 }

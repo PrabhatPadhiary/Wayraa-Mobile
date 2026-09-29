@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   Image,
@@ -14,9 +13,11 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
 import { Ionicons } from '@expo/vector-icons';
-import { signInWithGoogle, checkEmailExists } from '../services';
+import { checkEmailExists } from '../services';
+import useGoogleAuth from '../hooks/useGoogleAuth';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -63,6 +64,18 @@ export default function WelcomeScreen({ navigation }) {
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [emailInput, setEmailInput] = useState('');
+
+  // Google sign-in (expo-auth-session). onResult fires after the browser flow
+  // completes and the Firebase + backend exchange finishes.
+  const { promptAsync: promptGoogle, isProcessing: isGoogleProcessing } =
+    useGoogleAuth((result) => {
+      setIsLoading(false);
+      if (result.success) {
+        navigation.replace('Main', { user: result.user });
+      } else {
+        showToast(result.error);
+      }
+    });
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTranslateY = useRef(new Animated.Value(20)).current;
   const flatListRef = useRef(null);
@@ -197,14 +210,14 @@ export default function WelcomeScreen({ navigation }) {
   };
 
   const handleGoogleSignIn = async () => {
-    setIsLoading(true);
     setAuthError(null);
-    const result = await signInWithGoogle();
-    setIsLoading(false);
-    if (result.success) {
-      navigation.replace('Main', { user: result.user });
-    } else {
-      showToast(result.error);
+    setIsLoading(true);
+    // Opens the Google consent screen. The useGoogleAuth onResult callback
+    // handles success/failure once the browser flow returns.
+    const result = await promptGoogle();
+    // If the browser was dismissed/cancelled, no onResult fires — clear loading.
+    if (result?.type !== 'success') {
+      setIsLoading(false);
     }
   };
 
@@ -486,9 +499,10 @@ export default function WelcomeScreen({ navigation }) {
 
             {/* Social Buttons */}
             <TouchableOpacity
-              style={styles.socialButton}
+              style={[styles.socialButton, (isLoading || isGoogleProcessing) && { opacity: 0.6 }]}
               onPress={handleGoogleSignIn}
               activeOpacity={0.85}
+              disabled={isLoading || isGoogleProcessing}
               accessibilityRole="button"
               accessibilityLabel="Continue with Google"
             >

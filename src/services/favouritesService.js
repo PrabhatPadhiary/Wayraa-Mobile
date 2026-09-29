@@ -1,28 +1,33 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
+import { AuthRequiredError } from './errors';
 
 /**
  * Fetch the signed-in user's favourite places.
  * Backend: GET /api/Favourites (requires Firebase auth).
- * Returns an array, or [] on failure.
+ *
+ * Throws AuthRequiredError when the user isn't signed in, and a generic Error
+ * on network/HTTP failure — so the screen can tell apart "sign in", "error",
+ * and a genuinely empty list.
  */
 export async function getFavourites() {
-  try {
-    const token = await getAuthToken();
-    if (!token) return [];
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
 
-    const response = await fetch(`${API_URL}/Favourites`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+  const response = await fetch(`${API_URL}/Favourites`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 
-    if (!response.ok) return [];
-
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    console.log('getFavourites error:', error);
-    return [];
+  // Treat auth rejections from the backend as "sign in required" too.
+  if (response.status === 401 || response.status === 403) {
+    throw new AuthRequiredError();
   }
+  if (!response.ok) {
+    throw new Error(`Failed to load favourites (${response.status})`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
 }
 
 /**

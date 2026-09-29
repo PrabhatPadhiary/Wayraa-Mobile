@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import {
   signInWithPopup,
   signInWithEmailAndPassword,
@@ -5,6 +6,8 @@ import {
   fetchSignInMethodsForEmail,
   updateProfile,
   signOut,
+  GoogleAuthProvider,
+  signInWithCredential,
 } from 'firebase/auth';
 import { auth, googleProvider, API_URL } from '../config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -109,6 +112,29 @@ async function loginWithBackend(token) {
   const user = await response.json();
   await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
   return { success: true, user };
+}
+
+/**
+ * Complete a native Google sign-in.
+ *
+ * The Google ID token is obtained by expo-auth-session (see useGoogleAuth),
+ * exchanged into a Firebase session with signInWithCredential, then sent to the
+ * backend via the same /Auth/login flow the web app uses.
+ *
+ * @param {string} idToken - Google OpenID Connect ID token
+ */
+export async function completeGoogleSignIn(idToken) {
+  try {
+    if (!idToken) {
+      return { success: false, error: 'Google sign-in failed' };
+    }
+    const credential = GoogleAuthProvider.credential(idToken);
+    const result = await signInWithCredential(auth, credential);
+    const firebaseToken = await result.user.getIdToken();
+    return await loginWithBackend(firebaseToken);
+  } catch (error) {
+    return { success: false, error: 'Google sign-in failed. Please try again.' };
+  }
 }
 
 /**

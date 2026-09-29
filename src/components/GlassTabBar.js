@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     alignItems: 'center',
     alignSelf: 'stretch',
-    paddingVertical: SIZES.spacing_xs,
+    paddingVertical: SIZES.spacing_sm,
     paddingHorizontal: SIZES.spacing_sm,
     borderRadius: SIZES.radius_full,
     overflow: 'hidden',
@@ -144,8 +144,8 @@ const styles = StyleSheet.create({
   // The moving highlight pill behind the active item.
   capsule: {
     position: 'absolute',
-    top: SIZES.spacing_xs,
-    bottom: SIZES.spacing_xs,
+    top: SIZES.spacing_sm,
+    bottom: SIZES.spacing_sm,
     borderRadius: SIZES.radius_full,
     backgroundColor: 'rgba(232, 93, 4, 0.12)',
     borderWidth: 1,
@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
-    paddingVertical: 5,
+    paddingVertical: 8,
   },
   label: {
     fontSize: SIZES.xs,

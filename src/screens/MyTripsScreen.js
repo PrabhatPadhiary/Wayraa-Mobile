@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   Image,
@@ -13,12 +12,14 @@ import {
   RefreshControl,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
-import { FilterChips } from '../components';
-import { getMyTrips } from '../services';
+import { FilterChips, SignInPrompt } from '../components';
+import { getMyTrips, AuthRequiredError } from '../services';
+import useAuth from '../hooks/useAuth';
 
 /** Format a date range like "12 Jun – 18 Jun 2026", tolerating missing dates. */
 function formatDateRange(startDate, endDate) {
@@ -70,10 +71,12 @@ const FILTERS = [
  * MyTripsScreen - lists the signed-in user's trips fetched from the backend.
  */
 export default function MyTripsScreen({ navigation }) {
+  const { isAuthenticated, isAuthReady } = useAuth();
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
   const listOpacity = useRef(new Animated.Value(1)).current;
@@ -110,11 +113,16 @@ export default function MyTripsScreen({ navigation }) {
 
   const loadTrips = useCallback(async () => {
     setError(false);
+    setNeedsAuth(false);
     try {
       const data = await getMyTrips();
       setTrips(data);
     } catch (e) {
-      setError(true);
+      if (e instanceof AuthRequiredError) {
+        setNeedsAuth(true);
+      } else {
+        setError(true);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -124,8 +132,15 @@ export default function MyTripsScreen({ navigation }) {
   // Reload whenever the tab regains focus (it stays mounted in the tab navigator).
   useFocusEffect(
     useCallback(() => {
+      // Wait until Firebase has restored persisted auth before deciding.
+      if (!isAuthReady) return;
+      if (!isAuthenticated) {
+        setNeedsAuth(true);
+        setLoading(false);
+        return;
+      }
       loadTrips();
-    }, [loadTrips])
+    }, [loadTrips, isAuthReady, isAuthenticated])
   );
 
   const onRefresh = () => {
@@ -225,6 +240,21 @@ export default function MyTripsScreen({ navigation }) {
       </View>
     );
   };
+
+  // Guest: show the sign-in gate instead of an empty list + header.
+  if (needsAuth) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
+        <SignInPrompt
+          icon="map-outline"
+          title="Plan your next adventure"
+          subtitle="Sign in to create trips and keep your journeys organized."
+          onSignIn={() => navigation.navigate('Welcome')}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>

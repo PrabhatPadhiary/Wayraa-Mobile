@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   Image,
@@ -15,8 +14,8 @@ import {
   BackHandler,
   Modal,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES } from '../constants';
 import { searchPlaces, getCurrentLocation, getNearbyPlaces } from '../services';
@@ -352,7 +351,7 @@ export default function ExploreScreen({ route, navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {/* Search Bar Pill */}
@@ -630,14 +629,6 @@ export default function ExploreScreen({ route, navigation }) {
         {/* Bottom spacing */}
         <View style={{ height: 100 }} />
       </ScrollView>
-
-      {/* Progressive blur strip: content softly frosts as it scrolls up toward the bar. */}
-      <BlurView
-        intensity={60}
-        tint="light"
-        style={styles.scrollBlurStrip}
-        pointerEvents="none"
-      />
 
     </SafeAreaView>
   );
@@ -1095,20 +1086,4 @@ const styles = StyleSheet.create({
   },
 
   // Bottom Nav
-  // Progressive-blur strip above the bar. On web, a gradient mask makes the blur
-  // ramp up toward the bottom so content dissolves as it scrolls into the bar area.
-  scrollBlurStrip: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 140,
-    ...(Platform.OS === 'web'
-      ? {
-          maskImage: 'linear-gradient(to top, rgba(0,0,0,1) 35%, rgba(0,0,0,0) 100%)',
-          WebkitMaskImage: 'linear-gradient(to top, rgba(0,0,0,1) 35%, rgba(0,0,0,0) 100%)',
-        }
-      : {}),
-  },
-
 });

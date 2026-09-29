@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   Image,
@@ -13,13 +12,15 @@ import {
   RefreshControl,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import { API_URL } from '../config';
-import { FilterChips } from '../components';
-import { getFavourites, removeFavourite } from '../services';
+import { FilterChips, SignInPrompt } from '../components';
+import { getFavourites, removeFavourite, AuthRequiredError } from '../services';
+import useAuth from '../hooks/useAuth';
 
 /**
  * Category filters. `match` lists the backend category values each chip includes.
@@ -61,11 +62,13 @@ function resolveImageUri(item) {
  * FavoritesScreen - the user's saved places (FavouritesController).
  * Two-column grid with a tap-to-remove heart on each card.
  */
-export default function FavoritesScreen() {
+export default function FavoritesScreen({ navigation }) {
+  const { isAuthenticated, isAuthReady } = useAuth();
   const [favourites, setFavourites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [removingId, setRemovingId] = useState(null);
   // Track ids whose image failed to load, so we can show the placeholder.
   const [brokenImages, setBrokenImages] = useState({});
@@ -102,11 +105,16 @@ export default function FavoritesScreen() {
 
   const loadFavourites = useCallback(async () => {
     setError(false);
+    setNeedsAuth(false);
     try {
       const data = await getFavourites();
       setFavourites(data);
     } catch (e) {
-      setError(true);
+      if (e instanceof AuthRequiredError) {
+        setNeedsAuth(true);
+      } else {
+        setError(true);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -115,8 +123,15 @@ export default function FavoritesScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // Wait until Firebase has restored persisted auth before deciding.
+      if (!isAuthReady) return;
+      if (!isAuthenticated) {
+        setNeedsAuth(true);
+        setLoading(false);
+        return;
+      }
       loadFavourites();
-    }, [loadFavourites])
+    }, [loadFavourites, isAuthReady, isAuthenticated])
   );
 
   const onRefresh = () => {
@@ -216,6 +231,21 @@ export default function FavoritesScreen() {
       </View>
     );
   };
+
+  // Guest: show the sign-in gate instead of an empty list + header.
+  if (needsAuth) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
+        <SignInPrompt
+          icon="heart-outline"
+          title="Save your favorite places"
+          subtitle="Sign in to keep the places you love in one place."
+          onSignIn={() => navigation.navigate('Welcome')}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>

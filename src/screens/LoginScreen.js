@@ -4,16 +4,17 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   Platform,
   StatusBar,
   TextInput,
   ActivityIndicator,
   KeyboardAvoidingView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { signInWithEmail, signInWithGoogle } from '../services';
+import { signInWithEmail } from '../services';
+import useGoogleAuth from '../hooks/useGoogleAuth';
 
 /**
  * LoginScreen - Shown when a returning user needs to sign in.
@@ -25,6 +26,18 @@ export default function LoginScreen({ navigation, route }) {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Google sign-in (expo-auth-session). onResult fires after the browser flow
+  // completes and the Firebase + backend exchange finishes.
+  const { promptAsync: promptGoogle, isProcessing: isGoogleProcessing } =
+    useGoogleAuth((result) => {
+      setIsLoading(false);
+      if (result.success) {
+        navigation.replace('Main', { user: result.user });
+      } else {
+        setError(result.error);
+      }
+    });
 
   const handleLogin = async () => {
     if (!password.trim()) {
@@ -43,14 +56,13 @@ export default function LoginScreen({ navigation, route }) {
   };
 
   const handleGoogleLogin = async () => {
-    setIsLoading(true);
     setError(null);
-    const result = await signInWithGoogle();
-    setIsLoading(false);
-    if (result.success) {
-      navigation.replace('Main', { user: result.user });
-    } else {
-      setError(result.error);
+    setIsLoading(true);
+    // Opens the Google consent screen. useGoogleAuth's onResult handles the
+    // outcome once the browser flow returns.
+    const result = await promptGoogle();
+    if (result?.type !== 'success') {
+      setIsLoading(false);
     }
   };
 
@@ -82,9 +94,9 @@ export default function LoginScreen({ navigation, route }) {
               style={styles.googleButton}
               onPress={handleGoogleLogin}
               activeOpacity={0.85}
-              disabled={isLoading}
+              disabled={isLoading || isGoogleProcessing}
             >
-              {isLoading ? (
+              {isLoading || isGoogleProcessing ? (
                 <ActivityIndicator color={COLORS.white} />
               ) : (
                 <>

@@ -11,6 +11,7 @@ import {
   Poppins_700Bold,
 } from '@expo-google-fonts/poppins';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -55,29 +56,33 @@ export default function App() {
 
   if (!fontsLoaded || !isAuthReady) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color={COLORS.accent} />
-      </View>
+      <SafeAreaProvider>
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        initialRouteName={initialRoute}
-        screenOptions={{ headerShown: false }}
-      >
-        <Stack.Screen name="Welcome" component={WelcomeScreen} />
-        <Stack.Screen name="Login" component={LoginScreen} />
-        <Stack.Screen name="SignUp" component={SignUpScreen} />
-        <Stack.Screen
-          name="Main"
-          component={MainTabs}
-          initialParams={{ user: storedUser }}
-          options={{ gestureEnabled: false }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <Stack.Navigator
+          initialRouteName={initialRoute}
+          screenOptions={{ headerShown: false }}
+        >
+          <Stack.Screen name="Welcome" component={WelcomeScreen} />
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="SignUp" component={SignUpScreen} />
+          <Stack.Screen
+            name="Main"
+            component={MainTabs}
+            initialParams={{ user: storedUser }}
+            options={{ gestureEnabled: false }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
 
