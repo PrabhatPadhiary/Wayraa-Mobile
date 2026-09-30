@@ -11,16 +11,27 @@ import { BlurView } from 'expo-blur';
 import { COLORS, SIZES } from '../constants';
 
 /**
- * Horizontal filter selector built exactly like the bottom GlassTabBar:
- * one floating glass bar with a single rounded capsule that slides to the
- * active filter.
+ * Horizontal filter selector built like the bottom GlassTabBar: one floating
+ * glass bar with a single rounded capsule that slides to the active filter.
  *
- * @param {Array<{ key, label, icon?, }>} filters
+ * Two layout variants:
+ *  - "text" (default): text-only chips (used where labels are short).
+ *  - "icon-selective": every chip shows its icon; only the ACTIVE chip also
+ *    reveals its label. Keeps the row compact while labelling the selection.
+ *
+ * @param {Array<{ key, label, icon? }>} filters
  * @param {string} activeKey
  * @param {(key: string) => void} onChange
- * @param {(filter) => number} [countFor] - optional count badge per chip
+ * @param {'text'|'icon-selective'} [variant]
+ * @param {boolean} [embedded] - render without the glass chrome (for headers)
  */
-export default function FilterChips({ filters, activeKey, onChange, countFor, embedded = false }) {
+export default function FilterChips({
+  filters,
+  activeKey,
+  onChange,
+  variant = 'text',
+  embedded = false,
+}) {
   // Measured layout (x + width) of each item, keyed by filter key.
   const [layouts, setLayouts] = useState({});
   const capsuleX = useRef(new Animated.Value(0)).current;
@@ -78,7 +89,10 @@ export default function FilterChips({ filters, activeKey, onChange, countFor, em
 
       {filters.map((filter) => {
         const isActive = filter.key === activeKey;
-        const count = countFor ? countFor(filter) : null;
+        // icon-selective: always show icon; show label only when active.
+        // text: always show label, never an icon.
+        const showIcon = variant === 'icon-selective' && !!filter.icon;
+        const showLabel = variant === 'text' || isActive;
         return (
           <TouchableOpacity
             key={filter.key}
@@ -87,18 +101,17 @@ export default function FilterChips({ filters, activeKey, onChange, countFor, em
             onPress={() => onChange(filter.key)}
             activeOpacity={0.8}
           >
-            {!!filter.icon && (
+            {showIcon && (
               <Ionicons
                 name={filter.icon}
                 size={16}
                 color={isActive ? COLORS.accent : COLORS.textPrimary}
               />
             )}
-            <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
-              {filter.label}
-            </Text>
-            {count != null && (
-              <Text style={[styles.count, isActive && styles.countActive]}>{count}</Text>
+            {showLabel && (
+              <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
+                {filter.label}
+              </Text>
             )}
           </TouchableOpacity>
         );
@@ -182,13 +195,5 @@ const styles = StyleSheet.create({
   labelActive: {
     color: COLORS.accent,
     fontFamily: 'Poppins_600SemiBold',
-  },
-  count: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textSecondary,
-  },
-  countActive: {
-    color: COLORS.accent,
   },
 });

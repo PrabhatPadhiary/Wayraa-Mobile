@@ -17,7 +17,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
 import { getStoredUser } from './src/services';
-import { WelcomeScreen, LoginScreen, SignUpScreen } from './src/screens';
+import { WelcomeScreen, LoginScreen, SignUpScreen, DestinationDetailScreen } from './src/screens';
 import { MainTabs } from './src/navigation';
 import { COLORS } from './src/constants';
 
@@ -80,6 +80,7 @@ export default function App() {
             initialParams={{ user: storedUser }}
             options={{ gestureEnabled: false }}
           />
+          <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

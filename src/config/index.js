@@ -1,8 +1,11 @@
 export { app, auth, googleProvider } from './firebase';
 
-//export const API_URL = 'http://localhost:5273/api';
+export const API_URL = 'http://localhost:5273/api';
 
-export const API_URL = 'http://192.168.1.2:5273/api';
+//export const API_URL = 'http://192.168.1.2:5273/api'; // Home wifi
+
+//export const API_URL = 'http://172.20.10.9:5273/api'; // Mobile hotspot
+
 
 /**
  * Google OAuth Web client ID (from the Firebase project's Google sign-in

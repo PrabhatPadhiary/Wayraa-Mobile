@@ -17,9 +17,45 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
+import { API_URL } from '../config';
 import { FilterChips, SignInPrompt } from '../components';
 import { getMyTrips, AuthRequiredError } from '../services';
+import { mapWithConcurrency } from '../utils/async';
 import useAuth from '../hooks/useAuth';
+
+/** Build our backend photo-proxy URL for a given Google photo_reference. */
+function proxyPhotoUrl(reference) {
+  return `${API_URL}/Destinations/photo?reference=${encodeURIComponent(reference)}&maxWidth=600`;
+}
+
+/**
+ * Resolve a CURRENT cover photo for a trip. Google photo_references expire, so
+ * stored coverPhotoUrls (raw keyed Google URLs) eventually 400. placeIds are
+ * stable, so we re-resolve a fresh reference via /Destinations/details using
+ * the trip's first place. Returns a proxy URL, or null.
+ */
+async function resolveTripPhotoUrl(trip, attempt = 0) {
+  const placeId = Array.isArray(trip?.placeIds) ? trip.placeIds[0] : null;
+  if (!placeId) return null;
+  try {
+    const resp = await fetch(`${API_URL}/Destinations/details?placeId=${encodeURIComponent(placeId)}`);
+    if (!resp.ok) throw new Error(`details ${resp.status}`);
+    const details = await resp.json();
+    const googleUrl = details?.photos?.[0]?.url;
+    if (!googleUrl) return null;
+    const refMatch = googleUrl.match(/photo_reference=([^&]+)/);
+    if (!refMatch) return null;
+    return proxyPhotoUrl(decodeURIComponent(refMatch[1]));
+  } catch (e) {
+    // One retry with a short backoff for transient throttling/timeouts.
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      return resolveTripPhotoUrl(trip, attempt + 1);
+    }
+    console.log('resolveTripPhotoUrl error:', e);
+    return null;
+  }
+}
 
 /** Format a date range like "12 Jun – 18 Jun 2026", tolerating missing dates. */
 function formatDateRange(startDate, endDate) {
@@ -61,9 +97,9 @@ function statusStyle(status) {
  */
 const FILTERS = [
   { key: 'all', label: 'All', match: null },
-  { key: 'planning', label: 'Upcoming', match: ['planning'] },
-  { key: 'in_progress', label: 'Ongoing', match: ['in_progress'] },
-  { key: 'completed', label: 'Completed', match: ['completed'] },
+  { key: 'planning', label: 'Soon', match: ['planning'] },
+  { key: 'in_progress', label: 'Live', match: ['in_progress'] },
+  { key: 'completed', label: 'Done', match: ['completed'] },
   { key: 'draft', label: 'Draft', match: ['draft'] },
 ];
 
@@ -79,6 +115,10 @@ export default function MyTripsScreen({ navigation }) {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
+  // Fresh proxy cover-photo URLs resolved from placeId, keyed by trip id.
+  const [freshPhotos, setFreshPhotos] = useState({});
+  // Track trip ids whose cover image failed to load, to show the placeholder.
+  const [brokenImages, setBrokenImages] = useState({});
   const listOpacity = useRef(new Animated.Value(1)).current;
 
   // Change filter with a quick cross-fade of the list content.
@@ -98,12 +138,6 @@ export default function MyTripsScreen({ navigation }) {
     });
   };
 
-  // Count of trips per filter, for the chip badges.
-  const countFor = (filter) => {
-    if (!filter.match) return trips.length;
-    return trips.filter((t) => filter.match.includes((t.status || '').toLowerCase())).length;
-  };
-
   // Trips visible under the current filter.
   const visibleTrips = (() => {
     const filter = FILTERS.find((f) => f.key === activeFilter);
@@ -111,12 +145,30 @@ export default function MyTripsScreen({ navigation }) {
     return trips.filter((t) => filter.match.includes((t.status || '').toLowerCase()));
   })();
 
+  // Resolve fresh cover photos (from placeId) for trips, in parallel,
+  // updating state as they arrive. Clears any prior broken flags.
+  const resolveFreshPhotosFor = useCallback(async (items) => {
+    setBrokenImages({});
+    // Bounded concurrency so we don't flood the backend/Google (which caused
+    // only a few covers to resolve per load). Each result updates as it lands.
+    await mapWithConcurrency(
+      items,
+      (t) => resolveTripPhotoUrl(t),
+      (t, url) => {
+        if (url) setFreshPhotos((prev) => ({ ...prev, [t.id]: url }));
+      },
+      3
+    );
+  }, []);
+
   const loadTrips = useCallback(async () => {
     setError(false);
     setNeedsAuth(false);
     try {
       const data = await getMyTrips();
       setTrips(data);
+      // Re-resolve fresh cover photos from placeId (stored references expire).
+      resolveFreshPhotosFor(data);
     } catch (e) {
       if (e instanceof AuthRequiredError) {
         setNeedsAuth(true);
@@ -127,7 +179,7 @@ export default function MyTripsScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [resolveFreshPhotosFor]);
 
   // Reload whenever the tab regains focus (it stays mounted in the tab navigator).
   useFocusEffect(
@@ -152,6 +204,10 @@ export default function MyTripsScreen({ navigation }) {
     const badge = statusStyle(item.status);
     const destination = item.primaryDestination || item.name;
     const placeCount = Array.isArray(item.placeIds) ? item.placeIds.length : 0;
+    // Prefer a freshly-resolved cover photo (from placeId); fall back to the
+    // stored coverPhotoUrl. Stored Google references expire, so the fresh one wins.
+    const coverUri = freshPhotos[item.id] || item.coverPhotoUrl;
+    const showCover = coverUri && !brokenImages[item.id];
 
     return (
       <TouchableOpacity
@@ -160,8 +216,12 @@ export default function MyTripsScreen({ navigation }) {
         onPress={() => navigation.navigate('TripDetail', { tripId: item.id, tripName: item.name })}
       >
         <View style={styles.tripImageWrap}>
-          {item.coverPhotoUrl ? (
-            <Image source={{ uri: item.coverPhotoUrl }} style={styles.tripImage} />
+          {showCover ? (
+            <Image
+              source={{ uri: coverUri }}
+              style={styles.tripImage}
+              onError={() => setBrokenImages((prev) => ({ ...prev, [item.id]: true }))}
+            />
           ) : (
             <View style={[styles.tripImage, styles.tripImagePlaceholder]}>
               <Ionicons name="image-outline" size={30} color={COLORS.textMuted} />
@@ -310,7 +370,7 @@ export default function MyTripsScreen({ navigation }) {
               filters={FILTERS}
               activeKey={activeFilter}
               onChange={changeFilter}
-              countFor={countFor}
+              variant="text"
               embedded
             />
           </View>

@@ -297,13 +297,10 @@ export default function ExploreScreen({ route, navigation }) {
     }
   };
 
-  const handleResultTap = async (item) => {
-    // Close search first for responsiveness
-    closeSearch();
-
-    // Fetch photo in background and update stored search
+  // Persist a tapped place into recent searches (fire-and-forget); resolves a
+  // thumbnail in the background so the "Recently Explored" row shows an image.
+  const persistRecentSearch = async (item) => {
     const { imageUrl } = await resolvePhotoUrl(item.placeId, item.name);
-
     const entry = { name: item.name, placeId: item.placeId, secondary: item.secondary || '', imageUrl };
     const stored = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
     const existing = stored ? JSON.parse(stored) : [];
@@ -312,7 +309,31 @@ export default function ExploreScreen({ route, navigation }) {
     await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
   };
 
+  // Open the destination detail screen for a place with a known placeId.
+  const openDestination = (item) => {
+    navigation.navigate('DestinationDetail', {
+      placeId: item.placeId,
+      name: item.name,
+      secondary: item.secondary || '',
+    });
+  };
+
+  const handleResultTap = (item) => {
+    if (!item?.placeId) return;
+    closeSearch();
+    openDestination(item);
+    // Save to recent searches in the background (don't block navigation).
+    persistRecentSearch(item).catch(() => {});
+  };
+
   const handleRecentSearchTap = (item) => {
+    // Newer recent entries carry a placeId → open the destination directly.
+    if (item && typeof item === 'object' && item.placeId) {
+      closeSearch();
+      openDestination(item);
+      return;
+    }
+    // Older text-only entries: fall back to re-running the search.
     const query = typeof item === 'string' ? item : item.name;
     setSearchQuery(query);
     handleSearch(query);
@@ -485,7 +506,14 @@ export default function ExploreScreen({ route, navigation }) {
               {recentSearches.slice(0, 5).map((item, index) => {
                 const entry = typeof item === 'string' ? { name: item } : item;
                 return (
-                  <TouchableOpacity key={index} style={styles.recentCard} onPress={() => { openSearch(); setTimeout(() => handleRecentSearchTap(item), 150); }}>
+                  <TouchableOpacity key={index} style={styles.recentCard} onPress={() => {
+                    if (entry.placeId) {
+                      openDestination(entry);
+                    } else {
+                      openSearch();
+                      setTimeout(() => handleRecentSearchTap(item), 150);
+                    }
+                  }}>
                     {entry.imageUrl ? (
                       <Image source={{ uri: entry.imageUrl }} style={styles.recentCardImage} />
                     ) : (

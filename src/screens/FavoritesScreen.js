@@ -20,6 +20,7 @@ import { COLORS, SIZES } from '../constants';
 import { API_URL } from '../config';
 import { FilterChips, SignInPrompt } from '../components';
 import { getFavourites, removeFavourite, AuthRequiredError } from '../services';
+import { mapWithConcurrency } from '../utils/async';
 import useAuth from '../hooks/useAuth';
 
 /**
@@ -42,20 +43,65 @@ function matchesFilter(item, filter) {
   return filter.match.includes(cat);
 }
 
+/** Build our backend photo-proxy URL for a given Google photo_reference. */
+function proxyPhotoUrl(reference) {
+  return `${API_URL}/Destinations/photo?reference=${encodeURIComponent(reference)}&maxWidth=400`;
+}
+
 /**
  * Resolve a displayable image URL from whatever the backend stored.
- * Favourites may hold: a full http(s) URL, a backend proxy URL, or a raw
- * Google `photo_reference`. Anything else (or empty) yields null → placeholder.
+ *
+ * Favourites may hold: a raw Google `photo_reference`, or (historically) a
+ * fully-built proxy URL like `http://<host>:5273/api/Destinations/photo?reference=...`.
+ * That baked-in <host> is often stale (e.g. saved as `localhost` from the web
+ * app, or an old LAN IP), so it won't load on a phone. To be robust we always
+ * pull the `reference` out of any of our own proxy URLs and rebuild it against
+ * the CURRENT API_URL. Non-proxy absolute URLs are used as-is.
  */
 function resolveImageUri(item) {
   const raw = item?.photoUrl || item?.photoReference;
   if (!raw || typeof raw !== 'string') return null;
 
-  // Already a usable absolute URL (includes the backend proxy).
+  // If it's one of our proxy URLs, extract the reference and rebuild against
+  // the current host (fixes stale localhost / old-IP hosts).
+  const refMatch = raw.match(/[?&]reference=([^&]+)/);
+  if (refMatch) {
+    return proxyPhotoUrl(decodeURIComponent(refMatch[1]));
+  }
+
+  // A non-proxy absolute URL (e.g. a direct CDN link) — use as-is.
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
 
-  // Otherwise treat it as a raw photo reference and build the proxy URL.
-  return `${API_URL}/Destinations/photo?reference=${encodeURIComponent(raw)}&maxWidth=400`;
+  // Otherwise treat it as a raw photo reference.
+  return proxyPhotoUrl(raw);
+}
+
+/**
+ * Fetch a CURRENT photo proxy URL for a place using its (stable) placeId.
+ * Google photo_references expire, but placeIds don't — so this re-resolves a
+ * fresh reference from /Destinations/details and returns a proxy URL for it.
+ * Returns null if the place has no photo or the lookup fails.
+ */
+async function resolveFreshPhotoUrl(placeId, attempt = 0) {
+  if (!placeId) return null;
+  try {
+    const resp = await fetch(`${API_URL}/Destinations/details?placeId=${encodeURIComponent(placeId)}`);
+    if (!resp.ok) throw new Error(`details ${resp.status}`);
+    const details = await resp.json();
+    const googleUrl = details?.photos?.[0]?.url;
+    if (!googleUrl) return null;
+    const refMatch = googleUrl.match(/photo_reference=([^&]+)/);
+    if (!refMatch) return null;
+    return proxyPhotoUrl(decodeURIComponent(refMatch[1]));
+  } catch (e) {
+    // One retry with a short backoff for transient throttling/timeouts.
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      return resolveFreshPhotoUrl(placeId, attempt + 1);
+    }
+    console.log('resolveFreshPhotoUrl error:', e);
+    return null;
+  }
 }
 
 /**
@@ -72,6 +118,9 @@ export default function FavoritesScreen({ navigation }) {
   const [removingId, setRemovingId] = useState(null);
   // Track ids whose image failed to load, so we can show the placeholder.
   const [brokenImages, setBrokenImages] = useState({});
+  // Fresh proxy photo URLs resolved from placeId, keyed by favourite id.
+  // Stored Google photo_references expire, so we re-resolve them on load.
+  const [freshPhotos, setFreshPhotos] = useState({});
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
   const listOpacity = useRef(new Animated.Value(1)).current;
@@ -93,9 +142,6 @@ export default function FavoritesScreen({ navigation }) {
     });
   };
 
-  // Count of favourites per filter, for the chip badges.
-  const countFor = (filter) => favourites.filter((f) => matchesFilter(f, filter)).length;
-
   // Favourites visible under the current filter.
   const visibleFavourites = (() => {
     const filter = FILTERS.find((f) => f.key === activeFilter);
@@ -103,12 +149,30 @@ export default function FavoritesScreen({ navigation }) {
     return favourites.filter((f) => matchesFilter(f, filter));
   })();
 
+  // Resolve fresh photo URLs (from placeId) for a set of favourites, in
+  // parallel, updating state as they come back. Clears any prior broken flags.
+  const resolveFreshPhotosFor = useCallback(async (items) => {
+    setBrokenImages({});
+    // Bounded concurrency so we don't flood the backend/Google (which caused
+    // only a few images to resolve per load). Each result updates as it lands.
+    await mapWithConcurrency(
+      items,
+      (f) => resolveFreshPhotoUrl(f.placeId),
+      (f, url) => {
+        if (url) setFreshPhotos((prev) => ({ ...prev, [f.id]: url }));
+      },
+      3
+    );
+  }, []);
+
   const loadFavourites = useCallback(async () => {
     setError(false);
     setNeedsAuth(false);
     try {
       const data = await getFavourites();
       setFavourites(data);
+      // Re-resolve fresh photo URLs from placeId (stored references expire).
+      resolveFreshPhotosFor(data);
     } catch (e) {
       if (e instanceof AuthRequiredError) {
         setNeedsAuth(true);
@@ -119,7 +183,7 @@ export default function FavoritesScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [resolveFreshPhotosFor]);
 
   useFocusEffect(
     useCallback(() => {
@@ -151,7 +215,9 @@ export default function FavoritesScreen({ navigation }) {
   };
 
   const renderFavourite = ({ item }) => {
-    const uri = resolveImageUri(item);
+    // Prefer a freshly-resolved photo (from placeId); fall back to the stored
+    // value rebuilt through the proxy.
+    const uri = freshPhotos[item.id] || resolveImageUri(item);
     const showImage = uri && !brokenImages[item.id];
     return (
     <View style={styles.card}>
@@ -301,7 +367,7 @@ export default function FavoritesScreen({ navigation }) {
               filters={FILTERS}
               activeKey={activeFilter}
               onChange={changeFilter}
-              countFor={countFor}
+              variant="icon-selective"
               embedded
             />
           </View>
