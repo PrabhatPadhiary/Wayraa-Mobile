@@ -12,12 +12,12 @@ import {
   RefreshControl,
   Animated,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import { API_URL } from '../config';
-import { FilterChips, SignInPrompt } from '../components';
+import { FilterChips, SignInPrompt, ScreenHeader } from '../components';
 import { getFavourites, removeFavourite, AuthRequiredError } from '../services';
 import { mapWithConcurrency } from '../utils/async';
 import useAuth from '../hooks/useAuth';
@@ -122,7 +122,8 @@ export default function FavoritesScreen({ navigation }) {
   const [freshPhotos, setFreshPhotos] = useState({});
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
-  const insets = useSafeAreaInsets();
+  // Collapse the title on scroll down, leaving just the filter capsules.
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const listOpacity = useRef(new Animated.Value(1)).current;
 
   // Change filter with a quick cross-fade of the list content.
@@ -201,6 +202,14 @@ export default function FavoritesScreen({ navigation }) {
   const onRefresh = () => {
     setRefreshing(true);
     loadFavourites();
+  };
+
+  // Collapse the header title on scroll down, expand it back near the top.
+  // Hysteresis band avoids flip-flopping right at the threshold.
+  const handleScroll = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
+    else if (y <= 20 && headerCollapsed) setHeaderCollapsed(false);
   };
 
   const handleRemove = async (placeId) => {
@@ -338,6 +347,8 @@ export default function FavoritesScreen({ navigation }) {
             ]}
             ListEmptyComponent={renderEmpty}
             showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -350,32 +361,26 @@ export default function FavoritesScreen({ navigation }) {
         </Animated.View>
       )}
 
-      {/* Solid white header panel (matches the search-result screen): centered
-          title + subtitle, rounded bottom corners, shadow. List scrolls beneath. */}
-      <View
-        style={[styles.header, { paddingTop: insets.top + SIZES.spacing_base }]}
+      {/* Shared floating header panel. List scrolls beneath. */}
+      <ScreenHeader
+        title="Favorites"
+        subtitle={
+          favourites.length > 0
+            ? `${favourites.length} saved ${favourites.length === 1 ? 'place' : 'places'}`
+            : 'Places you\u2019ve saved for later'
+        }
+        collapsed={headerCollapsed}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
-        <View style={styles.headerTitleCenter}>
-          <Text style={styles.title} numberOfLines={1}>Favorites</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            {favourites.length > 0
-              ? `${favourites.length} saved ${favourites.length === 1 ? 'place' : 'places'}`
-              : 'Places you\u2019ve saved for later'}
-          </Text>
-        </View>
-
         {!loading && favourites.length > 0 && (
-          <View style={styles.headerFilters}>
-            <FilterChips
-              filters={FILTERS}
-              activeKey={activeFilter}
-              onChange={changeFilter}
-              variant="pills"
-            />
-          </View>
+          <FilterChips
+            filters={FILTERS}
+            activeKey={activeFilter}
+            onChange={changeFilter}
+            variant="pills"
+          />
         )}
-      </View>
+      </ScreenHeader>
     </SafeAreaView>
   );
 }
@@ -388,46 +393,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  // Solid white header panel (matches the search-result screen).
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingBottom: SIZES.spacing_md,
-    backgroundColor: COLORS.white,
-    borderBottomLeftRadius: SIZES.radius_xl,
-    borderBottomRightRadius: SIZES.radius_xl,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  // Centered title block.
-  headerTitleCenter: {
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: SIZES.xxl,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    marginTop: 2,
-    textAlign: 'center',
-  },
-  headerFilters: {
-    marginTop: SIZES.spacing_lg,
-    marginHorizontal: -SIZES.spacing_lg, // let the scroll row span full width
-  },
-
   listWrap: {
     flex: 1,
   },

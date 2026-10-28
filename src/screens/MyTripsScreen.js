@@ -12,13 +12,12 @@ import {
   RefreshControl,
   Animated,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import { API_URL } from '../config';
-import { FilterChips, SignInPrompt } from '../components';
+import { FilterChips, SignInPrompt, ScreenHeader } from '../components';
 import { getMyTrips, AuthRequiredError } from '../services';
 import { mapWithConcurrency } from '../utils/async';
 import useAuth from '../hooks/useAuth';
@@ -115,7 +114,8 @@ export default function MyTripsScreen({ navigation }) {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
-  const insets = useSafeAreaInsets();
+  // Collapse the title on scroll down, leaving just the filter capsules.
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   // Fresh proxy cover-photo URLs resolved from placeId, keyed by trip id.
   const [freshPhotos, setFreshPhotos] = useState({});
   // Track trip ids whose cover image failed to load, to show the placeholder.
@@ -199,6 +199,14 @@ export default function MyTripsScreen({ navigation }) {
   const onRefresh = () => {
     setRefreshing(true);
     loadTrips();
+  };
+
+  // Collapse the header title on scroll down, expand it back near the top.
+  // Hysteresis band avoids flip-flopping right at the threshold.
+  const handleScroll = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
+    else if (y <= 20 && headerCollapsed) setHeaderCollapsed(false);
   };
 
   const renderTrip = ({ item }) => {
@@ -339,6 +347,8 @@ export default function MyTripsScreen({ navigation }) {
             ]}
             ListEmptyComponent={renderEmpty}
             showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -351,34 +361,26 @@ export default function MyTripsScreen({ navigation }) {
         </Animated.View>
       )}
 
-      {/* Combined floating glass header: title + filters. List scrolls beneath. */}
-      <BlurView
-        intensity={50}
-        tint="light"
-        style={[styles.header, { paddingTop: insets.top + SIZES.spacing_base }]}
+      {/* Shared floating header panel. List scrolls beneath. */}
+      <ScreenHeader
+        title="My Trips"
+        subtitle={
+          trips.length > 0
+            ? `${trips.length} ${trips.length === 1 ? 'adventure' : 'adventures'} planned`
+            : 'Your journeys, all in one place'
+        }
+        collapsed={headerCollapsed}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
-        <View style={styles.headerText}>
-          <Text style={styles.headerTitle}>My Trips</Text>
-          <Text style={styles.headerSubtitle}>
-            {trips.length > 0
-              ? `${trips.length} ${trips.length === 1 ? 'adventure' : 'adventures'} planned`
-              : 'Your journeys, all in one place'}
-          </Text>
-        </View>
-
         {!loading && trips.length > 0 && (
-          <View style={styles.headerFilters}>
-            <FilterChips
-              filters={FILTERS}
-              activeKey={activeFilter}
-              onChange={changeFilter}
-              variant="text"
-              embedded
-            />
-          </View>
+          <FilterChips
+            filters={FILTERS}
+            activeKey={activeFilter}
+            onChange={changeFilter}
+            variant="pills"
+          />
         )}
-      </BlurView>
+      </ScreenHeader>
     </SafeAreaView>
   );
 }
@@ -389,40 +391,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  // Combined floating glass header (title + filters); list scrolls beneath.
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingTop: SIZES.spacing_base,
-    paddingBottom: SIZES.spacing_base,
-    borderBottomLeftRadius: SIZES.radius_xl,
-    borderBottomRightRadius: SIZES.radius_xl,
-    overflow: 'hidden',
-    borderBottomWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  headerText: {
-    flex: 1,
-  },
-  headerFilters: {
-    marginTop: SIZES.spacing_md,
-  },
-  headerTitle: {
-    fontSize: SIZES.xxl,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
-  },
-  headerSubtitle: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-
   listWrap: {
     flex: 1,
   },

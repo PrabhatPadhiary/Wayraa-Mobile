@@ -79,3 +79,31 @@ export async function getPlacesByCategory(placeId, category) {
     return [];
   }
 }
+
+/**
+ * Fetch themed destinations for a home-screen category.
+ * Backend: GET /Destinations/by-category?theme=&lat=&lng=
+ * `theme` is one of: "beaches" | "mountains" | "cities" | "historical" |
+ * "islands" | "wildlife".
+ *
+ * When `coords` ({ lat, lng }) is provided the results are biased toward the
+ * user's region ("Nearby"); otherwise they are global. Returns an array of
+ * places, each with a normalized `photoUrl`.
+ */
+export async function getPlacesByTheme(theme, coords = null) {
+  if (!theme) return [];
+  try {
+    let url = `${API_URL}/Destinations/by-category?theme=${encodeURIComponent(theme)}`;
+    if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number') {
+      url += `&lat=${coords.lat}&lng=${coords.lng}`;
+    }
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((place) => ({ ...place, photoUrl: photoUrlFromPlace(place, 400) }));
+  } catch (error) {
+    console.log('getPlacesByTheme error:', error);
+    return [];
+  }
+}

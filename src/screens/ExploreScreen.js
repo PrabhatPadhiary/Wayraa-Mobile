@@ -15,6 +15,7 @@ import {
   Modal,
   Animated,
   Easing,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,36 +36,42 @@ const CATEGORIES = [
   {
     id: '1',
     name: 'Beaches',
+    theme: 'beaches',
     icon: '🏖️',
     image: 'https://images.pexels.com/photos/1032650/pexels-photo-1032650.jpeg?auto=compress&cs=tinysrgb&w=400',
   },
   {
     id: '2',
     name: 'Mountains',
+    theme: 'mountains',
     icon: '🏔️',
     image: 'https://images.pexels.com/photos/417173/pexels-photo-417173.jpeg?auto=compress&cs=tinysrgb&w=400',
   },
   {
     id: '3',
     name: 'Cities',
+    theme: 'cities',
     icon: '🌆',
     image: 'https://images.pexels.com/photos/466685/pexels-photo-466685.jpeg?auto=compress&cs=tinysrgb&w=400',
   },
   {
     id: '4',
     name: 'Historical',
+    theme: 'historical',
     icon: '🏛️',
     image: 'https://images.pexels.com/photos/2225442/pexels-photo-2225442.jpeg?auto=compress&cs=tinysrgb&w=400',
   },
   {
     id: '5',
     name: 'Islands',
+    theme: 'islands',
     icon: '🏝️',
     image: 'https://images.pexels.com/photos/1450353/pexels-photo-1450353.jpeg?auto=compress&cs=tinysrgb&w=400',
   },
   {
     id: '6',
     name: 'Wildlife',
+    theme: 'wildlife',
     icon: '🦁',
     image: 'https://images.pexels.com/photos/247502/pexels-photo-247502.jpeg?auto=compress&cs=tinysrgb&w=400',
   },
@@ -123,6 +130,8 @@ export default function ExploreScreen({ route, navigation }) {
   const [searchResults, setSearchResults] = useState([]);
   const [nearbyPlaces, setNearbyPlaces] = useState([]);
   const [nearbyLoading, setNearbyLoading] = useState(false);
+  // Id of the popular-destination card currently resolving its placeId (tap feedback).
+  const [resolvingCardId, setResolvingCardId] = useState(null);
   const [locationDenied, setLocationDenied] = useState(false);
   const [journals, setJournals] = useState([]);
   const searchInputRef = useRef(null);
@@ -418,18 +427,58 @@ export default function ExploreScreen({ route, navigation }) {
     handleSearch(query);
   };
 
-  const renderPlaceCard = ({ item }) => (
-    <TouchableOpacity style={styles.card} activeOpacity={0.9}>
-      <Image source={{ uri: item.image }} style={styles.cardImage} />
-      <TouchableOpacity style={styles.favouriteButton} accessibilityLabel="Add to favourites">
-        <Ionicons name="heart-outline" size={20} color={COLORS.white} />
+  // Tapping a (hardcoded) popular destination resolves its placeId from the
+  // name — the same lookup a typed search uses — then opens the destination
+  // detail/results screen, exactly like tapping a search result.
+  const handlePopularTap = async (card) => {
+    if (resolvingCardId) return; // ignore taps while one is in flight
+    setResolvingCardId(card.id);
+    try {
+      const query = `${card.name}${card.country ? `, ${card.country}` : ''}`;
+      const results = await searchPlaces(query);
+      const match = results?.[0];
+      if (!match?.placeId) return;
+      const place = {
+        placeId: match.placeId,
+        name: match.name || card.name,
+        secondary: match.secondary || card.country || '',
+      };
+      openDestination(place);
+      persistRecentSearch(place).catch(() => {});
+    } catch (e) {
+      console.log('handlePopularTap error:', e);
+    } finally {
+      setResolvingCardId(null);
+    }
+  };
+
+  const renderPlaceCard = ({ item }) => {
+    const isResolving = resolvingCardId === item.id;
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.9}
+        onPress={() => handlePopularTap(item)}
+        disabled={!!resolvingCardId}
+        accessibilityRole="button"
+        accessibilityLabel={`Explore ${item.name}, ${item.country}`}
+      >
+        <Image source={{ uri: item.image }} style={styles.cardImage} />
+        <TouchableOpacity style={styles.favouriteButton} accessibilityLabel="Add to favourites">
+          <Ionicons name="heart-outline" size={20} color={COLORS.white} />
+        </TouchableOpacity>
+        <View style={styles.cardOverlay}>
+          <Text style={styles.cardCountry}>{item.country}</Text>
+          <Text style={styles.cardName}>{item.name}</Text>
+        </View>
+        {isResolving && (
+          <View style={styles.cardLoadingOverlay}>
+            <ActivityIndicator size="small" color={COLORS.white} />
+          </View>
+        )}
       </TouchableOpacity>
-      <View style={styles.cardOverlay}>
-        <Text style={styles.cardCountry}>{item.country}</Text>
-        <Text style={styles.cardName}>{item.name}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+    );
+  };
 
   const renderJournalCard = ({ item }) => {
     const coverPhoto = item.photos && item.photos.length > 0 ? item.photos[0].url : null;
@@ -755,6 +804,14 @@ export default function ExploreScreen({ route, navigation }) {
                 key={category.id}
                 style={styles.categoryCard}
                 activeOpacity={0.85}
+                onPress={() =>
+                  navigation.navigate('CategoryResults', {
+                    theme: category.theme,
+                    title: category.name,
+                  })
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`Explore ${category.name}`}
               >
                 <Image source={{ uri: category.image }} style={styles.categoryImage} />
                 <View style={styles.categoryOverlay}>
@@ -1325,6 +1382,12 @@ const styles = StyleSheet.create({
     padding: SIZES.spacing_base,
     paddingTop: SIZES.spacing_xl,
     backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  cardLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   cardCountry: {
     fontSize: SIZES.sm,

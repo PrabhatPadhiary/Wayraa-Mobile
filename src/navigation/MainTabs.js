@@ -9,6 +9,7 @@ import {
   FavoritesScreen,
   CommunityScreen,
   DestinationDetailScreen,
+  CategoryResultsScreen,
 } from '../screens';
 
 const Tab = createBottomTabNavigator();
@@ -27,6 +28,7 @@ function ExploreStack({ route }) {
     <Stack.Navigator screenOptions={commonStackOptions}>
       <Stack.Screen name="ExploreHome" component={ExploreScreen} initialParams={{ user }} />
       <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
+      <Stack.Screen name="CategoryResults" component={CategoryResultsScreen} />
     </Stack.Navigator>
   );
 }
