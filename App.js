@@ -17,8 +17,9 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
 import { getStoredUser } from './src/services';
-import { WelcomeScreen, LoginScreen, SignUpScreen, DestinationDetailScreen } from './src/screens';
+import { WelcomeScreen, LoginScreen, SignUpScreen } from './src/screens';
 import { MainTabs } from './src/navigation';
+import { BottomBarProvider } from './src/context/BottomBarContext';
 import { COLORS } from './src/constants';
 
 const Stack = createNativeStackNavigator();
@@ -66,23 +67,24 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
-        <Stack.Navigator
-          initialRouteName={initialRoute}
-          screenOptions={{ headerShown: false }}
-        >
-          <Stack.Screen name="Welcome" component={WelcomeScreen} />
-          <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="SignUp" component={SignUpScreen} />
-          <Stack.Screen
-            name="Main"
-            component={MainTabs}
-            initialParams={{ user: storedUser }}
-            options={{ gestureEnabled: false }}
-          />
-          <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
+      <BottomBarProvider>
+        <NavigationContainer>
+          <Stack.Navigator
+            initialRouteName={initialRoute}
+            screenOptions={{ headerShown: false }}
+          >
+            <Stack.Screen name="Welcome" component={WelcomeScreen} />
+            <Stack.Screen name="Login" component={LoginScreen} />
+            <Stack.Screen name="SignUp" component={SignUpScreen} />
+            <Stack.Screen
+              name="Main"
+              component={MainTabs}
+              initialParams={{ user: storedUser }}
+              options={{ gestureEnabled: false }}
+            />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </BottomBarProvider>
     </SafeAreaProvider>
   );
 }

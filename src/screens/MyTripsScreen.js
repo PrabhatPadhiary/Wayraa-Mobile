@@ -12,7 +12,7 @@ import {
   RefreshControl,
   Animated,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
@@ -115,6 +115,7 @@ export default function MyTripsScreen({ navigation }) {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
+  const insets = useSafeAreaInsets();
   // Fresh proxy cover-photo URLs resolved from placeId, keyed by trip id.
   const [freshPhotos, setFreshPhotos] = useState({});
   // Track trip ids whose cover image failed to load, to show the placeholder.
@@ -332,7 +333,9 @@ export default function MyTripsScreen({ navigation }) {
             keyExtractor={(item) => item.id}
             contentContainerStyle={[
               visibleTrips.length === 0 ? styles.listEmpty : styles.listContent,
-              { paddingTop: headerHeight + SIZES.spacing_sm },
+              // Only offset for the floating header when there ARE items, so the
+              // empty state centers in the full screen instead of sitting low.
+              visibleTrips.length > 0 && { paddingTop: headerHeight + SIZES.spacing_sm },
             ]}
             ListEmptyComponent={renderEmpty}
             showsVerticalScrollIndicator={false}
@@ -352,7 +355,7 @@ export default function MyTripsScreen({ navigation }) {
       <BlurView
         intensity={50}
         tint="light"
-        style={styles.header}
+        style={[styles.header, { paddingTop: insets.top + SIZES.spacing_base }]}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
         <View style={styles.headerText}>

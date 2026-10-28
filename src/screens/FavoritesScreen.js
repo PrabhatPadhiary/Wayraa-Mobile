@@ -12,9 +12,8 @@ import {
   RefreshControl,
   Animated,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import { API_URL } from '../config';
@@ -123,6 +122,7 @@ export default function FavoritesScreen({ navigation }) {
   const [freshPhotos, setFreshPhotos] = useState({});
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
+  const insets = useSafeAreaInsets();
   const listOpacity = useRef(new Animated.Value(1)).current;
 
   // Change filter with a quick cross-fade of the list content.
@@ -331,7 +331,10 @@ export default function FavoritesScreen({ navigation }) {
             columnWrapperStyle={visibleFavourites.length > 0 ? styles.column : undefined}
             contentContainerStyle={[
               visibleFavourites.length === 0 ? styles.listEmpty : styles.listContent,
-              { paddingTop: headerHeight + SIZES.spacing_sm },
+              // Only offset for the floating header when there ARE items. When
+              // empty, keep the padding off so the empty state centers in the
+              // full screen instead of being pushed down.
+              visibleFavourites.length > 0 && { paddingTop: headerHeight + SIZES.spacing_sm },
             ]}
             ListEmptyComponent={renderEmpty}
             showsVerticalScrollIndicator={false}
@@ -347,19 +350,20 @@ export default function FavoritesScreen({ navigation }) {
         </Animated.View>
       )}
 
-      {/* Combined floating glass header: title + filters. List scrolls beneath. */}
-      <BlurView
-        intensity={50}
-        tint="light"
-        style={styles.header}
+      {/* Solid white header panel (matches the search-result screen): centered
+          title + subtitle, rounded bottom corners, shadow. List scrolls beneath. */}
+      <View
+        style={[styles.header, { paddingTop: insets.top + SIZES.spacing_base }]}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
-        <Text style={styles.title}>Favorites</Text>
-        <Text style={styles.subtitle}>
-          {favourites.length > 0
-            ? `${favourites.length} saved ${favourites.length === 1 ? 'place' : 'places'}`
-            : 'Places you\u2019ve saved for later'}
-        </Text>
+        <View style={styles.headerTitleCenter}>
+          <Text style={styles.title} numberOfLines={1}>Favorites</Text>
+          <Text style={styles.subtitle} numberOfLines={1}>
+            {favourites.length > 0
+              ? `${favourites.length} saved ${favourites.length === 1 ? 'place' : 'places'}`
+              : 'Places you\u2019ve saved for later'}
+          </Text>
+        </View>
 
         {!loading && favourites.length > 0 && (
           <View style={styles.headerFilters}>
@@ -367,12 +371,11 @@ export default function FavoritesScreen({ navigation }) {
               filters={FILTERS}
               activeKey={activeFilter}
               onChange={changeFilter}
-              variant="icon-selective"
-              embedded
+              variant="pills"
             />
           </View>
         )}
-      </BlurView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -385,7 +388,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  // Combined floating glass header (title + filters); list scrolls beneath.
+  // Solid white header panel (matches the search-result screen).
   header: {
     position: 'absolute',
     top: 0,
@@ -393,27 +396,36 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 20,
     paddingHorizontal: SIZES.spacing_lg,
-    paddingTop: SIZES.spacing_base,
-    paddingBottom: SIZES.spacing_base,
+    paddingBottom: SIZES.spacing_md,
+    backgroundColor: COLORS.white,
     borderBottomLeftRadius: SIZES.radius_xl,
     borderBottomRightRadius: SIZES.radius_xl,
-    overflow: 'hidden',
-    borderBottomWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  // Centered title block.
+  headerTitleCenter: {
+    alignItems: 'center',
   },
   title: {
     fontSize: SIZES.xxl,
     fontFamily: 'Poppins_700Bold',
     color: COLORS.textPrimary,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
     marginTop: 2,
+    textAlign: 'center',
   },
   headerFilters: {
-    marginTop: SIZES.spacing_md,
+    marginTop: SIZES.spacing_lg,
+    marginHorizontal: -SIZES.spacing_lg, // let the scroll row span full width
   },
 
   listWrap: {

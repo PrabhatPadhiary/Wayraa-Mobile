@@ -51,3 +51,19 @@ export async function getNearbyPlaces(lat, lng, radius = 30000) {
     return [];
   }
 }
+
+/**
+ * Reverse-geocode coordinates into a short, human-readable place label
+ * (e.g. "Bali" or "Lisbon"). Returns a string or null.
+ */
+export async function reverseGeocode(lat, lng) {
+  try {
+    const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+    const place = results?.[0];
+    if (!place) return null;
+    // Prefer city, then subregion/region, then country.
+    return place.city || place.subregion || place.region || place.country || null;
+  } catch (error) {
+    return null;
+  }
+}

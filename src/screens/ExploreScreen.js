@@ -13,13 +13,17 @@ import {
   TextInput,
   BackHandler,
   Modal,
+  Animated,
+  Easing,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES } from '../constants';
-import { searchPlaces, getCurrentLocation, getNearbyPlaces } from '../services';
+import { GlassSurface } from '../components';
+import { searchPlaces, getCurrentLocation, getNearbyPlaces, reverseGeocode, logoutUser } from '../services';
 import { API_URL } from '../config';
+import useAuth from '../hooks/useAuth';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.7;
@@ -123,7 +127,82 @@ export default function ExploreScreen({ route, navigation }) {
   const [journals, setJournals] = useState([]);
   const searchInputRef = useRef(null);
   const searchTimeoutRef = useRef(null);
-  const user = route?.params?.user;
+  const insets = useSafeAreaInsets();
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const { user: firebaseUser, isAuthenticated } = useAuth();
+  const routeUser = route?.params?.user;
+  const user = firebaseUser || routeUser;
+
+  // Profile avatar: prefer the Firebase photo, else show the first initial of
+  // the display name or email.
+  const profilePhoto = firebaseUser?.photoURL || routeUser?.photoUrl || null;
+  const profileName = firebaseUser?.displayName || routeUser?.name || firebaseUser?.email || '';
+  const profileInitial = (profileName.trim()[0] || 'U').toUpperCase();
+
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Time-aware greeting.
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  })();
+  const firstName = (profileName || '').trim().split(' ')[0];
+
+  // Collapsing header: greeting + location chip shrink away on scroll down,
+  // leaving just the search pill; they expand back on scroll up.
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const headerAnim = useRef(new Animated.Value(0)).current; // 0 = expanded, 1 = collapsed
+
+  useEffect(() => {
+    Animated.timing(headerAnim, {
+      toValue: headerCollapsed ? 1 : 0,
+      duration: 420,
+      easing: Easing.out(Easing.cubic), // gentle, decelerating
+      useNativeDriver: false, // animating height
+    }).start();
+  }, [headerCollapsed, headerAnim]);
+
+  const handleContentScroll = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    // Wider hysteresis band so it doesn't flip-flop near the threshold.
+    if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
+    else if (y <= 20 && headerCollapsed) setHeaderCollapsed(false);
+  };
+
+  // Detected nearby location label (reverse-geocoded), shown as a chip.
+  const [nearbyLabel, setNearbyLabel] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const loc = await getCurrentLocation();
+      if (!loc.granted || cancelled) return;
+      const label = await reverseGeocode(loc.lat, loc.lng);
+      if (!cancelled && label) setNearbyLabel(label);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleProfilePress = () => {
+    if (isAuthenticated) {
+      // Toggle the account dropdown.
+      setMenuOpen((v) => !v);
+    } else {
+      // Guest: send them to the auth flow.
+      navigation.navigate('Welcome');
+    }
+  };
+
+  const handleLogout = async () => {
+    setMenuOpen(false);
+    await logoutUser();
+    // Walk up to the ROOT navigator (Explore is now nested: root > tabs > stack)
+    // and reset it to the Welcome screen.
+    let root = navigation;
+    while (root.getParent && root.getParent()) root = root.getParent();
+    root.reset({ index: 0, routes: [{ name: 'Welcome' }] });
+  };
 
   // Prevent back button from going to Welcome/Login screens
   useEffect(() => {
@@ -372,16 +451,59 @@ export default function ExploreScreen({ route, navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
-      {/* Search Bar Pill */}
-      <View style={styles.searchContainer}>
-        <TouchableOpacity style={styles.searchBarPill} activeOpacity={0.9} onPress={openSearch}>
-          <Ionicons name="search" size={18} color={COLORS.textPrimary} />
-          <Text style={styles.searchPillText}>Start your search</Text>
+      {/* Account dropdown (logged-in users). Tap outside to dismiss. */}
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
+          onPress={() => setMenuOpen(false)}
+        >
+          <View style={[styles.menuCard, { top: insets.top + 72 }]}>
+            {/* Account header */}
+            <View style={styles.menuHeader}>
+              <View style={styles.menuAvatar}>
+                {profilePhoto ? (
+                  <Image source={{ uri: profilePhoto }} style={styles.menuAvatarImg} />
+                ) : (
+                  <Text style={styles.menuAvatarInitial}>{profileInitial}</Text>
+                )}
+              </View>
+              <View style={styles.menuHeaderText}>
+                <Text style={styles.menuName} numberOfLines={1}>
+                  {firebaseUser?.displayName || routeUser?.name || 'Traveler'}
+                </Text>
+                {!!(firebaseUser?.email || routeUser?.email) && (
+                  <Text style={styles.menuEmail} numberOfLines={1}>
+                    {firebaseUser?.email || routeUser?.email}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.menuDivider} />
+
+            {/* Log out */}
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={handleLogout}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Log out"
+            >
+              <Ionicons name="log-out-outline" size={20} color="#d32f2f" />
+              <Text style={styles.menuItemTextDanger}>Log out</Text>
+            </TouchableOpacity>
+          </View>
         </TouchableOpacity>
-      </View>
+      </Modal>
 
       {/* Full Screen Search Modal */}
       <Modal
@@ -390,40 +512,45 @@ export default function ExploreScreen({ route, navigation }) {
         transparent={true}
         onRequestClose={closeSearch}
       >
-        <View style={styles.searchModal}>
-          {/* Dismiss on tap outside the card */}
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeSearch} />
+        <View style={[styles.searchModal, { paddingTop: insets.top + SIZES.spacing_sm }]}>
+          {/* Top bar: close button (top-left, Airbnb style) */}
+          <View style={styles.searchTopBar}>
+            <TouchableOpacity style={styles.searchCloseButton} onPress={closeSearch}>
+              <Ionicons name="close" size={22} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+          </View>
 
-          {/* Close button */}
-          <TouchableOpacity style={styles.searchCloseButton} onPress={closeSearch}>
-            <Ionicons name="close" size={22} color={COLORS.textPrimary} />
-          </TouchableOpacity>
+          {/* Big title */}
+          <Text style={styles.searchCardTitle}>Where to?</Text>
 
-          {/* Search card */}
-          <View style={styles.searchCard}>
-            <Text style={styles.searchCardTitle}>Where?</Text>
-            <View style={styles.searchInputContainer}>
-              <Ionicons name="search" size={18} color={COLORS.textMuted} />
-              <TextInput
-                ref={searchInputRef}
-                style={styles.searchInput}
-                placeholder="Search destinations"
-                placeholderTextColor={COLORS.textMuted}
-                value={searchQuery}
-                onChangeText={handleSearch}
-                onSubmitEditing={handleSearchSubmit}
-                returnKeyType="search"
-                autoFocus
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
-                  <Ionicons name="close-circle" size={18} color={COLORS.textMuted} />
-                </TouchableOpacity>
-              )}
-            </View>
+          {/* Large search field */}
+          <View style={styles.searchInputContainer}>
+            <Ionicons name="search" size={20} color={COLORS.textPrimary} />
+            <TextInput
+              ref={searchInputRef}
+              style={styles.searchInput}
+              placeholder="Search destinations"
+              placeholderTextColor={COLORS.textMuted}
+              value={searchQuery}
+              onChangeText={handleSearch}
+              onSubmitEditing={handleSearchSubmit}
+              returnKeyType="search"
+              autoFocus
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
+                <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
 
-            {/* Suggestions / Results */}
-            <ScrollView style={styles.searchSuggestions} showsVerticalScrollIndicator={false}>
+          {/* Suggestions / Results fill the rest of the screen */}
+          <ScrollView
+            style={styles.searchSuggestions}
+            contentContainerStyle={styles.searchSuggestionsContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
               {/* Recent Searches */}
               {searchQuery.length === 0 && recentSearches.length > 0 && (
                 <>
@@ -492,12 +619,17 @@ export default function ExploreScreen({ route, navigation }) {
                 </View>
               )}
             </ScrollView>
-          </View>
         </View>
       </Modal>
 
-      {/* Main Content */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      {/* Main Content - starts below the floating header, scrolls up behind it */}
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={{ paddingTop: headerHeight || insets.top + 80 }}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleContentScroll}
+        scrollEventThrottle={16}
+      >
         {/* Recent Searches Section (only on home, if has history) */}
         {recentSearches.length > 0 && (
           <View style={styles.section}>
@@ -658,6 +790,99 @@ export default function ExploreScreen({ route, navigation }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
+      {/* Frosted glass header — uses the same GlassSurface as the menu bar
+          (proven working blur). Rendered AFTER the ScrollView so it blurs the
+          content scrolling behind it. */}
+      <View
+        style={styles.searchContainer}
+        onLayout={(e) => {
+          // Only capture the EXPANDED height (ignore shrinking frames while
+          // collapsing) so the content's top padding stays stable and doesn't
+          // jump during the animation.
+          if (!headerCollapsed) {
+            const h = e.nativeEvent.layout.height;
+            setHeaderHeight((prev) => (h > prev ? h : prev));
+          }
+        }}
+      >
+        <GlassSurface radius={SIZES.radius_xl} style={StyleSheet.absoluteFill} />
+
+        {/* Foreground content (greeting/pill/chip) sits above the glass. */}
+        <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]}>
+          {/* Greeting row (text + profile) — collapses away on scroll down. */}
+          <Animated.View
+            style={{
+              opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
+              maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [64, 0] }),
+              marginBottom: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_base, 0] }),
+              transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }],
+              overflow: 'hidden',
+            }}
+          >
+            <View style={styles.greetingRow}>
+              <View style={styles.greetingText}>
+                <Text style={styles.greeting}>
+                  {greeting}{isAuthenticated && firstName ? `, ${firstName}` : ''}
+                </Text>
+                <Text style={styles.greetingSub}>Where to next?</Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.profileButton}
+                activeOpacity={0.85}
+                onPress={handleProfilePress}
+                accessibilityRole="button"
+                accessibilityLabel={isAuthenticated ? 'Open account menu' : 'Log in'}
+              >
+                {isAuthenticated ? (
+                  profilePhoto ? (
+                    <Image source={{ uri: profilePhoto }} style={styles.profileImage} />
+                  ) : (
+                    <View style={styles.profileFallback}>
+                      <Text style={styles.profileInitial}>{profileInitial}</Text>
+                    </View>
+                  )
+                ) : (
+                  <View style={styles.profileFallback}>
+                    <Ionicons name="person-outline" size={22} color={COLORS.accent} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+
+          {/* Search pill (always visible, full width). */}
+          <TouchableOpacity style={styles.homeSearchBar} activeOpacity={0.9} onPress={openSearch}>
+            <View style={styles.searchIconCircle}>
+              <Ionicons name="search" size={20} color={COLORS.textPrimary} />
+            </View>
+            <View style={styles.searchTextWrap}>
+              <Text style={styles.searchTitle}>Where to?</Text>
+              <Text style={styles.searchSubtitle} numberOfLines={1}>Search destinations, stays & more</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Nearby detected location chip — collapses away on scroll down. */}
+          {nearbyLabel && (
+            <Animated.View
+              style={{
+                opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
+                maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }),
+                marginTop: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_md, 0] }),
+                overflow: 'hidden',
+              }}
+            >
+              <View style={styles.locationChip}>
+                <Ionicons name="location" size={14} color={COLORS.textSecondary} />
+                <Text style={styles.locationChipText} numberOfLines={1}>
+                  Near you · {nearbyLabel}
+                </Text>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+      </View>
+
     </SafeAreaView>
   );
 }
@@ -671,101 +896,276 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  // NOTE: the ScrollView's top padding is applied inline (insets.top + header
+  // height) so content starts below the floating header but can still scroll
+  // up behind the transparent pill/circle.
 
-  // Search Pill
+  // Header bar: a solid panel anchored to the top (covers the status-bar area
+  // too) with rounded bottom corners, holding the search bar + profile icon so
+  // they don't look like they're floating over the content.
   searchContainer: {
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingTop: SIZES.spacing_base,
-    paddingBottom: SIZES.spacing_sm,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    backgroundColor: 'transparent',
   },
-  searchBarPill: {
+  // Foreground content sits above the GlassSurface backdrop; carries the
+  // header's padding.
+  headerForeground: {
+    paddingTop: 0,
+    paddingHorizontal: SIZES.spacing_lg,
+    paddingBottom: SIZES.spacing_lg,
+  },
+  // Greeting row: greeting text + profile avatar.
+  greetingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+  },
+  greetingText: {
+    flex: 1,
+    marginRight: SIZES.spacing_sm,
+  },
+  greeting: {
+    fontSize: SIZES.xl,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+  },
+  greetingSub: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  // Two-line search pill (full width).
+  homeSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
     borderRadius: SIZES.radius_full,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    gap: SIZES.spacing_md,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  searchIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.cardBackground,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchTextWrap: {
+    flex: 1,
+  },
+  searchTitle: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  searchSubtitle: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+    marginTop: 1,
+  },
+  // Nearby detected location chip (plain text).
+  locationChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingVertical: 6,
+  },
+  locationChipText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  // Profile circle.
+  profileButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBackground,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
   },
-  searchPillText: {
+  profileImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 24,
+  },
+  profileFallback: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(232, 93, 4, 0.12)',
+  },
+
+  // Account dropdown
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+  },
+  menuCard: {
+    position: 'absolute',
+    right: SIZES.spacing_lg,
+    width: 240,
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius_lg,
+    paddingVertical: SIZES.spacing_sm,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  menuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_sm,
+    gap: SIZES.spacing_md,
+  },
+  menuAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(232, 93, 4, 0.12)',
+  },
+  menuAvatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  menuAvatarInitial: {
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accent,
+  },
+  menuHeaderText: {
+    flex: 1,
+  },
+  menuName: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  menuEmail: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: COLORS.borderLight,
+    marginVertical: SIZES.spacing_xs,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_md,
+  },
+  menuItemTextDanger: {
     fontSize: SIZES.base,
     fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-    marginLeft: SIZES.spacing_sm,
+    color: '#d32f2f',
+  },
+  profileInitial: {
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accent,
   },
 
   // Full Screen Search Modal
+  // Full-screen search sheet (Airbnb style): opaque, fills the whole screen.
   searchModal: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + SIZES.spacing_base : SIZES.spacing_xl,
+    flex: 1,
+    backgroundColor: COLORS.white,
     paddingHorizontal: SIZES.spacing_lg,
   },
+  // Top bar holding the close button (top-left).
+  searchTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    marginBottom: SIZES.spacing_lg,
+  },
   searchCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: SIZES.spacing_lg,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
     shadowRadius: 4,
     elevation: 2,
   },
-  searchCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    padding: SIZES.spacing_lg,
-    maxHeight: '60%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-  },
+  // Big bold heading like "Where to?".
   searchCardTitle: {
-    fontSize: SIZES.xxl,
+    fontSize: 32,
     fontFamily: 'Poppins_700Bold',
     color: COLORS.textPrimary,
-    marginBottom: SIZES.spacing_base,
+    marginBottom: SIZES.spacing_lg,
   },
+  // Rounded search field — same medium size as the home search bar so the two
+  // match. (Slightly smaller than the previous large modal field.)
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: SIZES.radius_md,
+    borderColor: COLORS.borderLight,
+    borderRadius: SIZES.radius_full,
     paddingHorizontal: SIZES.spacing_base,
-    paddingVertical: SIZES.spacing_sm,
-    marginBottom: SIZES.spacing_base,
+    paddingVertical: 15,
+    marginBottom: SIZES.spacing_lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 4,
   },
   searchInput: {
     flex: 1,
     fontSize: SIZES.base,
-    fontFamily: 'Poppins_400Regular',
+    fontFamily: 'Poppins_500Medium',
     color: COLORS.textPrimary,
-    marginLeft: SIZES.spacing_sm,
-    paddingVertical: SIZES.spacing_xs,
+    marginLeft: SIZES.spacing_md,
+    paddingVertical: 0,
     outlineStyle: 'none',
   },
 
-  // Suggestions
+  // Suggestions/results fill the remaining screen height.
   searchSuggestions: {
     flex: 1,
-    marginTop: SIZES.spacing_sm,
+  },
+  searchSuggestionsContent: {
+    paddingBottom: SIZES.spacing_xl * 2,
   },
   suggestionsHeader: {
     flexDirection: 'row',

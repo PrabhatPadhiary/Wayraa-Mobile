@@ -8,8 +8,8 @@ import {
   Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { COLORS, SIZES } from '../constants';
+import GlassSurface from './GlassSurface';
 
 /**
  * The app's shared floating "liquid glass" bottom navigation bar.
@@ -72,7 +72,10 @@ export default function GlassTabBar({ items, activeKey, onTabPress }) {
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      <BlurView intensity={40} tint="light" style={styles.bar}>
+      {/* Shares the exact glass treatment (blur + gradient rim + gloss + lift)
+          used by the top search pill / profile circle, so the whole app's
+          glass surfaces look uniform. */}
+      <GlassSurface radius={SIZES.radius_full} style={styles.barGlass} contentStyle={styles.bar}>
         {/* Sliding capsule behind the active tab */}
         {activeLayout && (
           <Animated.View
@@ -106,7 +109,7 @@ export default function GlassTabBar({ items, activeKey, onTabPress }) {
             </TouchableOpacity>
           );
         })}
-      </BlurView>
+      </GlassSurface>
     </View>
   );
 }
@@ -122,24 +125,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_lg,
     paddingBottom: Platform.OS === 'ios' ? 28 : SIZES.spacing_lg,
   },
-  // Rounded floating liquid glass bar, highly transparent.
+  // Outer GlassSurface stretches to fill the wrapper width.
+  barGlass: {
+    alignSelf: 'stretch',
+  },
+  // Inner layout row (GlassSurface's content wrapper). Background, rim, gloss
+  // and shadow all come from GlassSurface now — this only handles layout.
   bar: {
+    alignSelf: 'stretch',
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    alignSelf: 'stretch',
     paddingVertical: SIZES.spacing_sm,
     paddingHorizontal: SIZES.spacing_sm,
-    borderRadius: SIZES.radius_full,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 8,
   },
   // The moving highlight pill behind the active item.
   capsule: {
