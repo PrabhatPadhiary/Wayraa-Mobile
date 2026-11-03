@@ -81,6 +81,28 @@ export async function getPlacesByCategory(placeId, category) {
 }
 
 /**
+ * Fetch places for a destination using a free-text filter.
+ * Backend: GET /Destinations/filter?placeId=&filter=
+ * The filter string is appended to "top {filter} in {placeName}" by the backend.
+ * Returns an array of places, each with a normalized `photoUrl`.
+ */
+export async function getPlacesByFilter(placeId, filter) {
+  if (!placeId || !filter) return [];
+  try {
+    const url = `${API_URL}/Destinations/filter?placeId=${encodeURIComponent(placeId)}&filter=${encodeURIComponent(filter)}`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((place) => ({ ...place, photoUrl: photoUrlFromPlace(place, 400) }));
+  } catch (error) {
+    console.log('getPlacesByFilter error:', error);
+    return [];
+  }
+}
+
+
+/**
  * Fetch themed destinations for a home-screen category.
  * Backend: GET /Destinations/by-category?theme=&lat=&lng=
  * `theme` is one of: "beaches" | "mountains" | "cities" | "historical" |

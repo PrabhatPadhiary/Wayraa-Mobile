@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useFonts } from 'expo-font';
 import {
   PlayfairDisplay_700Bold,
@@ -10,7 +10,7 @@ import {
   Poppins_600SemiBold,
   Poppins_700Bold,
 } from '@expo-google-fonts/poppins';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, Image, Animated, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -21,6 +21,59 @@ import { WelcomeScreen, LoginScreen, SignUpScreen } from './src/screens';
 import { MainTabs } from './src/navigation';
 import { BottomBarProvider } from './src/context/BottomBarContext';
 import { COLORS } from './src/constants';
+
+/** Branded loading screen — shown while fonts and Firebase auth state load. */
+function LoadingScreen() {
+  const pulse = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.08, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1,    duration: 900, useNativeDriver: true }),
+      ])
+    ).start();
+  }, [pulse]);
+
+  return (
+    <SafeAreaProvider>
+      <View style={styles.loading}>
+        <View style={styles.loadingContent}>
+          <Animated.Image
+            source={require('./assets/wayraa_logo.png')}
+            style={[styles.loadingLogo, { transform: [{ scale: pulse }] }]}
+            resizeMode="contain"
+          />
+          <Text style={styles.loadingBrand}>Wayraa</Text>
+          <Text style={styles.loadingTagline}>Plan. Explore. Share.</Text>
+        </View>
+
+        {/* Three animated dots at the bottom */}
+        <View style={styles.dotsRow}>
+          {[0, 1, 2].map((i) => (
+            <DotsIndicator key={i} delay={i * 200} />
+          ))}
+        </View>
+      </View>
+    </SafeAreaProvider>
+  );
+}
+
+function DotsIndicator({ delay }) {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(opacity, { toValue: 1,   duration: 400, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 400, useNativeDriver: true }),
+      ])
+    ).start();
+  }, [opacity, delay]);
+
+  return <Animated.View style={[styles.dot, { opacity }]} />;
+}
 
 const Stack = createNativeStackNavigator();
 
@@ -58,9 +111,7 @@ export default function App() {
   if (!fontsLoaded || !isAuthReady) {
     return (
       <SafeAreaProvider>
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <LoadingScreen />
       </SafeAreaProvider>
     );
   }
@@ -92,8 +143,42 @@ export default function App() {
 const styles = StyleSheet.create({
   loading: {
     flex: 1,
+    backgroundColor: COLORS.backgroundWarm,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: COLORS.backgroundWarm,
+  },
+  loadingContent: {
+    alignItems: 'center',
+    marginTop: 100, // push content down from dead center
+  },
+  loadingLogo: {
+    width: 120,
+    height: 120,
+    marginBottom: 20,
+  },
+  loadingBrand: {
+    fontSize: 36,
+    fontFamily: 'PlayfairDisplay_700Bold',
+    color: COLORS.textPrimary,
+    letterSpacing: 1,
+  },
+  loadingTagline: {
+    fontSize: 14,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 6,
+    letterSpacing: 1.2,
+  },
+  dotsRow: {
+    position: 'absolute',
+    bottom: 80,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
   },
 });

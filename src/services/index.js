@@ -8,8 +8,8 @@ export {
   getStoredUser,
   getAuthToken,
 } from './authService';
-export { searchPlaces, getPlaceDetails, getPlacesByCategory, getPlacesByTheme } from './placesService';
+export { searchPlaces, getPlaceDetails, getPlacesByCategory, getPlacesByFilter, getPlacesByTheme } from './placesService';
 export { getCurrentLocation, getNearbyPlaces, reverseGeocode } from './locationService';
-export { getMyTrips } from './tripsService';
+export { getMyTrips, createTrip, getTripById } from './tripsService';
 export { getFavourites, addFavourite, removeFavourite } from './favouritesService';
 export { AuthRequiredError } from './errors';

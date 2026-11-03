@@ -7,6 +7,7 @@ import {
   StatusBar,
   Image,
   FlatList,
+  ScrollView,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +19,7 @@ import { useBottomBar } from '../context/BottomBarContext';
 import {
   getPlaceDetails,
   getPlacesByCategory,
+  getPlacesByFilter,
   getFavourites,
   addFavourite,
   removeFavourite,
@@ -33,6 +35,14 @@ const CATEGORIES = [
   { key: 'food', label: 'Food', icon: 'restaurant-outline', apiCategory: 'restaurants' },
   { key: 'activities', label: 'Activities', icon: 'walk-outline', apiCategory: 'activities' },
 ];
+
+// Filter chips per category — mirrors the website exactly.
+// 'All' restores the cached base result with no extra API call.
+const CATEGORY_FILTERS = {
+  stays:      ['All', 'Hotels', 'Resorts', 'Boutique', 'Hostels', 'Villas'],
+  food:       ['All', 'Fine Dining', 'Cafes', 'Street Food', 'Bars', 'Rooftop'],
+  activities: ['All', 'Temples', 'Museums', 'Beaches', 'Adventure', 'Nightlife'],
+};
 
 /**
  * DestinationDetailScreen - shows a searched place with its Stays / Food /
@@ -56,9 +66,19 @@ export default function DestinationDetailScreen({ navigation, route }) {
   const [resultsByCategory, setResultsByCategory] = useState({});
   const [loadingCategory, setLoadingCategory] = useState({});
   const [errorCategory, setErrorCategory] = useState({});
+  // Active filter chip per category — 'All' means show base category results.
+  const [activeChips, setActiveChips] = useState({ stays: 'All', food: 'All', activities: 'All' });
+  // Filtered results (chip !== 'All') — stored separately so base cache isn't overwritten.
+  const [filteredResults, setFilteredResults] = useState(null);
+  const [loadingFilter, setLoadingFilter] = useState(false);
 
-  const activeResults = resultsByCategory[activeCategory] || [];
-  const isLoading = !!loadingCategory[activeCategory] && !resultsByCategory[activeCategory];
+  const activeChip = activeChips[activeCategory] || 'All';
+  const activeResults = activeChip === 'All'
+    ? (resultsByCategory[activeCategory] || [])
+    : (filteredResults || []);
+  const isLoading = activeChip === 'All'
+    ? (!!loadingCategory[activeCategory] && !resultsByCategory[activeCategory])
+    : loadingFilter;
   const hasError = !!errorCategory[activeCategory];
 
   // Load the header photo/details once.
@@ -93,17 +113,44 @@ export default function DestinationDetailScreen({ navigation, route }) {
     if (!resultsByCategory[activeCategory] && !loadingCategory[activeCategory]) {
       loadCategory(activeCategory);
     }
+    // Reset filter chip and results when switching category
+    setFilteredResults(null);
   }, [activeCategory, resultsByCategory, loadingCategory, loadCategory]);
+
+  // Handle chip selection — 'All' restores cache, others call /filter endpoint.
+  const handleChipSelect = useCallback(async (chip) => {
+    setActiveChips((prev) => ({ ...prev, [activeCategory]: chip }));
+    if (chip === 'All') {
+      setFilteredResults(null);
+      return;
+    }
+    setLoadingFilter(true);
+    setFilteredResults(null);
+    try {
+      const data = await getPlacesByFilter(placeId, chip.toLowerCase());
+      setFilteredResults(data);
+    } catch (_) {
+      setFilteredResults([]);
+    } finally {
+      setLoadingFilter(false);
+    }
+  }, [activeCategory, placeId]);
 
   // Drive the shared persistent tab bar (collapse + CTA) via context.
   const { setCollapsed, setCta, reset } = useBottomBar();
   const [collapsed, setLocalCollapsed] = useState(false);
 
   const handleCreateTrip = useCallback(() => {
-    // Stub for now — trip creation wired in a later step.
-    // eslint-disable-next-line no-alert
-    if (typeof alert !== 'undefined') alert('Create trip coming soon!');
-  }, []);
+    const location = details?.geometry?.location;
+    navigation.navigate('CreateTrip', {
+      placeId,
+      name: name || details?.name,
+      secondary: secondary || details?.formattedAddress,
+      photoUrl: details?.photoUrl,
+      lat: location?.lat,
+      lng: location?.lng,
+    });
+  }, [navigation, placeId, name, secondary, details]);
 
   // Register the "Create a trip" CTA on the shared tab bar while focused;
   // clear the bar's collapse + CTA state when leaving this screen.
@@ -205,7 +252,18 @@ export default function DestinationDetailScreen({ navigation, route }) {
   const renderResult = ({ item }) => {
     const isFaved = favedIds.has(item.placeId);
     return (
-    <View style={styles.card}>
+    <TouchableOpacity
+      style={styles.card}
+      activeOpacity={0.92}
+      onPress={() => navigation.navigate('PlaceDetail', {
+        placeId: item.placeId,
+        name: item.name,
+        vicinity: item.vicinity,
+        photoUrl: item.photoUrl,
+        rating: item.rating,
+        category: activeCategory,
+      })}
+    >
       <View style={styles.cardImageWrap}>
         {item.photoUrl ? (
           <Image source={{ uri: item.photoUrl }} style={styles.cardImage} />
@@ -246,9 +304,36 @@ export default function DestinationDetailScreen({ navigation, route }) {
           <Text style={styles.cardReviews}>{item.userRatingsTotal.toLocaleString()} reviews</Text>
         )}
       </View>
-    </View>
+    </TouchableOpacity>
     );
   };
+
+  // Sub-filter chips (All / Hotels / Resorts / ...). Pinned in the fixed
+  // header so they stay sticky while the results list scrolls underneath.
+  const renderSubFilterChips = () => (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.chipsRow}
+      style={styles.chipsScrollInline}
+    >
+      {(CATEGORY_FILTERS[activeCategory] || []).map((chip) => {
+        const isActive = activeChip === chip;
+        return (
+          <TouchableOpacity
+            key={chip}
+            style={[styles.subChip, isActive && styles.subChipActive]}
+            onPress={() => handleChipSelect(chip)}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.subChipText, isActive && styles.subChipTextActive]}>
+              {chip}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
 
   const renderListState = () => {
     if (isLoading) {
@@ -306,11 +391,17 @@ export default function DestinationDetailScreen({ navigation, route }) {
       {/* FRONT LAYER: solid white header panel — title + location + centered
           filter pills. No image. */}
       <View
-        style={[styles.headerPanel, { paddingTop: heroTop }]}
+        style={styles.headerPanel}
         pointerEvents="box-none"
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
-        {/* Title row: back button on the left (overlaid), title centered. */}
+       {/* Inner clip layer: rounded corners + overflow:hidden so the full-width
+           scroll rows clip at the corners. Kept separate from the outer panel
+           so the panel can still cast its drop shadow (a view can't clip and
+           shadow at once on iOS). */}
+       <View style={[styles.headerClip, { paddingTop: heroTop }]}>
+        {/* Title row: back button on the left (overlaid), title centered.
+            The title shrinks + subtitle hides on scroll, but the row stays. */}
         <View style={styles.headerTitleRow}>
           <TouchableOpacity
             style={styles.backButton}
@@ -334,15 +425,21 @@ export default function DestinationDetailScreen({ navigation, route }) {
           </View>
         </View>
 
-        {/* Centered filter pills */}
+        {/* Category tabs — ALWAYS visible (primary navigation) */}
         <View style={styles.filterRow}>
           <FilterChips
             filters={CATEGORIES}
             activeKey={activeCategory}
-            onChange={setActiveCategory}
+            onChange={(key) => setActiveCategory(key)}
             variant="pills"
           />
         </View>
+
+        {/* Sub-filter chips — pinned here so they stay sticky on scroll. */}
+        <View style={styles.stickyChipsRow}>
+          {renderSubFilterChips()}
+        </View>
+       </View>
       </View>
 
       {/* The persistent AppTabBar (rendered by the Tab.Navigator) shows the
@@ -357,8 +454,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
 
-  // Solid white header panel: title + location + centered filter pills.
-  // (paddingTop applied inline for the safe-area inset.)
+  // Solid white header panel: carries the rounded corners + drop shadow.
+  // Content lives in an inner clip layer so the shadow isn't clipped away
+  // (a view can't both cast a shadow and clip children on iOS).
   headerPanel: {
     position: 'absolute',
     top: 0,
@@ -366,8 +464,6 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 10,
     backgroundColor: COLORS.white,
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingBottom: SIZES.spacing_md,
     borderBottomLeftRadius: SIZES.radius_xl,
     borderBottomRightRadius: SIZES.radius_xl,
     shadowColor: '#000',
@@ -375,6 +471,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.14,
     shadowRadius: 12,
     elevation: 8,
+  },
+  // Inner clip layer: same rounded corners + overflow:hidden so the full-width
+  // scroll rows clip at the corners. Holds the panel's padding.
+  headerClip: {
+    borderBottomLeftRadius: SIZES.radius_xl,
+    borderBottomRightRadius: SIZES.radius_xl,
+    overflow: 'hidden',
+    paddingHorizontal: SIZES.spacing_lg,
+    paddingBottom: SIZES.spacing_md,
   },
   // Title row — back button overlaid left, title block centered.
   headerTitleRow: {
@@ -548,4 +653,52 @@ const styles = StyleSheet.create({
     color: COLORS.white,
   },
 
+  // Sticky sub-filter chips row — pinned in the fixed header. Negative margin
+  // lets the horizontal scroll row span the full header width (cancels the
+  // header's horizontal padding), matching the category tabs above it.
+  // Sticky sub-filter chips row — pinned in the fixed header. A thin divider
+  // above it separates this secondary filter row from the primary category
+  // tabs. Negative margin lets the scroll row span the full header width.
+  stickyChipsRow: {
+    marginTop: SIZES.spacing_md,
+    marginHorizontal: -SIZES.spacing_lg,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderLight,
+    paddingTop: SIZES.spacing_md,
+  },
+  // Sub-filter chips row
+  chipsScrollInline: {
+    flexGrow: 0,
+  },
+  chipsRow: {
+    paddingHorizontal: SIZES.spacing_lg,
+    gap: SIZES.spacing_sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Secondary filter chip — loose, separate OUTLINED chips. White fill with a
+  // light border contrasts against the solid grey segmented track above, so
+  // the two rows read as different control types (outlined chips vs. a filled
+  // segmented bar). Active state uses navy, distinct from the orange primary.
+  subChip: {
+    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_sm,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  subChipActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  subChipText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  subChipTextActive: {
+    color: COLORS.white,
+    fontFamily: 'Poppins_600SemiBold',
+  },
 });

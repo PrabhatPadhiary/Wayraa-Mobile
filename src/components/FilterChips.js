@@ -120,42 +120,64 @@ export default function FilterChips({
     </>
   );
 
-  // "pills" variant: each filter is its own separate rounded pill (icon +
-  // label always visible). Horizontally scrollable so any number of pills fit;
-  // the row centers itself when the pills don't overflow.
+  // "pills" variant: a connected SEGMENTED CONTROL — one rounded container
+  // holding all segments, the active one filled solid accent. This reads as a
+  // single primary-navigation bar, visually distinct from the loose secondary
+  // filter chips elsewhere.
   if (variant === 'pills') {
+    // More than 3 tabs (My Trips, Favorites) use tighter sizing so they fit.
+    const compact = filters.length > 3;
     return (
+      // Horizontal scroller as a safety net: centers the control when it fits
+      // and scrolls instead of overflowing on narrow screens.
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.pillsScrollContent}
-        style={styles.pillsScroll}
+        style={styles.segmentScroll}
+        contentContainerStyle={styles.segmentScrollContent}
       >
-        {filters.map((filter) => {
-          const isActive = filter.key === activeKey;
-          return (
-            <TouchableOpacity
-              key={filter.key}
-              style={[styles.pill, isActive ? styles.pillActive : styles.pillInactive]}
-              onPress={() => onChange(filter.key)}
-              activeOpacity={0.8}
-            >
-              {!!filter.icon && (
-                <Ionicons
-                  name={filter.icon}
-                  size={18}
-                  color={isActive ? COLORS.accent : COLORS.textPrimary}
-                />
-              )}
-              <Text
-                style={[styles.pillLabel, isActive && styles.pillLabelActive]}
-                numberOfLines={1}
+        <View style={styles.segment}>
+          {/* Single sliding orange capsule behind the active segment. Uses the
+              shared capsuleX/capsuleW springs so it glides between tabs. */}
+          {activeLayout && (
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.segmentCapsule, { left: capsuleX, width: capsuleW }]}
+            />
+          )}
+          {filters.map((filter) => {
+            const isActive = filter.key === activeKey;
+            return (
+              <TouchableOpacity
+                key={filter.key}
+                style={[styles.segmentItem, compact && styles.segmentItemCompact]}
+                onLayout={handleLayout(filter.key)}
+                onPress={() => onChange(filter.key)}
+                activeOpacity={0.8}
               >
-                {filter.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+                {/* In compact rows only the active tab shows its icon, which
+                    keeps 4+ tabs from being squeezed. */}
+                {!!filter.icon && (!compact || isActive) && (
+                  <Ionicons
+                    name={filter.icon}
+                    size={compact ? 16 : 18}
+                    color={isActive ? COLORS.white : COLORS.textSecondary}
+                  />
+                )}
+                <Text
+                  style={[
+                    styles.segmentLabel,
+                    compact && styles.segmentLabelCompact,
+                    isActive && styles.segmentLabelActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </ScrollView>
     );
   }
@@ -238,53 +260,70 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
   },
 
-  // "pills" variant — separate rounded pills (Airbnb-style), horizontally
-  // scrollable. The content centers when it fits and scrolls when it overflows.
-  pillsScroll: {
+  // "pills" variant — a connected SEGMENTED CONTROL. One rounded track holds
+  // all segments; the active segment is a solid accent fill. The single track
+  // with a tinted background makes this read as one primary-nav bar, clearly
+  // different from the loose, separate secondary filter chips.
+  segmentScroll: {
     alignSelf: 'stretch',
     flexGrow: 0,
   },
-  pillsScrollContent: {
+  // flexGrow + center keeps the control centered when it fits.
+  segmentScrollContent: {
     flexGrow: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
-    gap: SIZES.spacing_sm,
-    paddingHorizontal: SIZES.spacing_base,
+    paddingHorizontal: SIZES.spacing_sm,
   },
-  pill: {
+  segment: {
+    position: 'relative',
+    flexDirection: 'row',
+    backgroundColor: COLORS.cardBackground,
+    borderRadius: SIZES.radius_full,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  // Sliding orange fill behind the active segment. Absolutely positioned
+  // inside the track (top/bottom:4 clears the track's 4px padding) and driven
+  // by the shared capsuleX/capsuleW springs so it glides between tabs.
+  segmentCapsule: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.accent,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  segmentItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: SIZES.spacing_sm,
-    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_md,
+    paddingHorizontal: SIZES.spacing_lg,
     borderRadius: SIZES.radius_full,
+    // Sit above the sliding capsule so labels/icons stay visible.
+    zIndex: 1,
   },
-  // Inactive: raised white pill with a soft shadow.
-  pillInactive: {
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+  // Tighter segment for rows with more than 3 tabs.
+  segmentItemCompact: {
+    gap: 5,
+    paddingHorizontal: 14,
   },
-  // Active: pressed/inset look — flat grey, no shadow, subtle inner border.
-  pillActive: {
-    backgroundColor: '#ececec',
-    borderWidth: 1,
-    borderColor: '#dcdcdc',
-  },
-  pillLabel: {
+  segmentLabel: {
     fontSize: SIZES.base,
     fontFamily: 'Poppins_500Medium',
-    color: COLORS.textPrimary,
+    color: COLORS.textSecondary,
   },
-  pillLabelActive: {
-    color: COLORS.accent,
+  segmentLabelCompact: {
+    fontSize: 15,
+  },
+  segmentLabelActive: {
+    color: COLORS.white,
     fontFamily: 'Poppins_600SemiBold',
   },
 });

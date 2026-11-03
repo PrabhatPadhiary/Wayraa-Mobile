@@ -175,9 +175,10 @@ export default function ExploreScreen({ route, navigation }) {
 
   const handleContentScroll = (e) => {
     const y = e.nativeEvent.contentOffset.y;
-    // Wider hysteresis band so it doesn't flip-flop near the threshold.
+    // Collapse on scroll down; expand a bit before reaching the top so the
+    // header is fully open before the content reaches its natural start position.
     if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
-    else if (y <= 20 && headerCollapsed) setHeaderCollapsed(false);
+    else if (y <= 55 && headerCollapsed) setHeaderCollapsed(false);
   };
 
   // Detected nearby location label (reverse-geocoded), shown as a chip.
@@ -1384,7 +1385,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
   cardLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'center',
     alignItems: 'center',

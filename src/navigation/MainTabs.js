@@ -10,6 +10,9 @@ import {
   CommunityScreen,
   DestinationDetailScreen,
   CategoryResultsScreen,
+  PlaceDetailScreen,
+  CreateTripScreen,
+  TripDetailScreen,
 } from '../screens';
 
 const Tab = createBottomTabNavigator();
@@ -29,6 +32,8 @@ function ExploreStack({ route }) {
       <Stack.Screen name="ExploreHome" component={ExploreScreen} initialParams={{ user }} />
       <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
       <Stack.Screen name="CategoryResults" component={CategoryResultsScreen} />
+      <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      <Stack.Screen name="CreateTrip" component={CreateTripScreen} />
     </Stack.Navigator>
   );
 }
@@ -37,6 +42,9 @@ function MyTripsStack() {
   return (
     <Stack.Navigator screenOptions={commonStackOptions}>
       <Stack.Screen name="MyTripsHome" component={MyTripsScreen} />
+      <Stack.Screen name="TripDetail" component={TripDetailScreen} />
+      {/* Saved places on a trip open the shared place page from this stack. */}
+      <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
     </Stack.Navigator>
   );
 }
