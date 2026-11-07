@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,21 +16,45 @@ import {
   Animated,
   Easing,
   ActivityIndicator,
+  AppState,
+  Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
-import { GlassSurface } from '../components';
-import { searchPlaces, getCurrentLocation, getNearbyPlaces, reverseGeocode, logoutUser } from '../services';
+import {
+  GlassSurface,
+  PlaceTile,
+  NextTripCarousel,
+  NearbyPlaceCard,
+  NextTripCardSkeleton,
+  TileRowSkeleton,
+  NearbyRowSkeleton,
+  JournalRowSkeleton,
+} from '../components';
+import {
+  searchPlaces,
+  getCurrentLocation,
+  getLocationPermission,
+  getNearbyPlaces,
+  reverseGeocode,
+  logoutUser,
+  getMyTrips,
+  getFavourites,
+} from '../services';
 import { API_URL } from '../config';
 import useAuth from '../hooks/useAuth';
+import { pickActiveTrips } from '../utils/tripDates';
+import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.7;
 const CARD_HEIGHT = 320;
 
 const RECENT_SEARCHES_KEY = 'wayraa_recent_searches';
+
 
 const CATEGORIES = [
   {
@@ -133,12 +157,17 @@ export default function ExploreScreen({ route, navigation }) {
   // Id of the popular-destination card currently resolving its placeId (tap feedback).
   const [resolvingCardId, setResolvingCardId] = useState(null);
   const [locationDenied, setLocationDenied] = useState(false);
+  // Denied and the OS won't show the prompt again: only Settings can fix it.
+  const [locationBlocked, setLocationBlocked] = useState(false);
   const [journals, setJournals] = useState([]);
+  // True until the journals request has finished once, so the row shows a
+  // skeleton instead of a misleading "No journals yet".
+  const [journalsLoading, setJournalsLoading] = useState(true);
   const searchInputRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(0);
-  const { user: firebaseUser, isAuthenticated } = useAuth();
+  const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
   const routeUser = route?.params?.user;
   const user = firebaseUser || routeUser;
 
@@ -183,16 +212,124 @@ export default function ExploreScreen({ route, navigation }) {
 
   // Detected nearby location label (reverse-geocoded), shown as a chip.
   const [nearbyLabel, setNearbyLabel] = useState(null);
+
+  // Use a location fix for both the "Near you" chip and the nearby places.
+  const applyLocation = useCallback(async (loc) => {
+    setNearbyLoading(true);
+    setLocationDenied(false);
+    setLocationBlocked(false);
+    const [places, label] = await Promise.all([
+      getNearbyPlaces(loc.lat, loc.lng),
+      reverseGeocode(loc.lat, loc.lng),
+    ]);
+    setNearbyPlaces(places);
+    if (label) setNearbyLabel(label);
+    setNearbyLoading(false);
+  }, []);
+
+  // On launch: ask once if the phone has never been asked; if already allowed,
+  // load nearby places straight away (no prompt, no tap needed).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const loc = await getCurrentLocation();
-      if (!loc.granted || cancelled) return;
-      const label = await reverseGeocode(loc.lat, loc.lng);
-      if (!cancelled && label) setNearbyLabel(label);
+      if (cancelled) return;
+      if (loc.granted) {
+        applyLocation(loc);
+      } else if (loc.status === 'denied') {
+        setLocationDenied(true);
+        setLocationBlocked(!loc.canAskAgain);
+      }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [applyLocation]);
+
+  // Coming back from Settings with location now allowed: load without a tap.
+  useEffect(() => {
+    if (!locationDenied) return undefined;
+    const sub = AppState.addEventListener('change', async (next) => {
+      if (next !== 'active') return;
+      const perm = await getLocationPermission();
+      if (!perm.granted) return;
+      const loc = await getCurrentLocation();
+      if (loc.granted) applyLocation(loc);
+    });
+    return () => sub.remove();
+  }, [locationDenied, applyLocation]);
+
+  // Signed-in extras: the featured trip and the latest favourites. Refreshed
+  // whenever the tab regains focus so new trips/favourites show up right away.
+  // Any failure just hides the section, since both are optional extras.
+  const [activeTrips, setActiveTrips] = useState([]);
+  const [favourites, setFavourites] = useState([]);
+  // True once each request has finished (success or failure) at least once,
+  // so skeletons show only on the first load, not on every refocus refresh.
+  const [tripsLoaded, setTripsLoaded] = useState(false);
+  const [favsLoaded, setFavsLoaded] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isAuthReady) return undefined;
+      if (!isAuthenticated) {
+        setActiveTrips([]);
+        setFavourites([]);
+        setTripsLoaded(false);
+        setFavsLoaded(false);
+        return undefined;
+      }
+
+      let cancelled = false;
+
+      (async () => {
+        try {
+          const trips = await getMyTrips();
+          if (cancelled) return;
+          setActiveTrips(pickActiveTrips(trips));
+          setTripsLoaded(true);
+        } catch (e) {
+          if (!cancelled) setActiveTrips([]);
+        } finally {
+          if (!cancelled) setTripsLoaded(true);
+        }
+      })();
+
+      (async () => {
+        try {
+          const favs = await getFavourites();
+          if (cancelled) return;
+          const latest = favs.slice(0, 8);
+          setFavourites(latest);
+          setFavsLoaded(true);
+        } catch (e) {
+          if (!cancelled) setFavourites([]);
+        } finally {
+          if (!cancelled) setFavsLoaded(true);
+        }
+      })();
+
+      return () => { cancelled = true; };
+    }, [isAuthReady, isAuthenticated])
+  );
+
+  const openTrip = (trip) => {
+    // Trips live in the My Trips tab; keep its list underneath so back works.
+    navigation.getParent()?.navigate('MyTrips', {
+      screen: 'TripDetail',
+      params: { tripId: trip.id, tripName: trip.name },
+      initial: false,
+    });
+  };
+
+  const openFavourite = (fav) => {
+    navigation.navigate('PlaceDetail', {
+      placeId: fav.placeId,
+      name: fav.placeName,
+      vicinity: fav.vicinity,
+      photoUrl: placePhotoUrl(fav.placeId, 800) || normalizePhotoUrl(fav.photoUrl, 800),
+      rating: fav.rating,
+      category: fav.category,
+    });
+  };
 
   const handleProfilePress = () => {
     if (isAuthenticated) {
@@ -232,41 +369,34 @@ export default function ExploreScreen({ route, navigation }) {
     loadJournals();
   }, []);
 
-  // Backfill missing photos for recent searches that have no image yet.
-  // Heals entries saved before an image was resolved AND text-submit entries
-  // (placeId === null) by first looking up a placeId from the name.
+  // Backfill a placeId for older text-only recent searches (placeId === null)
+  // by looking one up from the name. Photos are then built from the placeId.
   useEffect(() => {
-    const needsPhoto = recentSearches
+    const needsId = recentSearches
       .map((s, index) => ({ s, index }))
-      .filter(({ s }) => s && typeof s === 'object' && !s.imageUrl && (s.placeId || s.name));
-    if (needsPhoto.length === 0) return;
+      .filter(({ s }) => s && typeof s === 'object' && !s.placeId && s.name);
+    if (needsId.length === 0) return;
 
     let cancelled = false;
     (async () => {
       const resolved = await Promise.all(
-        needsPhoto.map(async ({ s, index }) => ({
-          index,
-          ...(await resolvePhotoUrl(s.placeId, s.name)),
-        }))
+        needsId.map(async ({ s, index }) => ({ index, placeId: await resolvePlaceId(s.name) }))
       );
       if (cancelled) return;
 
-      const patchByIndex = {};
+      const idByIndex = {};
       resolved.forEach((r) => {
-        if (r.imageUrl || r.placeId) patchByIndex[r.index] = r;
+        if (r.placeId) idByIndex[r.index] = r.placeId;
       });
-      if (Object.keys(patchByIndex).length === 0) return;
+      if (Object.keys(idByIndex).length === 0) return;
 
       setRecentSearches((prev) => {
         let changed = false;
         const updated = prev.map((s, i) => {
-          const patch = patchByIndex[i];
-          if (!patch || !s || typeof s !== 'object') return s;
-          // Only apply if it actually adds something new (avoids re-render loops).
-          const next = { ...s };
-          if (patch.imageUrl && !s.imageUrl) { next.imageUrl = patch.imageUrl; changed = true; }
-          if (patch.placeId && !s.placeId) { next.placeId = patch.placeId; changed = true; }
-          return next;
+          const placeId = idByIndex[i];
+          if (!placeId || !s || typeof s !== 'object' || s.placeId) return s;
+          changed = true;
+          return { ...s, placeId };
         });
         if (!changed) return prev;
         AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)).catch(() => {});
@@ -289,27 +419,6 @@ export default function ExploreScreen({ route, navigation }) {
     }
   };
 
-  // Resolve a displayable photo URL for a place. Accepts a placeId and/or a name;
-  // if no placeId is given it will look one up from the name first.
-  const resolvePhotoUrl = async (placeId, name) => {
-    let id = placeId;
-    if (!id && name) id = await resolvePlaceId(name);
-    if (!id) return { imageUrl: null, placeId: null };
-    try {
-      const resp = await fetch(`${API_URL}/Destinations/details?placeId=${id}`);
-      if (!resp.ok) return { imageUrl: null, placeId: id };
-      const details = await resp.json();
-      const photoUrl = details.photos?.[0]?.url;
-      if (!photoUrl) return { imageUrl: null, placeId: id };
-      const refMatch = photoUrl.match(/photo_reference=([^&]+)/);
-      if (!refMatch) return { imageUrl: null, placeId: id };
-      return { imageUrl: `${API_URL}/Destinations/photo?reference=${refMatch[1]}&maxWidth=200`, placeId: id };
-    } catch (e) {
-      console.log('resolvePhotoUrl error:', e);
-      return { imageUrl: null, placeId: id };
-    }
-  };
-
   const loadRecentSearches = async () => {
     try {
       const stored = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
@@ -326,20 +435,27 @@ export default function ExploreScreen({ route, navigation }) {
       }
     } catch (e) {
       console.log('Failed to load journals:', e);
+    } finally {
+      setJournalsLoading(false);
     }
   };
 
+  // "Enable Location" card: prompt if the OS still allows it, otherwise open
+  // the app's page in Settings (iOS never shows the prompt a second time).
   const loadNearbyPlaces = async () => {
+    if (locationBlocked) {
+      Linking.openSettings();
+      return;
+    }
     setNearbyLoading(true);
     const location = await getCurrentLocation();
     if (!location.granted) {
       setLocationDenied(true);
+      setLocationBlocked(!location.canAskAgain);
       setNearbyLoading(false);
       return;
     }
-    const places = await getNearbyPlaces(location.lat, location.lng);
-    setNearbyPlaces(places);
-    setNearbyLoading(false);
+    await applyLocation(location);
   };
 
   const saveSearch = async (item) => {
@@ -386,11 +502,10 @@ export default function ExploreScreen({ route, navigation }) {
     }
   };
 
-  // Persist a tapped place into recent searches (fire-and-forget); resolves a
-  // thumbnail in the background so the "Recently Explored" row shows an image.
+  // Persist a tapped place into recent searches (fire-and-forget). Its photo
+  // is built from the placeId when the row renders, so nothing to look up.
   const persistRecentSearch = async (item) => {
-    const { imageUrl } = await resolvePhotoUrl(item.placeId, item.name);
-    const entry = { name: item.name, placeId: item.placeId, secondary: item.secondary || '', imageUrl };
+    const entry = { name: item.name, placeId: item.placeId, secondary: item.secondary || '' };
     const stored = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
     const existing = stored ? JSON.parse(stored) : [];
     const updated = [entry, ...existing.filter(s => s.placeId !== item.placeId)].slice(0, 8);
@@ -465,9 +580,6 @@ export default function ExploreScreen({ route, navigation }) {
         accessibilityLabel={`Explore ${item.name}, ${item.country}`}
       >
         <Image source={{ uri: item.image }} style={styles.cardImage} />
-        <TouchableOpacity style={styles.favouriteButton} accessibilityLabel="Add to favourites">
-          <Ionicons name="heart-outline" size={20} color={COLORS.white} />
-        </TouchableOpacity>
         <View style={styles.cardOverlay}>
           <Text style={styles.cardCountry}>{item.country}</Text>
           <Text style={styles.cardName}>{item.name}</Text>
@@ -488,7 +600,7 @@ export default function ExploreScreen({ route, navigation }) {
         {coverPhoto ? (
           <Image source={{ uri: coverPhoto }} style={styles.journalImage} />
         ) : (
-          <View style={[styles.journalImage, { backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' }]}>
+          <View style={[styles.journalImage, { backgroundColor: COLORS.sand, justifyContent: 'center', alignItems: 'center' }]}>
             <Ionicons name="document-text-outline" size={28} color={COLORS.textMuted} />
           </View>
         )}
@@ -633,8 +745,8 @@ export default function ExploreScreen({ route, navigation }) {
                 <>
                   <Text style={styles.suggestionsTitle}>Suggested destinations</Text>
                   <TouchableOpacity style={styles.suggestionItem}>
-                    <View style={[styles.suggestionIcon, { backgroundColor: '#e8f5e9' }]}>
-                      <Ionicons name="navigate" size={20} color="#4CAF50" />
+                    <View style={[styles.suggestionIcon, { backgroundColor: 'rgba(6, 133, 192, 0.12)' }]}>
+                      <Ionicons name="navigate" size={20} color={COLORS.primaryLight} />
                     </View>
                     <View style={styles.suggestionInfo}>
                       <Text style={styles.suggestionName}>Nearby</Text>
@@ -680,38 +792,6 @@ export default function ExploreScreen({ route, navigation }) {
         onScroll={handleContentScroll}
         scrollEventThrottle={16}
       >
-        {/* Recent Searches Section (only on home, if has history) */}
-        {recentSearches.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Recently Explored</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentCardsContainer}>
-              {recentSearches.slice(0, 5).map((item, index) => {
-                const entry = typeof item === 'string' ? { name: item } : item;
-                return (
-                  <TouchableOpacity key={index} style={styles.recentCard} onPress={() => {
-                    if (entry.placeId) {
-                      openDestination(entry);
-                    } else {
-                      openSearch();
-                      setTimeout(() => handleRecentSearchTap(item), 150);
-                    }
-                  }}>
-                    {entry.imageUrl ? (
-                      <Image source={{ uri: entry.imageUrl }} style={styles.recentCardImage} />
-                    ) : (
-                      <View style={styles.recentCardIcon}>
-                        <Ionicons name="location" size={16} color={COLORS.accent} />
-                      </View>
-                    )}
-                    <Text style={styles.recentCardName} numberOfLines={1}>{entry.name}</Text>
-                    <Text style={styles.recentCardSub} numberOfLines={1}>{entry.secondary || ''}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        )}
-
         {/* Popular Destinations */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Popular Destinations</Text>
@@ -741,7 +821,7 @@ export default function ExploreScreen({ route, navigation }) {
                 if (item.isShowAll) {
                   const collageImages = nearbyPlaces.slice(0, 3).map(p => p.photoUrl).filter(Boolean);
                   return (
-                    <TouchableOpacity style={[styles.nearbyCard, styles.showAllCard]} activeOpacity={0.8}>
+                    <TouchableOpacity style={styles.showAllCard} activeOpacity={0.8}>
                       <View style={styles.collageContainer}>
                         {collageImages.map((uri, i) => (
                           <Image
@@ -750,8 +830,8 @@ export default function ExploreScreen({ route, navigation }) {
                             style={[styles.collageImage, {
                               transform: [{ rotate: `${(i - 1) * 8}deg` }],
                               zIndex: 3 - i,
-                              top: i * 4,
-                              left: i * 10,
+                              top: i * 8,
+                              left: i * 20,
                             }]}
                           />
                         ))}
@@ -761,35 +841,33 @@ export default function ExploreScreen({ route, navigation }) {
                   );
                 }
                 return (
-                  <TouchableOpacity style={styles.nearbyCard} activeOpacity={0.9}>
-                    {item.photoUrl ? (
-                      <Image source={{ uri: item.photoUrl }} style={styles.nearbyImage} />
-                    ) : (
-                      <View style={[styles.nearbyImage, { backgroundColor: '#eee', justifyContent: 'center', alignItems: 'center' }]}>
-                        <Ionicons name="image-outline" size={30} color={COLORS.textMuted} />
-                      </View>
-                    )}
-                    <View style={styles.nearbyContent}>
-                      <Text style={styles.nearbyName} numberOfLines={1}>{item.name}</Text>
-                      <Text style={styles.nearbyVicinity} numberOfLines={1}>{item.vicinity}</Text>
-                      {item.rating > 0 && (
-                        <Text style={styles.nearbyRating}>⭐ {item.rating}</Text>
-                      )}
-                    </View>
-                  </TouchableOpacity>
+                  <NearbyPlaceCard
+                    place={item}
+                    onPress={() => navigation.navigate('PlaceDetail', {
+                      placeId: item.placeId,
+                      name: item.name,
+                      vicinity: item.vicinity,
+                      photoUrl: item.photoUrl,
+                      rating: item.rating,
+                    })}
+                  />
                 );
               }}
             />
           ) : nearbyLoading ? (
-            <View style={styles.locationCard}>
-              <Text style={styles.locationCardTitle}>Finding places near you...</Text>
-            </View>
+            <NearbyRowSkeleton />
           ) : (
             <TouchableOpacity style={styles.locationCard} onPress={loadNearbyPlaces}>
               <Ionicons name="location-outline" size={24} color={COLORS.accent} />
               <View style={styles.locationCardContent}>
                 <Text style={styles.locationCardTitle}>{locationDenied ? 'Location Denied' : 'Enable Location'}</Text>
-                <Text style={styles.locationCardSubtitle}>{locationDenied ? 'Allow location access in settings' : 'Find destinations near you'}</Text>
+                <Text style={styles.locationCardSubtitle}>
+                  {locationBlocked
+                    ? 'Tap to open Settings and allow location'
+                    : locationDenied
+                      ? 'Tap to allow location access'
+                      : 'Find destinations near you'}
+                </Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
             </TouchableOpacity>
@@ -823,6 +901,111 @@ export default function ExploreScreen({ route, navigation }) {
           </View>
         </View>
 
+        {/* Your trips (signed in). Placed lower on the page so it has finished
+            loading by the time the user scrolls to it. */}
+        {isAuthenticated && !tripsLoaded && activeTrips.length === 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Your Trips</Text>
+            <NextTripCardSkeleton />
+          </View>
+        )}
+        {activeTrips.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Your Trips</Text>
+            <NextTripCarousel
+              trips={activeTrips}
+              getImageUri={(trip) =>
+                placePhotoUrl(trip.primaryPlaceId, 800)
+                || normalizePhotoUrl(trip.coverPhotoUrl, 800)
+              }
+              onPressTrip={openTrip}
+            />
+          </View>
+        )}
+
+        {/* Recently Explored (only if there is history) */}
+        {recentSearches.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderTitle}>Recently Explored</Text>
+              <TouchableOpacity
+                onPress={clearRecentSearches}
+                accessibilityRole="button"
+                accessibilityLabel="Clear recently explored"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.seeAllText}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tileRow}
+            >
+              {recentSearches.slice(0, 8).map((item, index) => {
+                const entry = typeof item === 'string' ? { name: item } : item;
+                return (
+                  <PlaceTile
+                    key={entry.placeId || `${entry.name}-${index}`}
+                    title={entry.name}
+                    subtitle={entry.secondary}
+                    imageUri={placePhotoUrl(entry.placeId, 400) || normalizePhotoUrl(entry.imageUrl, 400)}
+                    onPress={() => {
+                      if (entry.placeId) {
+                        openDestination(entry);
+                      } else {
+                        openSearch();
+                        setTimeout(() => handleRecentSearchTap(item), 150);
+                      }
+                    }}
+                  />
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* From your favourites (signed in, only if there are any) */}
+        {isAuthenticated && !favsLoaded && favourites.length === 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderTitle}>From Your Favourites</Text>
+            </View>
+            <TileRowSkeleton label="Loading your favourites" />
+          </View>
+        )}
+        {favourites.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionHeaderTitle}>From Your Favourites</Text>
+              <TouchableOpacity
+                onPress={() => navigation.getParent()?.navigate('Favorites')}
+                accessibilityRole="button"
+                accessibilityLabel="See all favourites"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.seeAllText}>See all</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.tileRow}
+            >
+              {favourites.map((fav) => (
+                <PlaceTile
+                  key={fav.placeId}
+                  title={fav.placeName}
+                  subtitle={fav.vicinity}
+                  imageUri={placePhotoUrl(fav.placeId, 400) || normalizePhotoUrl(fav.photoUrl, 400)}
+                  rating={fav.rating}
+                  onPress={() => openFavourite(fav)}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* From the Community */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -831,6 +1014,9 @@ export default function ExploreScreen({ route, navigation }) {
               <Text style={styles.seeAllText}>See all</Text>
             </TouchableOpacity>
           </View>
+          {journalsLoading ? (
+            <JournalRowSkeleton />
+          ) : (
           <FlatList
             data={journals}
             renderItem={renderJournalCard}
@@ -842,6 +1028,7 @@ export default function ExploreScreen({ route, navigation }) {
               <Text style={{ paddingHorizontal: SIZES.spacing_lg, color: COLORS.textMuted, fontFamily: 'Poppins_400Regular' }}>No journals yet. Be the first to share!</Text>
             }
           />
+          )}
         </View>
 
         {/* Bottom spacing */}
@@ -989,7 +1176,7 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: SIZES.xl,
     fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
+    color: COLORS.primary,
   },
   greetingSub: {
     fontSize: SIZES.md,
@@ -1018,7 +1205,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: COLORS.cardBackground,
+    backgroundColor: COLORS.sand,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1057,7 +1244,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: COLORS.cardBackground,
+    backgroundColor: COLORS.sand,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
   },
@@ -1240,7 +1427,7 @@ const styles = StyleSheet.create({
   clearText: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: COLORS.accent,
+    color: COLORS.accentDeep,
   },
   suggestionItem: {
     flexDirection: 'row',
@@ -1254,7 +1441,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: COLORS.cardBackground,
+    backgroundColor: COLORS.sand,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1295,56 +1482,25 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: SIZES.xl,
     fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
+    color: COLORS.primary,
     paddingHorizontal: SIZES.spacing_lg,
     marginBottom: SIZES.spacing_base,
   },
   seeAllText: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_500Medium',
-    color: COLORS.accent,
+    color: COLORS.accentDeep,
   },
   sectionHeaderTitle: {
     fontSize: SIZES.xl,
     fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
+    color: COLORS.primary,
   },
 
-  // Recent Activity Cards
-  recentCardsContainer: {
+  // Horizontal rows of PlaceTile cards (Recently Explored, favourites)
+  tileRow: {
     paddingHorizontal: SIZES.spacing_lg,
     gap: 12,
-  },
-  recentCard: {
-    width: 180,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_md,
-    overflow: 'hidden',
-  },
-  recentCardIcon: {
-    width: '100%',
-    height: 130,
-    borderRadius: SIZES.radius_md,
-    backgroundColor: '#fff5f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  recentCardImage: {
-    width: '100%',
-    height: 130,
-    borderRadius: SIZES.radius_md,
-  },
-  recentCardName: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-    marginTop: SIZES.spacing_sm,
-  },
-  recentCardSub: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textMuted,
-    marginTop: 2,
   },
 
   // Cards
@@ -1357,23 +1513,12 @@ const styles = StyleSheet.create({
     height: CARD_HEIGHT,
     borderRadius: SIZES.radius_lg,
     overflow: 'hidden',
-    backgroundColor: COLORS.cardBackground,
+    backgroundColor: COLORS.sand,
   },
   cardImage: {
     width: '100%',
     height: '100%',
     position: 'absolute',
-  },
-  favouriteButton: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   cardOverlay: {
     position: 'absolute',
@@ -1472,7 +1617,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: SIZES.spacing_lg,
     padding: SIZES.spacing_base,
-    backgroundColor: COLORS.cardBackground,
+    backgroundColor: COLORS.sand,
     borderRadius: SIZES.radius_md,
     gap: SIZES.spacing_md,
   },
@@ -1489,63 +1634,29 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
   },
-  nearbyCard: {
-    width: 180,
-    borderRadius: SIZES.radius_md,
-    overflow: 'hidden',
-    backgroundColor: COLORS.white,
-  },
-  nearbyImage: {
-    width: '100%',
-    height: 130,
-    borderRadius: SIZES.radius_md,
-  },
-  nearbyContent: {
-    paddingVertical: SIZES.spacing_sm,
-    paddingHorizontal: 2,
-  },
-  nearbyName: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  nearbyVicinity: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textMuted,
-    marginTop: 2,
-  },
-  nearbyRating: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-    marginTop: 4,
-  },
   showAllCard: {
+    width: 180,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
     gap: SIZES.spacing_sm,
-    height: 180,
-    borderRadius: SIZES.radius_md,
   },
   showAllText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
     marginTop: SIZES.spacing_sm,
   },
   collageContainer: {
-    width: 100,
-    height: 80,
+    width: 160,
+    height: 130,
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
   collageImage: {
-    width: 60,
-    height: 60,
-    borderRadius: SIZES.radius_sm,
+    width: 100,
+    height: 100,
+    borderRadius: SIZES.radius_md,
     position: 'absolute',
     borderWidth: 2,
     borderColor: COLORS.white,
@@ -1560,7 +1671,7 @@ const styles = StyleSheet.create({
     width: 200,
     borderRadius: SIZES.radius_md,
     overflow: 'hidden',
-    backgroundColor: COLORS.cardBackground,
+    backgroundColor: COLORS.sand,
   },
   journalImage: {
     width: '100%',

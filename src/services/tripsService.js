@@ -1,6 +1,6 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
-import { AuthRequiredError } from './errors';
+import { AuthRequiredError, ForbiddenError } from './errors';
 
 /**
  * Fetch all trips for the signed-in user (owned or member of).
@@ -118,4 +118,215 @@ export async function getTripById(tripId) {
   }
 
   return response.json();
+}
+
+/**
+ * Add a place to one destination of a trip.
+ * Backend: POST /api/trips/{tripId}/destinations/{destinationId}/places
+ * (owners and editors only).
+ *
+ * @param {string} tripId
+ * @param {string} destinationId
+ * @param {object} dto  see buildTripPlaceDto in utils/tripPlaces
+ * @returns {Promise<{ alreadyAdded: boolean, id?: string }>} `id` is the trip
+ *   place id (needed to remove it again). `alreadyAdded` is true on HTTP 409.
+ * @throws AuthRequiredError when signed out, ForbiddenError for viewers, and an
+ *   Error for a missing trip/destination or any other failure.
+ */
+export async function addPlaceToTrip(tripId, destinationId, dto) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(
+    `${API_URL}/trips/${encodeURIComponent(tripId)}/destinations/${encodeURIComponent(destinationId)}/places`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(dto),
+    }
+  );
+
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 403) throw new ForbiddenError('You can view this trip but not edit it.');
+  if (response.status === 409) return { alreadyAdded: true };
+  if (response.status === 404) throw new Error('That trip or destination no longer exists.');
+  if (response.status === 400) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || 'That place could not be added.');
+  }
+  if (!response.ok) throw new Error(`Failed to add place (${response.status})`);
+
+  const data = await response.json().catch(() => ({}));
+  return { alreadyAdded: false, id: data?.id };
+}
+
+/**
+ * Remove a saved place from a trip.
+ * Backend: DELETE /api/trip-places/{id} (owners and editors only).
+ * Resolves to true when the place is gone (including if it was already gone).
+ * @throws AuthRequiredError when signed out, ForbiddenError for viewers.
+ */
+export async function removeTripPlace(tripPlaceId) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/trip-places/${encodeURIComponent(tripPlaceId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 403) throw new ForbiddenError('You can view this trip but not edit it.');
+  if (response.status === 404) return true;
+  if (!response.ok) throw new Error(`Failed to remove place (${response.status})`);
+  return true;
+}
+
+/** Shared error mapping for the destination endpoints (owners and editors only). */
+async function destinationError(response, fallback) {
+  if (response.status === 401) return new AuthRequiredError();
+  if (response.status === 403) return new ForbiddenError('You can view this trip but not edit it.');
+  if (response.status === 409) return new Error('That destination is already in this trip.');
+  if (response.status === 404) return new Error('That trip or destination no longer exists.');
+  if (response.status === 400) {
+    const message = await response.text().catch(() => '');
+    return new Error(message || fallback);
+  }
+  return new Error(`${fallback} (${response.status})`);
+}
+
+/**
+ * Add a destination (stop) to a trip.
+ * Backend: POST /api/Trips/{id}/destinations (owners and editors only).
+ *
+ * @param {string} tripId
+ * @param {{ googlePlaceId: string, name: string, latitude?: number, longitude?: number,
+ *   photoUrl?: string, order: number, startDate?: string|null, endDate?: string|null }} destination
+ * @returns {Promise<{ id: string, googlePlaceId: string, name: string }>}
+ * @throws AuthRequiredError, ForbiddenError, or an Error (409 = already in the trip).
+ */
+export async function addTripDestination(tripId, destination) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}/destinations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      googlePlaceId: destination.googlePlaceId,
+      name: destination.name,
+      latitude: destination.latitude ?? null,
+      longitude: destination.longitude ?? null,
+      photoUrl: destination.photoUrl || null,
+      order: destination.order ?? 0,
+      startDate: destination.startDate || null,
+      endDate: destination.endDate || null,
+    }),
+  });
+
+  if (!response.ok) throw await destinationError(response, 'Could not add that destination.');
+  return response.json();
+}
+
+/**
+ * Remove a destination from a trip. Its saved places are deleted with it.
+ * Backend: DELETE /api/Trips/{id}/destinations/{destinationId}.
+ * Resolves to true when it's gone (including if it was already gone).
+ */
+export async function removeTripDestination(tripId, destinationId) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(
+    `${API_URL}/Trips/${encodeURIComponent(tripId)}/destinations/${encodeURIComponent(destinationId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (response.status === 404) return true;
+  if (!response.ok) throw await destinationError(response, 'Could not remove that destination.');
+  return true;
+}
+
+/**
+ * Set dates on one or more destinations. The backend then recalculates the
+ * trip's own start/end from all destinations that have dates.
+ * Backend: PUT /api/Trips/{id}/destinations/dates.
+ *
+ * @param {string} tripId
+ * @param {Array<{ destinationId: string, startDate: string|null, endDate: string|null }>} updates
+ */
+export async function updateDestinationDates(tripId, updates) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}/destinations/dates`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) throw await destinationError(response, 'Could not update the dates.');
+  return response.json();
+}
+
+/**
+ * Update a trip's details. Only the fields sent are changed.
+ * Backend: PUT /api/Trips/{id} (owner only).
+ *
+ * @param {string} tripId
+ * @param {{ name?, description?, startDate?, endDate?, travelersCount? }} changes
+ */
+export async function updateTrip(tripId, changes) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(changes),
+  });
+
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 403) throw new ForbiddenError('Only the trip owner can edit this trip.');
+  if (response.status === 404) throw new Error('That trip no longer exists.');
+  if (response.status === 400) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || 'Please check the trip details and try again.');
+  }
+  if (!response.ok) throw new Error(`Failed to save the trip (${response.status})`);
+  return response.json();
+}
+
+/**
+ * Permanently delete a trip and everything in it (stops, places, members,
+ * expenses, checklist, itinerary). Journals linked to it are kept, unlinked.
+ * Backend: DELETE /api/Trips/{id} (owner only).
+ * Resolves to true when it's gone (including if it was already gone).
+ */
+export async function deleteTrip(tripId) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 403) throw new ForbiddenError('Only the trip owner can delete this trip.');
+  if (response.status === 404) return true;
+  if (!response.ok) throw new Error(`Failed to delete the trip (${response.status})`);
+  return true;
 }

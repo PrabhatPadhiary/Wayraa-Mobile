@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,15 @@ import {
   FlatList,
   ScrollView,
   ActivityIndicator,
+  Alert,
+  Animated,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
-import { FilterChips } from '../components';
+import { FilterChips, GridSkeleton } from '../components';
 import { useBottomBar } from '../context/BottomBarContext';
 import {
   getPlaceDetails,
@@ -23,8 +26,67 @@ import {
   getFavourites,
   addFavourite,
   removeFavourite,
+  getTripById,
+  addPlaceToTrip,
+  removeTripPlace,
   AuthRequiredError,
 } from '../services';
+import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+
+/**
+ * Add / added toggle shown on a card while picking places for a trip.
+ * Added state is a green gradient badge with a white ring and tick that pops in.
+ */
+function PickToggle({ picked, pending, onPress, label }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const prevPicked = useRef(picked);
+
+  useEffect(() => {
+    if (picked && !prevPicked.current) {
+      scale.setValue(0.6);
+      Animated.spring(scale, { toValue: 1, friction: 4, tension: 120, useNativeDriver: true }).start();
+    }
+    prevPicked.current = picked;
+  }, [picked, scale]);
+
+  return (
+    <TouchableOpacity
+      style={styles.pickToggle}
+      onPress={onPress}
+      disabled={pending}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityState={{ selected: picked }}
+      accessibilityLabel={label}
+      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+    >
+      <Animated.View style={[styles.pickToggleInner, { transform: [{ scale }] }]}>
+        {picked ? (
+          <LinearGradient
+            colors={['#2a9157', '#126b37']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.pickBadge, styles.pickBadgeAdded]}
+          >
+            {pending ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <Ionicons name="checkmark-outline" size={18} color={COLORS.white} />
+            )}
+          </LinearGradient>
+        ) : (
+          <View style={[styles.pickBadge, styles.pickBadgeIdle]}>
+            {pending ? (
+              <ActivityIndicator size="small" color={COLORS.textPrimary} />
+            ) : (
+              <Ionicons name="add" size={18} color={COLORS.textPrimary} />
+            )}
+          </View>
+        )}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
 
 /**
  * Category tabs. `apiCategory` maps the UI label to the backend category
@@ -48,10 +110,14 @@ const CATEGORY_FILTERS = {
  * DestinationDetailScreen - shows a searched place with its Stays / Food /
  * Activities, and a (stubbed) Create trip CTA.
  *
- * Route params: { placeId, name, secondary }
+ * Route params: { placeId, name, secondary, pickForTrip }
+ *
+ * `pickForTrip` ({ tripId, destinationId, tripName }) turns this into a place
+ * picker for that trip: each card gets an add/remove toggle instead of a heart,
+ * and the bottom button becomes "Done".
  */
 export default function DestinationDetailScreen({ navigation, route }) {
-  const { placeId, name, secondary } = route.params || {};
+  const { placeId, name, secondary, pickForTrip } = route.params || {};
   const insets = useSafeAreaInsets();
 
   // Header panel top offset clears the Dynamic Island / status bar. The panel's
@@ -152,16 +218,107 @@ export default function DestinationDetailScreen({ navigation, route }) {
     });
   }, [navigation, placeId, name, secondary, details]);
 
-  // Register the "Create a trip" CTA on the shared tab bar while focused;
-  // clear the bar's collapse + CTA state when leaving this screen.
+  // Register the CTA on the shared tab bar while focused; clear the bar's
+  // collapse + CTA state when leaving this screen. The picking CTA ("Added (N)")
+  // is kept in sync by a separate effect below so a count change doesn't reset
+  // the bar's collapsed state.
   useFocusEffect(
     useCallback(() => {
-      setCta({ label: 'Create a trip', icon: 'add-circle-outline', onPress: handleCreateTrip });
+      if (!pickForTrip) {
+        setCta({ label: 'Create a trip', icon: 'add-circle-outline', onPress: handleCreateTrip });
+      }
       return () => reset();
-    }, [setCta, reset, handleCreateTrip])
+    }, [setCta, reset, handleCreateTrip, pickForTrip])
   );
 
+  // ── Trip picking (only when opened with `pickForTrip`) ─────────────────────
+  // placeId -> trip place id, for the places already saved in the target
+  // destination. An empty-string id means "saved, id not known yet".
+  // Seeded from the trip screen (`pickForTrip.saved`: [placeId, tripPlaceId]
+  // pairs) so ticks show instantly; the focus refresh below then syncs with
+  // the server in the background.
+  const [pickedMap, setPickedMap] = useState(() => new Map(pickForTrip?.saved || []));
+  // False until we know which places are saved (no seed and first fetch pending),
+  // so toggles don't flash "+" on places that are actually added.
+  const [pickedReady, setPickedReady] = useState(() => Array.isArray(pickForTrip?.saved));
+  const [pickPending, setPickPending] = useState(() => new Set());
+  const isFocused = useIsFocused();
+  const pickTripId = pickForTrip?.tripId;
+  const pickDestId = pickForTrip?.destinationId;
+
+  const loadPicked = useCallback(async () => {
+    if (!pickTripId) return new Map();
+    const full = await getTripById(pickTripId);
+    const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
+    const map = new Map((dest?.places || []).map((p) => [p.placeId, p.id]));
+    setPickedMap(map);
+    setPickedReady(true);
+    return map;
+  }, [pickTripId, pickDestId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!pickTripId) return undefined;
+      let cancelled = false;
+      // On failure keep what we already know (the seed) rather than clearing the ticks.
+      loadPicked().catch(() => { if (!cancelled) setPickedReady(true); });
+      return () => { cancelled = true; };
+    }, [pickTripId, loadPicked])
+  );
+
+  const togglePick = useCallback(async (item) => {
+    const id = item.placeId;
+    if (!id || !pickTripId || !pickDestId || pickPending.has(id)) return;
+
+    const category = toTripCategory(activeCategory);
+    setPickPending((prev) => new Set(prev).add(id));
+    try {
+      if (pickedMap.has(id)) {
+        // Saved already: remove it. If we only know it's saved (409 earlier),
+        // look up its id first.
+        let tripPlaceId = pickedMap.get(id);
+        if (!tripPlaceId) tripPlaceId = (await loadPicked()).get(id);
+        if (tripPlaceId) await removeTripPlace(tripPlaceId);
+        setPickedMap((prev) => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+      } else {
+        const res = await addPlaceToTrip(pickTripId, pickDestId, buildTripPlaceDto(item, category));
+        setPickedMap((prev) => new Map(prev).set(id, res.id || ''));
+      }
+    } catch (e) {
+      const message = e instanceof AuthRequiredError
+        ? 'Sign in to edit your trips.'
+        : (e?.message || 'Something went wrong. Please try again.');
+      Alert.alert('Could not update trip', message);
+    } finally {
+      setPickPending((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, [pickTripId, pickDestId, pickedMap, pickPending, activeCategory, loadPicked]);
+
+  // "Added (N)": N is every place saved to this destination across the
+  // Stays, Food and Activities tabs, including ones added earlier.
+  const pickedCount = pickedMap.size;
+  useEffect(() => {
+    if (!pickForTrip || !isFocused) return;
+    // While picking, the bar stays collapsed (Home circle + "Added (N)") at all times.
+    setCollapsed(true);
+    setCta({
+      label: pickedCount > 0 ? `Added (${pickedCount})` : 'Done',
+      icon: 'checkmark-circle',
+      onPress: () => navigation.goBack(),
+    });
+  }, [pickForTrip, isFocused, pickedCount, setCta, setCollapsed, navigation]);
+
   const handleScroll = (e) => {
+    // Picking mode keeps the bar collapsed; scrolling must not expand it.
+    if (pickForTrip) return;
     const y = e.nativeEvent.contentOffset.y;
     if (y > 40 && !collapsed) {
       setLocalCollapsed(true);
@@ -251,6 +408,8 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
   const renderResult = ({ item }) => {
     const isFaved = favedIds.has(item.placeId);
+    const isPicked = pickedMap.has(item.placeId);
+    const isPickPending = pickPending.has(item.placeId);
     return (
     <TouchableOpacity
       style={styles.card}
@@ -262,6 +421,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
         photoUrl: item.photoUrl,
         rating: item.rating,
         category: activeCategory,
+        pickForTrip,
       })}
     >
       <View style={styles.cardImageWrap}>
@@ -273,20 +433,30 @@ export default function DestinationDetailScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Favourite heart */}
-        <TouchableOpacity
-          style={styles.heartButton}
-          onPress={() => toggleFavourite(item)}
-          activeOpacity={0.8}
-          accessibilityLabel={isFaved ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-        >
-          <Ionicons
-            name={isFaved ? 'heart' : 'heart-outline'}
-            size={18}
-            color={isFaved ? COLORS.accent : COLORS.textPrimary}
+        {pickForTrip ? (
+          /* Picking for a trip: add / saved toggle */
+          <PickToggle
+            picked={isPicked}
+            pending={isPickPending || !pickedReady}
+            onPress={() => togglePick(item)}
+            label={isPicked ? `Remove ${item.name} from ${pickForTrip.tripName}` : `Add ${item.name} to ${pickForTrip.tripName}`}
           />
-        </TouchableOpacity>
+        ) : (
+          /* Favourite heart */
+          <TouchableOpacity
+            style={styles.heartButton}
+            onPress={() => toggleFavourite(item)}
+            activeOpacity={0.8}
+            accessibilityLabel={isFaved ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons
+              name={isFaved ? 'heart' : 'heart-outline'}
+              size={18}
+              color={isFaved ? COLORS.accent : COLORS.textPrimary}
+            />
+          </TouchableOpacity>
+        )}
 
         {item.rating > 0 && (
           <View style={styles.ratingPill}>
@@ -337,11 +507,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
   const renderListState = () => {
     if (isLoading) {
-      return (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
-      );
+      return <GridSkeleton label="Loading places" />;
     }
     if (hasError) {
       return (
@@ -373,6 +539,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
           pass up behind the frosted pill bar and the hero's glass frame edges. */}
       <FlatList
         data={activeResults}
+        extraData={{ pickedMap, pickPending, favedIds }}
         renderItem={renderResult}
         keyExtractor={(item) => item.placeId}
         numColumns={2}
@@ -417,9 +584,9 @@ export default function DestinationDetailScreen({ navigation, route }) {
             <Text style={styles.headerTitle} numberOfLines={1}>
               {name || details?.name || 'Destination'}
             </Text>
-            {!!(secondary || details?.formattedAddress) && (
+            {!!(pickForTrip || secondary || details?.formattedAddress) && (
               <Text style={styles.headerSubtitle} numberOfLines={1}>
-                {secondary || details?.formattedAddress}
+                {pickForTrip ? `Adding to ${pickForTrip.tripName}` : (secondary || details?.formattedAddress)}
               </Text>
             )}
           </View>
@@ -570,6 +737,35 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.cardBackground,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  // Add-to-trip toggle (add / added).
+  pickToggle: {
+    position: 'absolute',
+    top: SIZES.spacing_sm,
+    right: SIZES.spacing_sm,
+  },
+  pickToggleInner: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  pickBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pickBadgeIdle: {
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+  },
+  pickBadgeAdded: {
+    shadowColor: '#126b37',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 5,
   },
   heartButton: {
     position: 'absolute',

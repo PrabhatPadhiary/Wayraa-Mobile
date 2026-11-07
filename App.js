@@ -12,6 +12,7 @@ import {
 } from '@expo-google-fonts/poppins';
 import { View, Text, Image, Animated, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -117,6 +118,8 @@ export default function App() {
   }
 
   return (
+    // Gesture handler root: native-thread gestures (e.g. swipeable trip cards).
+    <GestureHandlerRootView style={styles.root}>
     <SafeAreaProvider>
       <BottomBarProvider>
         <NavigationContainer>
@@ -137,10 +140,14 @@ export default function App() {
         </NavigationContainer>
       </BottomBarProvider>
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   loading: {
     flex: 1,
     backgroundColor: COLORS.backgroundWarm,

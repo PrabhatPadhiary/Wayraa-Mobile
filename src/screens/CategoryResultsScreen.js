@@ -8,12 +8,11 @@ import {
   StatusBar,
   Image,
   FlatList,
-  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { FilterChips, ScreenHeader } from '../components';
+import { FilterChips, ScreenHeader, GridSkeleton } from '../components';
 import { getPlacesByTheme, getCurrentLocation } from '../services';
 
 // Global vs. region-biased ("Nearby") toggle.
@@ -165,8 +164,9 @@ export default function CategoryResultsScreen({ route, navigation }) {
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {loading ? (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
+        // Offset below the floating header, like the real list.
+        <View style={{ paddingTop: headerHeight + SIZES.spacing_sm }}>
+          <GridSkeleton />
         </View>
       ) : (
         <FlatList

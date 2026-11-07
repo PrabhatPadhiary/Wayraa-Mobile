@@ -17,6 +17,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
+import { AddToTripSheet } from '../components';
 import {
   getPlaceDetails,
   getFavourites,
@@ -86,6 +87,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
     photoUrl: routePhotoUrl,
     rating: routeRating,
     category,
+    pickForTrip,
   } = route.params || {};
 
   const insets = useSafeAreaInsets();
@@ -176,6 +178,32 @@ export default function PlaceDetailScreen({ navigation, route }) {
       setFavPending(false);
     }
   }, [favPending, isFaved, placeId, displayName, displayAddress, displayRating, displayReviewCount, heroPhoto, category]);
+
+  // ── Add to trip ─────────────────────────────────────────────────────────────
+  const [tripSheetOpen, setTripSheetOpen] = useState(false);
+
+  // Shape the sheet expects. `photos` and `geometry` come straight from the
+  // details response so the saved place keeps its photo and coordinates.
+  const tripSheetPlace = {
+    placeId,
+    name: displayName,
+    vicinity: displayAddress,
+    rating: displayRating,
+    userRatingsTotal: displayReviewCount,
+    category,
+    photos: details?.photos,
+    geometry: details?.geometry,
+    previewUrl: heroPhoto,
+  };
+
+  const openTripFromSheet = (tripId, tripName) => {
+    // Trips live in the My Trips tab; keep its list underneath so back works.
+    navigation.getParent()?.navigate('MyTrips', {
+      screen: 'TripDetail',
+      params: { tripId, tripName },
+      initial: false,
+    });
+  };
 
   // ── Hours expand ────────────────────────────────────────────────────────────
   const [hoursExpanded, setHoursExpanded] = useState(false);
@@ -374,6 +402,19 @@ export default function PlaceDetailScreen({ navigation, route }) {
                   <Text style={styles.actionLabel}>Website</Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => setTripSheetOpen(true)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Add to a trip"
+              >
+                <View style={styles.actionIcon}>
+                  <Ionicons name="add-circle-outline" size={22} color={COLORS.primary} />
+                </View>
+                <Text style={styles.actionLabel}>Add to trip</Text>
+              </TouchableOpacity>
 
               <TouchableOpacity style={styles.actionBtn} onPress={toggleFavourite} activeOpacity={0.8}>
                 <View style={[styles.actionIcon, isFaved && styles.actionIconActive]}>
@@ -614,6 +655,16 @@ export default function PlaceDetailScreen({ navigation, route }) {
         </View>
         {/* close sheet */}
       </Animated.ScrollView>
+
+      <AddToTripSheet
+        visible={tripSheetOpen}
+        place={tripSheetPlace}
+        preselect={pickForTrip}
+        onClose={() => setTripSheetOpen(false)}
+        onSignIn={() => { setTripSheetOpen(false); navigation.navigate('Welcome'); }}
+        onCreateTrip={() => { setTripSheetOpen(false); navigation.getParent()?.navigate('Explore'); }}
+        onViewTrip={openTripFromSheet}
+      />
     </View>
   );
 }

@@ -45,6 +45,9 @@ function MyTripsStack() {
       <Stack.Screen name="TripDetail" component={TripDetailScreen} />
       {/* Saved places on a trip open the shared place page from this stack. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      {/* "Add place" on a trip opens the destination here, in picking mode, so
+          back returns to the trip instead of switching to the Explore tab. */}
+      <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
     </Stack.Navigator>
   );
 }
@@ -53,6 +56,8 @@ function FavoritesStack() {
   return (
     <Stack.Navigator screenOptions={commonStackOptions}>
       <Stack.Screen name="FavoritesHome" component={FavoritesScreen} />
+      {/* Tapping a saved place opens its details. */}
+      <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
     </Stack.Navigator>
   );
 }

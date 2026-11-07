@@ -29,8 +29,88 @@ const CIRCLE = 66; // collapsed circle diameter (matches the pill outer height)
  *
  * Receives the standard React Navigation bottom-tab props (state, navigation).
  */
+/**
+ * Section tabs (trip screen) drawn inside the main glass pill in place of the
+ * app tabs, with their own sliding capsule.
+ */
+function SectionTabs({ tabs, width }) {
+  const [layouts, setLayouts] = useState({});
+  const x = useRef(new Animated.Value(0)).current;
+  const w = useRef(new Animated.Value(0)).current;
+  const placed = useRef(false);
+  const active = layouts[tabs.activeKey];
+
+  useEffect(() => {
+    if (!active) return;
+    if (!placed.current) {
+      x.setValue(active.x);
+      w.setValue(active.width);
+      placed.current = true;
+      return;
+    }
+    Animated.parallel([
+      Animated.spring(x, { toValue: active.x, useNativeDriver: false, friction: 18, tension: 60 }),
+      Animated.spring(w, { toValue: active.width, useNativeDriver: false, friction: 18, tension: 60 }),
+    ]).start();
+  }, [active, x, w]);
+
+  return (
+    <View style={[styles.fullTabsRow, { width }]}>
+      {active && (
+        <Animated.View pointerEvents="none" style={[styles.capsule, { left: x, width: w }]} />
+      )}
+      {tabs.items.map((tab) => {
+        const isActive = tab.key === tabs.activeKey;
+        return (
+          <TouchableOpacity
+            key={tab.key}
+            style={styles.item}
+            onLayout={(e) => {
+              const { x: lx, width } = e.nativeEvent.layout;
+              setLayouts((prev) => (
+                prev[tab.key]?.x === lx && prev[tab.key]?.width === width
+                  ? prev
+                  : { ...prev, [tab.key]: { x: lx, width } }
+              ));
+            }}
+            onPress={() => tabs.onChange(tab.key)}
+            activeOpacity={0.8}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
+            accessibilityLabel={tab.label}
+          >
+            <Ionicons
+              name={isActive ? tab.icon : `${tab.icon}-outline`}
+              size={22}
+              color={isActive ? COLORS.accent : COLORS.textPrimary}
+            />
+            <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
 export default function AppTabBar({ state, navigation }) {
-  const { collapsed, cta } = useBottomBar();
+  const { collapsed, cta, tabs } = useBottomBar();
+
+  // Section tabs replace the app tabs inside the same full-width pill, with a
+  // crossfade. The last tabs are kept during the fade-out after they clear.
+  const lastTabs = useRef(null);
+  if (tabs) lastTabs.current = tabs;
+  const shownTabs = tabs || lastTabs.current;
+  const tabsAnim = useRef(new Animated.Value(tabs ? 1 : 0)).current; // 1 = section tabs
+  useEffect(() => {
+    Animated.timing(tabsAnim, {
+      toValue: tabs ? 1 : 0,
+      duration: 260,
+      easing: Easing.bezier(0.4, 0, 0.2, 1),
+      useNativeDriver: true,
+    }).start();
+  }, [tabs, tabsAnim]);
 
   const activeKey = state.routes[state.index].name;
   const activeTab = MAIN_TABS.find((t) => t.key === activeKey) || MAIN_TABS[0];
@@ -111,6 +191,13 @@ export default function AppTabBar({ state, navigation }) {
               ]}
               pointerEvents={collapsed ? 'none' : 'box-none'}
             >
+              <Animated.View
+                style={[
+                  styles.fullTabsRow,
+                  { width: rowWidth || 320, opacity: tabsAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) },
+                ]}
+                pointerEvents={tabs ? 'none' : 'box-none'}
+              >
               {activeLayout && (
                 <Animated.View pointerEvents="none" style={[styles.capsule, { left: capsuleX, width: capsuleW }]} />
               )}
@@ -135,6 +222,16 @@ export default function AppTabBar({ state, navigation }) {
                   </TouchableOpacity>
                 );
               })}
+              </Animated.View>
+
+              {!!shownTabs && (
+                <Animated.View
+                  style={[styles.sectionLayer, { opacity: tabsAnim }]}
+                  pointerEvents={tabs ? 'box-none' : 'none'}
+                >
+                  <SectionTabs tabs={shownTabs} width={rowWidth || 320} />
+                </Animated.View>
+              )}
             </Animated.View>
 
             {/* Collapsed: active-tab icon only, centered, fades in. */}
@@ -192,13 +289,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
+  // Holder for the stacked tab rows (fixed width so nothing reflows while the pill shrinks).
   fullTabs: {
     position: 'absolute',
+    top: 0,
+    left: 0,
     height: 64,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingHorizontal: SIZES.spacing_sm,
   },
   capsule: {
     position: 'absolute',
@@ -233,8 +329,22 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   labelActive: {
-    color: COLORS.accent,
+    color: COLORS.accentDeep,
     fontFamily: 'Poppins_600SemiBold',
+  },
+  // One row of tabs (app tabs or section tabs), stacked for the crossfade.
+  fullTabsRow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    height: 64,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.spacing_sm,
+  },
+  sectionLayer: {
+    ...StyleSheet.absoluteFillObject,
   },
   ctaContent: {
     height: 64,
@@ -247,6 +357,6 @@ const styles = StyleSheet.create({
   ctaText: {
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.accent,
+    color: COLORS.accentDeep,
   },
 });

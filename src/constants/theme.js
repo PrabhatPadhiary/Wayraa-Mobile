@@ -11,12 +11,18 @@ export const COLORS = {
   // Accent/CTA colors
   accent: '#e85d04', // Orange from search/CTA buttons
   accentHover: '#c0392b', // Darker orange-red
+  // Deeper orange for SMALL text and white-on-orange labels. The bright accent
+  // is only ~3.5:1 on white; this stays above 4.5:1 on the page, on white and on
+  // white and on light surfaces, so it is readable at small sizes.
+  accentDeep: '#b3380a',
 
   // Background colors
   backgroundDark: '#0d1b2a', // Dark navy for dark theme
   backgroundWarm: '#fffbf8', // Warm white from hero
   backgroundLight: '#ffffff',
   cardBackground: '#f8f9fa',
+  // Warm sand for image placeholders and soft card fills on warm pages.
+  sand: '#f5ede4',
 
   // Text colors
   textPrimary: '#1a1a1a',

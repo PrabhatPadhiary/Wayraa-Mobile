@@ -15,23 +15,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { SignInPrompt } from '../components';
+import { SignInPrompt, DateRangeSheet, DateRangeField } from '../components';
 import useAuth from '../hooks/useAuth';
 import { createTrip, AuthRequiredError } from '../services';
 
 const MAX_TRAVELERS = 20;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Parse "YYYY-MM-DD" into a UTC-midnight ISO string, or null if invalid. */
-function toIsoDate(value) {
-  if (!DATE_PATTERN.test(value)) return null;
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return null;
-  // Reject rollovers such as 2026-02-31.
-  if (date.toISOString().slice(0, 10) !== value) return null;
-  return date.toISOString();
-}
-
 /**
  * CreateTripScreen - first step of trip creation, seeded from a destination.
  *
@@ -42,8 +30,10 @@ export default function CreateTripScreen({ navigation, route }) {
   const { isAuthenticated, isAuthReady } = useAuth();
 
   const [tripName, setTripName] = useState(name ? `Trip to ${name}` : '');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  // ISO strings (UTC midnight) or null, chosen on the range calendar.
+  const [startDate, setStartDate] = useState(null);
+  const [endDate, setEndDate] = useState(null);
+  const [datesOpen, setDatesOpen] = useState(false);
   const [travelers, setTravelers] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -56,26 +46,8 @@ export default function CreateTripScreen({ navigation, route }) {
       return;
     }
 
-    let startIso = null;
-    let endIso = null;
-    if (startDate.trim()) {
-      startIso = toIsoDate(startDate.trim());
-      if (!startIso) {
-        setError('Start date must be a real date in YYYY-MM-DD format.');
-        return;
-      }
-    }
-    if (endDate.trim()) {
-      endIso = toIsoDate(endDate.trim());
-      if (!endIso) {
-        setError('End date must be a real date in YYYY-MM-DD format.');
-        return;
-      }
-    }
-    if (startIso && endIso && endIso < startIso) {
-      setError('End date must be on or after the start date.');
-      return;
-    }
+    const startIso = startDate || null;
+    const endIso = endDate || null;
 
     setSubmitting(true);
     try {
@@ -196,32 +168,14 @@ export default function CreateTripScreen({ navigation, route }) {
           />
 
           {/* Dates */}
-          <View style={styles.dateRow}>
-            <View style={styles.dateField}>
-              <Text style={styles.fieldLabel}>Start date</Text>
-              <TextInput
-                style={styles.input}
-                value={startDate}
-                onChangeText={setStartDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={COLORS.textMuted}
-                keyboardType="numbers-and-punctuation"
-                maxLength={10}
-              />
-            </View>
-            <View style={styles.dateField}>
-              <Text style={styles.fieldLabel}>End date</Text>
-              <TextInput
-                style={styles.input}
-                value={endDate}
-                onChangeText={setEndDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={COLORS.textMuted}
-                keyboardType="numbers-and-punctuation"
-                maxLength={10}
-              />
-            </View>
-          </View>
+          <Text style={styles.fieldLabel}>Dates</Text>
+          <DateRangeField
+            startDate={startDate}
+            endDate={endDate}
+            startLabel="Start"
+            endLabel="End"
+            onPress={() => setDatesOpen(true)}
+          />
           <Text style={styles.hint}>Dates are optional. A trip without dates is saved as a draft.</Text>
 
           {/* Travelers */}
@@ -264,6 +218,19 @@ export default function CreateTripScreen({ navigation, route }) {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <DateRangeSheet
+        visible={datesOpen}
+        title="Trip dates"
+        startDate={startDate}
+        endDate={endDate}
+        onClose={() => setDatesOpen(false)}
+        onApply={(range) => {
+          setStartDate(range.startDate);
+          setEndDate(range.endDate);
+          setDatesOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -365,13 +332,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textPrimary,
     backgroundColor: COLORS.white,
-  },
-  dateRow: {
-    flexDirection: 'row',
-    gap: SIZES.spacing_md,
-  },
-  dateField: {
-    flex: 1,
   },
   hint: {
     fontSize: SIZES.sm,

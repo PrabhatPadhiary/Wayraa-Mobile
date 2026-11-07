@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,20 +6,29 @@ import {
   TouchableOpacity,
   Platform,
   StatusBar,
-  Image,
-  FlatList,
-  ActivityIndicator,
+  ScrollView,
   RefreshControl,
   Animated,
+  Alert,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
-import { API_URL } from '../config';
-import { FilterChips, SignInPrompt, ScreenHeader } from '../components';
-import { getFavourites, removeFavourite, AuthRequiredError } from '../services';
-import { mapWithConcurrency } from '../utils/async';
+import {
+  FilterChips,
+  SignInPrompt,
+  ScreenHeader,
+  GridSkeleton,
+  SwipeableCard,
+  AddToTripSheet,
+} from '../components';
+import { getFavourites, removeFavourite, addFavourite, AuthRequiredError } from '../services';
+import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
+import { cityOf, groupByCity, favouriteIcon } from '../utils/favourites';
 import useAuth from '../hooks/useAuth';
 
 /**
@@ -42,70 +51,38 @@ function matchesFilter(item, filter) {
   return filter.match.includes(cat);
 }
 
-/** Build our backend photo-proxy URL for a given Google photo_reference. */
-function proxyPhotoUrl(reference) {
-  return `${API_URL}/Destinations/photo?reference=${encodeURIComponent(reference)}&maxWidth=400`;
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const PAD = SIZES.spacing_base;
+const GAP = SIZES.spacing_md;
+const COLUMN_WIDTH = (SCREEN_WIDTH - PAD * 2 - GAP) / 2;
+// Repeating tile heights give the masonry its mood-board rhythm.
+const TILE_HEIGHTS = [230, 180, 205, 250, 170, 220];
+const UNDO_MS = 5000;
+
+function photoFor(item, width) {
+  return placePhotoUrl(item.placeId, width) || normalizePhotoUrl(item.photoUrl || item.photoReference, width);
 }
 
-/**
- * Resolve a displayable image URL from whatever the backend stored.
- *
- * Favourites may hold: a raw Google `photo_reference`, or (historically) a
- * fully-built proxy URL like `http://<host>:5273/api/Destinations/photo?reference=...`.
- * That baked-in <host> is often stale (e.g. saved as `localhost` from the web
- * app, or an old LAN IP), so it won't load on a phone. To be robust we always
- * pull the `reference` out of any of our own proxy URLs and rebuild it against
- * the CURRENT API_URL. Non-proxy absolute URLs are used as-is.
- */
-function resolveImageUri(item) {
-  const raw = item?.photoUrl || item?.photoReference;
-  if (!raw || typeof raw !== 'string') return null;
-
-  // If it's one of our proxy URLs, extract the reference and rebuild against
-  // the current host (fixes stale localhost / old-IP hosts).
-  const refMatch = raw.match(/[?&]reference=([^&]+)/);
-  if (refMatch) {
-    return proxyPhotoUrl(decodeURIComponent(refMatch[1]));
-  }
-
-  // A non-proxy absolute URL (e.g. a direct CDN link) — use as-is.
-  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-
-  // Otherwise treat it as a raw photo reference.
-  return proxyPhotoUrl(raw);
-}
-
-/**
- * Fetch a CURRENT photo proxy URL for a place using its (stable) placeId.
- * Google photo_references expire, but placeIds don't — so this re-resolves a
- * fresh reference from /Destinations/details and returns a proxy URL for it.
- * Returns null if the place has no photo or the lookup fails.
- */
-async function resolveFreshPhotoUrl(placeId, attempt = 0) {
-  if (!placeId) return null;
-  try {
-    const resp = await fetch(`${API_URL}/Destinations/details?placeId=${encodeURIComponent(placeId)}`);
-    if (!resp.ok) throw new Error(`details ${resp.status}`);
-    const details = await resp.json();
-    const googleUrl = details?.photos?.[0]?.url;
-    if (!googleUrl) return null;
-    const refMatch = googleUrl.match(/photo_reference=([^&]+)/);
-    if (!refMatch) return null;
-    return proxyPhotoUrl(decodeURIComponent(refMatch[1]));
-  } catch (e) {
-    // One retry with a short backoff for transient throttling/timeouts.
-    if (attempt < 2) {
-      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-      return resolveFreshPhotoUrl(placeId, attempt + 1);
-    }
-    console.log('resolveFreshPhotoUrl error:', e);
-    return null;
-  }
+/** Split items into two columns, always adding to the shorter one. */
+function toMasonry(items) {
+  const cols = [[], []];
+  const heights = [0, 0];
+  items.forEach((item, i) => {
+    const h = TILE_HEIGHTS[i % TILE_HEIGHTS.length];
+    const c = heights[0] <= heights[1] ? 0 : 1;
+    cols[c].push({ item, height: h });
+    heights[c] += h + GAP;
+  });
+  return cols;
 }
 
 /**
  * FavoritesScreen - the user's saved places (FavouritesController).
- * Two-column grid with a tap-to-remove heart on each card.
+ *
+ * City collections at the top (tap one to show just that city), then a
+ * two-column masonry "mood board" of photo tiles. Each tile has a heart to
+ * remove, a + to add it to a trip, and swipes left for the same actions.
+ * Removing shows an Undo toast.
  */
 export default function FavoritesScreen({ navigation }) {
   const { isAuthenticated, isAuthReady } = useAuth();
@@ -114,57 +91,45 @@ export default function FavoritesScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [needsAuth, setNeedsAuth] = useState(false);
-  const [removingId, setRemovingId] = useState(null);
   // Track ids whose image failed to load, so we can show the placeholder.
   const [brokenImages, setBrokenImages] = useState({});
-  // Fresh proxy photo URLs resolved from placeId, keyed by favourite id.
-  // Stored Google photo_references expire, so we re-resolve them on load.
-  const [freshPhotos, setFreshPhotos] = useState({});
   const [activeFilter, setActiveFilter] = useState('all');
+  const [activeCity, setActiveCity] = useState(null); // collection key or null
   const [headerHeight, setHeaderHeight] = useState(0);
-  // Collapse the title on scroll down, leaving just the filter capsules.
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [openSwipeId, setOpenSwipeId] = useState(null);
+  const [tripPlace, setTripPlace] = useState(null); // favourite being added to a trip
+  // Last removal, for the Undo toast: { item, index }.
+  const [undo, setUndo] = useState(null);
+  const undoTimer = useRef(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
   const listOpacity = useRef(new Animated.Value(1)).current;
 
   // Change filter with a quick cross-fade of the list content.
-  const changeFilter = (key) => {
-    if (key === activeFilter) return;
-    Animated.timing(listOpacity, {
-      toValue: 0,
-      duration: 120,
-      useNativeDriver: true,
-    }).start(() => {
-      setActiveFilter(key);
-      Animated.timing(listOpacity, {
-        toValue: 1,
-        duration: 180,
-        useNativeDriver: true,
-      }).start();
+  const crossFade = (apply) => {
+    Animated.timing(listOpacity, { toValue: 0, duration: 120, useNativeDriver: true }).start(() => {
+      apply();
+      Animated.timing(listOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     });
   };
+  const changeFilter = (key) => {
+    if (key === activeFilter) return;
+    crossFade(() => setActiveFilter(key));
+  };
+  const toggleCity = (key) => crossFade(() => setActiveCity((cur) => (cur === key ? null : key)));
 
-  // Favourites visible under the current filter.
-  const visibleFavourites = (() => {
+  const collections = useMemo(() => groupByCity(favourites), [favourites]);
+  // Collections are worth showing once there's more than one place to group.
+  const showCollections = favourites.length >= 2;
+  const activeCollection = collections.find((c) => c.key === activeCity) || null;
+
+  // Favourites visible under the current city + filter.
+  const visibleFavourites = useMemo(() => {
     const filter = FILTERS.find((f) => f.key === activeFilter);
-    if (!filter || !filter.match) return favourites;
-    return favourites.filter((f) => matchesFilter(f, filter));
-  })();
+    const base = activeCollection ? activeCollection.items : favourites;
+    return filter?.match ? base.filter((f) => matchesFilter(f, filter)) : base;
+  }, [favourites, activeFilter, activeCollection]);
 
-  // Resolve fresh photo URLs (from placeId) for a set of favourites, in
-  // parallel, updating state as they come back. Clears any prior broken flags.
-  const resolveFreshPhotosFor = useCallback(async (items) => {
-    setBrokenImages({});
-    // Bounded concurrency so we don't flood the backend/Google (which caused
-    // only a few images to resolve per load). Each result updates as it lands.
-    await mapWithConcurrency(
-      items,
-      (f) => resolveFreshPhotoUrl(f.placeId),
-      (f, url) => {
-        if (url) setFreshPhotos((prev) => ({ ...prev, [f.id]: url }));
-      },
-      3
-    );
-  }, []);
+  const columns = useMemo(() => toMasonry(visibleFavourites), [visibleFavourites]);
 
   const loadFavourites = useCallback(async () => {
     setError(false);
@@ -172,8 +137,7 @@ export default function FavoritesScreen({ navigation }) {
     try {
       const data = await getFavourites();
       setFavourites(data);
-      // Re-resolve fresh photo URLs from placeId (stored references expire).
-      resolveFreshPhotosFor(data);
+      setBrokenImages({});
     } catch (e) {
       if (e instanceof AuthRequiredError) {
         setNeedsAuth(true);
@@ -184,7 +148,7 @@ export default function FavoritesScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [resolveFreshPhotosFor]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -199,82 +163,247 @@ export default function FavoritesScreen({ navigation }) {
     }, [loadFavourites, isAuthReady, isAuthenticated])
   );
 
+  // A collection that no longer exists (its last place was removed) clears itself.
+  useEffect(() => {
+    if (activeCity && !collections.some((c) => c.key === activeCity)) setActiveCity(null);
+  }, [activeCity, collections]);
+
+  useEffect(() => () => clearTimeout(undoTimer.current), []);
+
   const onRefresh = () => {
     setRefreshing(true);
     loadFavourites();
   };
 
-  // Collapse the header title on scroll down, expand it back near the top.
-  // Hysteresis band avoids flip-flopping right at the threshold.
-  const handleScroll = (e) => {
-    const y = e.nativeEvent.contentOffset.y;
-    if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
-    else if (y <= 20 && headerCollapsed) setHeaderCollapsed(false);
+
+  // ── Undo toast ──────────────────────────────────────────────────────────
+  const hideToast = () => {
+    clearTimeout(undoTimer.current);
+    Animated.timing(toastAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => setUndo(null));
   };
 
-  const handleRemove = async (placeId) => {
-    if (!placeId || removingId) return;
-    setRemovingId(placeId);
-    // Optimistic removal; restore on failure.
-    const previous = favourites;
-    setFavourites((prev) => prev.filter((f) => f.placeId !== placeId));
-    const ok = await removeFavourite(placeId);
-    if (!ok) setFavourites(previous);
-    setRemovingId(null);
+  const showToast = (entry) => {
+    clearTimeout(undoTimer.current);
+    setUndo(entry);
+    toastAnim.setValue(0);
+    Animated.spring(toastAnim, { toValue: 1, useNativeDriver: true, friction: 9, tension: 90 }).start();
+    undoTimer.current = setTimeout(hideToast, UNDO_MS);
   };
 
-  const renderFavourite = ({ item }) => {
-    // Prefer a freshly-resolved photo (from placeId); fall back to the stored
-    // value rebuilt through the proxy.
-    const uri = freshPhotos[item.id] || resolveImageUri(item);
-    const showImage = uri && !brokenImages[item.id];
+  // Remove straight away (optimistic) and offer Undo, which saves it again.
+  const handleRemove = async (item) => {
+    const index = favourites.findIndex((f) => f.placeId === item.placeId);
+    setFavourites((prev) => prev.filter((f) => f.placeId !== item.placeId));
+    const ok = await removeFavourite(item.placeId);
+    if (!ok) {
+      setFavourites((prev) => {
+        const next = [...prev];
+        next.splice(Math.max(0, index), 0, item);
+        return next;
+      });
+      Alert.alert('Could not remove', 'Please check your connection and try again.');
+      return;
+    }
+    showToast({ item, index });
+  };
+
+  const handleUndo = async () => {
+    if (!undo) return;
+    const { item, index } = undo;
+    hideToast();
+    setFavourites((prev) => {
+      if (prev.some((f) => f.placeId === item.placeId)) return prev;
+      const next = [...prev];
+      next.splice(Math.min(Math.max(0, index), next.length), 0, item);
+      return next;
+    });
+    try {
+      const res = await addFavourite({
+        placeId: item.placeId,
+        placeName: item.placeName,
+        vicinity: item.vicinity,
+        rating: item.rating,
+        userRatingsTotal: item.userRatingsTotal,
+        photoUrl: item.photoUrl,
+        category: item.category,
+      });
+      if (!res.success) throw new Error(res.error);
+    } catch (e) {
+      setFavourites((prev) => prev.filter((f) => f.placeId !== item.placeId));
+      Alert.alert('Could not restore', 'Please try saving it again from the place page.');
+    }
+  };
+
+  // ── Add to trip ─────────────────────────────────────────────────────────
+  const openAddToTrip = (item) => {
+    setTripPlace({
+      placeId: item.placeId,
+      name: item.placeName,
+      vicinity: item.vicinity,
+      rating: item.rating,
+      userRatingsTotal: item.userRatingsTotal,
+      category: item.category,
+      rawPhotoUrl: item.photoUrl || null,
+      previewUrl: photoFor(item, 200),
+    });
+  };
+
+  const openTripFromSheet = (tripId, tripName) => {
+    // Trips live in the My Trips tab; keep its list underneath so back works.
+    navigation.getParent()?.navigate('MyTrips', {
+      screen: 'TripDetail',
+      params: { tripId, tripName },
+      initial: false,
+    });
+  };
+
+  const openPlace = (item) => {
+    navigation.navigate('PlaceDetail', {
+      placeId: item.placeId,
+      name: item.placeName,
+      vicinity: item.vicinity,
+      photoUrl: photoFor(item, 800),
+      rating: item.rating,
+      category: item.category,
+    });
+  };
+
+  // ── Rendering ───────────────────────────────────────────────────────────
+  const renderCollection = (c) => {
+    const photos = c.items.map((i) => photoFor(i, 400)).filter(Boolean).slice(0, 3);
+    const active = c.key === activeCity;
     return (
-    <View style={styles.card}>
-      <View style={styles.cardImageWrap}>
-        {showImage ? (
-          <Image
-            source={{ uri }}
-            style={styles.cardImage}
-            onError={() => setBrokenImages((prev) => ({ ...prev, [item.id]: true }))}
-          />
-        ) : (
-          <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
-            <Ionicons name="image-outline" size={28} color={COLORS.textMuted} />
+      <TouchableOpacity
+        key={c.key}
+        style={[styles.collection, active && styles.collectionActive]}
+        onPress={() => toggleCity(c.key)}
+        activeOpacity={0.9}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        accessibilityLabel={`${c.city}, ${c.items.length} saved`}
+      >
+        {/* Collage: one big photo, two small stacked beside it. */}
+        <View style={styles.collage}>
+          {photos[0] ? (
+            <Image source={{ uri: photos[0] }} style={styles.collageMain} contentFit="cover" cachePolicy="memory-disk" />
+          ) : (
+            <View style={[styles.collageMain, styles.photoEmpty]}>
+              <Ionicons name="images-outline" size={22} color={COLORS.textMuted} />
+            </View>
+          )}
+          {photos.length > 1 && (
+            <View style={styles.collageSide}>
+              <Image source={{ uri: photos[1] }} style={styles.collageSmall} contentFit="cover" cachePolicy="memory-disk" />
+              {photos[2] ? (
+                <Image source={{ uri: photos[2] }} style={styles.collageSmall} contentFit="cover" cachePolicy="memory-disk" />
+              ) : (
+                <View style={[styles.collageSmall, styles.photoEmpty]} />
+              )}
+            </View>
+          )}
+        </View>
+        <LinearGradient colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.65)']} style={styles.collectionShade} pointerEvents="none" />
+        <View style={styles.collectionText} pointerEvents="none">
+          <Text style={styles.collectionCity} numberOfLines={1}>{c.city}</Text>
+          <Text style={styles.collectionCount}>{c.items.length} saved</Text>
+        </View>
+        {active && (
+          <View style={styles.collectionCheck}>
+            <Ionicons name="checkmark" size={14} color={COLORS.white} />
           </View>
         )}
-        <TouchableOpacity
-          style={styles.heartButton}
-          onPress={() => handleRemove(item.placeId)}
-          accessibilityLabel={`Remove ${item.placeName} from favourites`}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="heart" size={18} color={COLORS.accent} />
-        </TouchableOpacity>
-        {item.rating > 0 && (
-          <View style={styles.ratingPill}>
-            <Ionicons name="star" size={11} color="#FFC107" />
-            <Text style={styles.ratingText}>{item.rating}</Text>
-          </View>
-        )}
-      </View>
+      </TouchableOpacity>
+    );
+  };
 
-      <View style={styles.cardContent}>
-        <Text style={styles.cardName} numberOfLines={1}>{item.placeName}</Text>
-        {!!item.vicinity && (
-          <Text style={styles.cardVicinity} numberOfLines={1}>{item.vicinity}</Text>
-        )}
-        {!!item.category && (
-          <View style={styles.categoryChip}>
-            <Text style={styles.categoryChipText}>{item.category}</Text>
+  const renderTile = ({ item, height }) => {
+    const uri = photoFor(item, 500);
+    const showImage = uri && !brokenImages[item.id];
+    const city = cityOf(item.vicinity);
+    return (
+      <SwipeableCard
+        key={item.id}
+        isOpen={openSwipeId === item.id}
+        onOpenChange={(open) => setOpenSwipeId(open ? item.id : null)}
+        actionsHeight={52}
+        actions={[
+          { key: 'trip', label: 'Trip', icon: 'add-circle-outline', color: COLORS.primary, onPress: () => openAddToTrip(item) },
+          { key: 'remove', label: 'Remove', icon: 'heart-dislike-outline', color: COLORS.error, onPress: () => handleRemove(item) },
+        ]}
+      >
+        <TouchableOpacity
+          style={[styles.tile, { height }]}
+          onPress={() => openPlace(item)}
+          activeOpacity={0.92}
+          accessibilityRole="button"
+          accessibilityLabel={[item.placeName, city, item.rating > 0 ? `rated ${item.rating}` : null].filter(Boolean).join(', ')}
+          accessibilityActions={[{ name: 'trip', label: 'Add to trip' }, { name: 'remove', label: 'Remove from favourites' }]}
+          onAccessibilityAction={(e) => {
+            if (e.nativeEvent.actionName === 'trip') openAddToTrip(item);
+            if (e.nativeEvent.actionName === 'remove') handleRemove(item);
+          }}
+        >
+          {showImage ? (
+            <Image
+              source={{ uri }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={200}
+              onError={() => setBrokenImages((prev) => ({ ...prev, [item.id]: true }))}
+            />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, styles.photoEmpty]}>
+              <Ionicons name="image-outline" size={28} color={COLORS.textMuted} />
+            </View>
+          )}
+          <LinearGradient
+            colors={['rgba(0,0,0,0.25)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.75)']}
+            locations={[0, 0.35, 1]}
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+
+          <View style={styles.tileTop}>
+            <View style={styles.categoryBadge}>
+              <Ionicons name={favouriteIcon(item.category)} size={13} color={COLORS.white} />
+            </View>
+            <TouchableOpacity
+              style={styles.heartButton}
+              onPress={() => handleRemove(item)}
+              accessibilityLabel={`Remove ${item.placeName} from favourites`}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="heart" size={17} color={COLORS.accent} />
+            </TouchableOpacity>
           </View>
-        )}
-      </View>
-    </View>
+
+          <View style={styles.tileBottom}>
+            <View style={styles.tileText}>
+              <Text style={styles.tileName} numberOfLines={2}>{item.placeName}</Text>
+              <Text style={styles.tileMeta} numberOfLines={1}>
+                {item.rating > 0 ? `★ ${item.rating}` : ''}
+                {item.rating > 0 && city ? ' · ' : ''}
+                {city || ''}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.tripButton}
+              onPress={() => openAddToTrip(item)}
+              accessibilityLabel={`Add ${item.placeName} to a trip`}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </SwipeableCard>
     );
   };
 
   const renderEmpty = () => {
-    if (loading) return null;
     if (error) {
       return (
         <View style={styles.stateContainer}>
@@ -299,13 +428,88 @@ export default function FavoritesScreen({ navigation }) {
     }
     const filterLabel = FILTERS.find((f) => f.key === activeFilter)?.label?.toLowerCase();
     return (
-      <View style={styles.stateContainer}>
-        <Ionicons name="funnel-outline" size={44} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>No {filterLabel} saved</Text>
+      <View style={styles.inlineEmpty}>
+        <Ionicons name="funnel-outline" size={36} color={COLORS.textMuted} />
+        <Text style={styles.stateTitle}>
+          No {filterLabel} saved{activeCollection ? ` in ${activeCollection.city}` : ''}
+        </Text>
         <Text style={styles.stateSubtitle}>Try a different filter to see more.</Text>
       </View>
     );
   };
+
+  // The scrolling content is memoised so unrelated state changes (e.g. the
+  // undo toast) don't re-render every tile and image.
+  const scrollContent = useMemo(() => (
+          <ScrollView
+            contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + SIZES.spacing_md }]}
+            showsVerticalScrollIndicator={false}
+            onScrollBeginDrag={() => setOpenSwipeId(null)}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={COLORS.accent}
+                progressViewOffset={headerHeight}
+              />
+            }
+          >
+            {showCollections && (
+              <>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionTitle}>Collections</Text>
+                  <Text style={styles.sectionCount}>{collections.length} {collections.length === 1 ? 'city' : 'cities'}</Text>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.collectionsRow}
+                >
+                  {collections.map(renderCollection)}
+                </ScrollView>
+              </>
+            )}
+
+            <Animated.View style={{ opacity: listOpacity }}>
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>
+                  {activeCollection ? activeCollection.city : 'All saved'}
+                </Text>
+                {activeCollection ? (
+                  <TouchableOpacity
+                    style={styles.clearCity}
+                    onPress={() => toggleCity(activeCollection.key)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Show all saved places"
+                  >
+                    <Text style={styles.clearCityText}>Show all</Text>
+                    <Ionicons name="close" size={14} color={COLORS.primary} />
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.sectionCount}>{visibleFavourites.length}</Text>
+                )}
+              </View>
+
+              {visibleFavourites.length === 0 ? (
+                renderEmpty()
+              ) : (
+                <View style={styles.masonry}>
+                  {columns.map((col, i) => (
+                    <View key={i} style={styles.masonryColumn}>
+                      {col.map(renderTile)}
+                    </View>
+                  ))}
+                </View>
+              )}
+            </Animated.View>
+          </ScrollView>
+  // Everything the content reads (render helpers close over these values).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [
+    headerHeight, refreshing, favourites, error, showCollections, collections, activeCity,
+    activeCollection, listOpacity, visibleFavourites, columns, openSwipeId, brokenImages,
+    activeFilter,
+  ]);
 
   // Guest: show the sign-in gate instead of an empty list + header.
   if (needsAuth) {
@@ -322,43 +526,21 @@ export default function FavoritesScreen({ navigation }) {
     );
   }
 
+  const noItemsAtAll = favourites.length === 0 || error;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {loading ? (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
+        // Offset below the floating header, like the real list.
+        <View style={{ paddingTop: headerHeight + SIZES.spacing_sm }}>
+          <GridSkeleton />
         </View>
+      ) : noItemsAtAll ? (
+        <View style={styles.fill}>{renderEmpty()}</View>
       ) : (
-        <Animated.View style={[styles.listWrap, { opacity: listOpacity }]}>
-          <FlatList
-            data={visibleFavourites}
-            renderItem={renderFavourite}
-            keyExtractor={(item) => item.id}
-            numColumns={2}
-            columnWrapperStyle={visibleFavourites.length > 0 ? styles.column : undefined}
-            contentContainerStyle={[
-              visibleFavourites.length === 0 ? styles.listEmpty : styles.listContent,
-              // Only offset for the floating header when there ARE items. When
-              // empty, keep the padding off so the empty state centers in the
-              // full screen instead of being pushed down.
-              visibleFavourites.length > 0 && { paddingTop: headerHeight + SIZES.spacing_sm },
-            ]}
-            ListEmptyComponent={renderEmpty}
-            showsVerticalScrollIndicator={false}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={COLORS.accent}
-                progressViewOffset={headerHeight}
-              />
-            }
-          />
-        </Animated.View>
+        scrollContent
       )}
 
       {/* Shared floating header panel. List scrolls beneath. */}
@@ -369,8 +551,8 @@ export default function FavoritesScreen({ navigation }) {
             ? `${favourites.length} saved ${favourites.length === 1 ? 'place' : 'places'}`
             : 'Places you\u2019ve saved for later'
         }
-        collapsed={headerCollapsed}
-        onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+        // Always expanded (title + filters stay put while the list scrolls).
+        onLayout={(e) => setHeaderHeight(Math.round(e.nativeEvent.layout.height))}
       >
         {!loading && favourites.length > 0 && (
           <FilterChips
@@ -381,11 +563,38 @@ export default function FavoritesScreen({ navigation }) {
           />
         )}
       </ScreenHeader>
+
+      {/* Undo toast after removing a favourite. */}
+      {!!undo && (
+        <Animated.View
+          style={[
+            styles.toast,
+            {
+              opacity: toastAnim,
+              transform: [{ translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+            },
+          ]}
+          accessibilityLiveRegion="polite"
+        >
+          <Ionicons name="heart-dislike" size={16} color={COLORS.white} />
+          <Text style={styles.toastText} numberOfLines={1}>Removed {undo.item.placeName}</Text>
+          <TouchableOpacity onPress={handleUndo} accessibilityRole="button" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.toastUndo}>Undo</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
+
+      <AddToTripSheet
+        visible={!!tripPlace}
+        place={tripPlace}
+        onClose={() => setTripPlace(null)}
+        onSignIn={() => { setTripPlace(null); navigation.navigate('Welcome'); }}
+        onCreateTrip={() => { setTripPlace(null); navigation.getParent()?.navigate('Explore'); }}
+        onViewTrip={openTripFromSheet}
+      />
     </SafeAreaView>
   );
 }
-
-const CARD_GAP = SIZES.spacing_base;
 
 const styles = StyleSheet.create({
   container: {
@@ -393,52 +602,156 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  listWrap: {
+  fill: {
     flex: 1,
   },
-  listContent: {
-    paddingHorizontal: SIZES.spacing_base,
-    paddingTop: SIZES.spacing_xs,
-    paddingBottom: 120,
-  },
-  listEmpty: {
-    flexGrow: 1,
-  },
-  column: {
-    gap: CARD_GAP,
+  scrollContent: {
+    paddingBottom: 140,
   },
 
-  // Favourite card
-  card: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    marginBottom: CARD_GAP,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+  // Section headings
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: PAD,
+    marginTop: SIZES.spacing_sm,
+    marginBottom: SIZES.spacing_md,
+  },
+  sectionTitle: {
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+  },
+  sectionCount: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textMuted,
+  },
+  clearCity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: 5,
+    borderRadius: SIZES.radius_full,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+  },
+  clearCityText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
+  },
+
+  // City collections
+  collectionsRow: {
+    gap: SIZES.spacing_md,
+    paddingHorizontal: PAD,
+    paddingBottom: SIZES.spacing_md,
+  },
+  collection: {
+    width: 220,
+    height: 150,
+    borderRadius: 24,
     overflow: 'hidden',
+    backgroundColor: COLORS.cardBackground,
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
-  cardImageWrap: {
-    position: 'relative',
+  collectionActive: {
+    borderColor: COLORS.accent,
   },
-  cardImage: {
+  collage: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 2,
+  },
+  collageMain: {
+    flex: 2,
+    height: '100%',
+  },
+  collageSide: {
+    flex: 1,
+    gap: 2,
+  },
+  collageSmall: {
+    flex: 1,
     width: '100%',
-    height: 120,
   },
-  cardImagePlaceholder: {
+  collectionShade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 80,
+  },
+  collectionText: {
+    position: 'absolute',
+    left: SIZES.spacing_md,
+    right: SIZES.spacing_md,
+    bottom: SIZES.spacing_sm,
+  },
+  collectionCity: {
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.white,
+  },
+  collectionCount: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: 'rgba(255,255,255,0.85)',
+  },
+  collectionCheck: {
+    position: 'absolute',
+    top: SIZES.spacing_sm,
+    right: SIZES.spacing_sm,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Masonry
+  masonry: {
+    flexDirection: 'row',
+    gap: GAP,
+    paddingHorizontal: PAD,
+  },
+  masonryColumn: {
+    width: COLUMN_WIDTH,
+    gap: GAP,
+  },
+  tile: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: COLORS.cardBackground,
+    justifyContent: 'space-between',
+  },
+  photoEmpty: {
     backgroundColor: COLORS.cardBackground,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  tileTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SIZES.spacing_sm,
+  },
+  categoryBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   heartButton: {
-    position: 'absolute',
-    top: SIZES.spacing_sm,
-    right: SIZES.spacing_sm,
     width: 32,
     height: 32,
     borderRadius: 16,
@@ -446,50 +759,65 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  ratingPill: {
-    position: 'absolute',
-    bottom: SIZES.spacing_sm,
-    left: SIZES.spacing_sm,
+  tileBottom: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    paddingHorizontal: SIZES.spacing_sm,
-    paddingVertical: 3,
-    borderRadius: SIZES.radius_full,
-    gap: 3,
-  },
-  ratingText: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
-  },
-  cardContent: {
+    alignItems: 'flex-end',
+    gap: SIZES.spacing_xs,
     padding: SIZES.spacing_md,
   },
-  cardName: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
+  tileText: {
+    flex: 1,
   },
-  cardVicinity: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
+  tileName: {
+    fontSize: SIZES.md,
+    lineHeight: 19,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.white,
+  },
+  tileMeta: {
     marginTop: 2,
-  },
-  categoryChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.cardBackground,
-    paddingHorizontal: SIZES.spacing_sm,
-    paddingVertical: 3,
-    borderRadius: SIZES.radius_full,
-    marginTop: SIZES.spacing_sm,
-  },
-  categoryChipText: {
     fontSize: SIZES.xs,
     fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-    textTransform: 'capitalize',
+    color: 'rgba(255,255,255,0.88)',
+  },
+  tripButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Undo toast
+  toast: {
+    position: 'absolute',
+    left: SIZES.spacing_lg,
+    right: SIZES.spacing_lg,
+    bottom: 110,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_md,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  toastText: {
+    flex: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.white,
+  },
+  toastUndo: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_700Bold',
+    color: '#ffb27a',
   },
 
   // State (loading / empty / error)
@@ -499,11 +827,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SIZES.spacing_xl,
   },
+  inlineEmpty: {
+    alignItems: 'center',
+    paddingVertical: SIZES.spacing_xl,
+    paddingHorizontal: SIZES.spacing_xl,
+  },
   stateTitle: {
     fontSize: SIZES.lg,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
     marginTop: SIZES.spacing_base,
+    textAlign: 'center',
   },
   stateSubtitle: {
     fontSize: SIZES.md,

@@ -25,7 +25,15 @@
     "plugins": [
       "expo-font",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-image",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Wayraa uses your location to show destinations and places near you."
+        }
+      ]
     ]
   }
 }

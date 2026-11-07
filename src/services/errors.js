@@ -9,3 +9,15 @@ export class AuthRequiredError extends Error {
     this.name = 'AuthRequiredError';
   }
 }
+
+/**
+ * Thrown when the user is signed in but isn't allowed to do something, for
+ * example a trip viewer trying to add a place. Distinct from AuthRequiredError
+ * so screens can say "you can't edit this trip" instead of "sign in".
+ */
+export class ForbiddenError extends Error {
+  constructor(message = 'You do not have permission to do that') {
+    super(message);
+    this.name = 'ForbiddenError';
+  }
+}

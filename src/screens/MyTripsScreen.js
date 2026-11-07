@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,89 +6,18 @@ import {
   TouchableOpacity,
   Platform,
   StatusBar,
-  Image,
-  FlatList,
-  ActivityIndicator,
-  RefreshControl,
   Animated,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
-import { API_URL } from '../config';
-import { FilterChips, SignInPrompt, ScreenHeader } from '../components';
-import { getMyTrips, AuthRequiredError } from '../services';
-import { mapWithConcurrency } from '../utils/async';
+import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, EditTripSheet, SwipeableCard } from '../components';
+import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
+import { getMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
+import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import useAuth from '../hooks/useAuth';
-
-/** Build our backend photo-proxy URL for a given Google photo_reference. */
-function proxyPhotoUrl(reference) {
-  return `${API_URL}/Destinations/photo?reference=${encodeURIComponent(reference)}&maxWidth=600`;
-}
-
-/**
- * Resolve a CURRENT cover photo for a trip. Google photo_references expire, so
- * stored coverPhotoUrls (raw keyed Google URLs) eventually 400. placeIds are
- * stable, so we re-resolve a fresh reference via /Destinations/details using
- * the trip's first place. Returns a proxy URL, or null.
- */
-async function resolveTripPhotoUrl(trip, attempt = 0) {
-  const placeId = Array.isArray(trip?.placeIds) ? trip.placeIds[0] : null;
-  if (!placeId) return null;
-  try {
-    const resp = await fetch(`${API_URL}/Destinations/details?placeId=${encodeURIComponent(placeId)}`);
-    if (!resp.ok) throw new Error(`details ${resp.status}`);
-    const details = await resp.json();
-    const googleUrl = details?.photos?.[0]?.url;
-    if (!googleUrl) return null;
-    const refMatch = googleUrl.match(/photo_reference=([^&]+)/);
-    if (!refMatch) return null;
-    return proxyPhotoUrl(decodeURIComponent(refMatch[1]));
-  } catch (e) {
-    // One retry with a short backoff for transient throttling/timeouts.
-    if (attempt < 2) {
-      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-      return resolveTripPhotoUrl(trip, attempt + 1);
-    }
-    console.log('resolveTripPhotoUrl error:', e);
-    return null;
-  }
-}
-
-/** Format a date range like "12 Jun – 18 Jun 2026", tolerating missing dates. */
-function formatDateRange(startDate, endDate) {
-  const opts = { day: 'numeric', month: 'short' };
-  const start = startDate ? new Date(startDate) : null;
-  const end = endDate ? new Date(endDate) : null;
-
-  if (start && end) {
-    const sameYear = start.getFullYear() === end.getFullYear();
-    const startStr = start.toLocaleDateString('en-GB', opts);
-    const endStr = end.toLocaleDateString('en-GB', { ...opts, year: 'numeric' });
-    return sameYear ? `${startStr} – ${endStr}` : `${start.toLocaleDateString('en-GB', { ...opts, year: 'numeric' })} – ${endStr}`;
-  }
-  if (start) return `From ${start.toLocaleDateString('en-GB', { ...opts, year: 'numeric' })}`;
-  return 'Dates not set';
-}
-
-/**
- * Visual treatment for a trip status.
- * Backend emits: "draft" | "planning" | "in_progress" | "completed".
- */
-function statusStyle(status) {
-  switch ((status || '').toLowerCase()) {
-    case 'completed':
-      return { label: 'Completed', bg: '#eef1f3', color: COLORS.textSecondary };
-    case 'in_progress':
-      return { label: 'Ongoing', bg: '#e8f5e9', color: COLORS.success };
-    case 'planning':
-      return { label: 'Upcoming', bg: '#fff1e8', color: COLORS.accent };
-    case 'draft':
-    default:
-      return { label: 'Draft', bg: '#eef3f7', color: COLORS.primaryLight };
-  }
-}
 
 /**
  * Filter tabs. `match` maps a filter to the backend status values it includes.
@@ -111,15 +40,18 @@ export default function MyTripsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
+  // Swipe actions: full trip being edited (the sheet needs its stops), the
+  // card currently swiped open, and the signed-in user (for owner checks on
+  // older backends that don't send myRole).
+  const [editingTrip, setEditingTrip] = useState(null);
+  const [openSwipeId, setOpenSwipeId] = useState(null);
+  const [myUserId, setMyUserId] = useState(null);
+  useEffect(() => {
+    getStoredUser().then((u) => setMyUserId(u?.id || null)).catch(() => {});
+  }, []);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [headerHeight, setHeaderHeight] = useState(0);
-  // Collapse the title on scroll down, leaving just the filter capsules.
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
-  // Fresh proxy cover-photo URLs resolved from placeId, keyed by trip id.
-  const [freshPhotos, setFreshPhotos] = useState({});
-  // Track trip ids whose cover image failed to load, to show the placeholder.
-  const [brokenImages, setBrokenImages] = useState({});
   const listOpacity = useRef(new Animated.Value(1)).current;
 
   // Change filter with a quick cross-fade of the list content.
@@ -148,28 +80,12 @@ export default function MyTripsScreen({ navigation }) {
 
   // Resolve fresh cover photos (from placeId) for trips, in parallel,
   // updating state as they arrive. Clears any prior broken flags.
-  const resolveFreshPhotosFor = useCallback(async (items) => {
-    setBrokenImages({});
-    // Bounded concurrency so we don't flood the backend/Google (which caused
-    // only a few covers to resolve per load). Each result updates as it lands.
-    await mapWithConcurrency(
-      items,
-      (t) => resolveTripPhotoUrl(t),
-      (t, url) => {
-        if (url) setFreshPhotos((prev) => ({ ...prev, [t.id]: url }));
-      },
-      3
-    );
-  }, []);
-
   const loadTrips = useCallback(async () => {
     setError(false);
     setNeedsAuth(false);
     try {
       const data = await getMyTrips();
       setTrips(data);
-      // Re-resolve fresh cover photos from placeId (stored references expire).
-      resolveFreshPhotosFor(data);
     } catch (e) {
       if (e instanceof AuthRequiredError) {
         setNeedsAuth(true);
@@ -180,7 +96,7 @@ export default function MyTripsScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [resolveFreshPhotosFor]);
+  }, []);
 
   // Reload whenever the tab regains focus (it stays mounted in the tab navigator).
   useFocusEffect(
@@ -196,6 +112,24 @@ export default function MyTripsScreen({ navigation }) {
     }, [loadTrips, isAuthReady, isAuthenticated])
   );
 
+  // Swipe-left actions (owners only).
+  const editTrip = async (item) => {
+    try {
+      setEditingTrip(await getTripById(item.id));
+    } catch (e) {
+      Alert.alert('Could not open trip', e?.message || 'Please try again.');
+    }
+  };
+
+  const removeTrip = (item) => confirmDeleteTrip(item.name, async () => {
+    try {
+      await deleteTrip(item.id);
+      setTrips((prev) => prev.filter((t) => t.id !== item.id));
+    } catch (e) {
+      Alert.alert('Could not delete trip', e?.message || 'Please try again.');
+    }
+  });
+
   const onRefresh = () => {
     setRefreshing(true);
     loadTrips();
@@ -203,76 +137,35 @@ export default function MyTripsScreen({ navigation }) {
 
   // Collapse the header title on scroll down, expand it back near the top.
   // Hysteresis band avoids flip-flopping right at the threshold.
-  const handleScroll = (e) => {
-    const y = e.nativeEvent.contentOffset.y;
-    if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
-    else if (y <= 20 && headerCollapsed) setHeaderCollapsed(false);
-  };
-
-  const renderTrip = ({ item }) => {
-    const badge = statusStyle(item.status);
-    const destination = item.primaryDestination || item.name;
-    const placeCount = Array.isArray(item.placeIds) ? item.placeIds.length : 0;
-    // Prefer a freshly-resolved cover photo (from placeId); fall back to the
-    // stored coverPhotoUrl. Stored Google references expire, so the fresh one wins.
-    const coverUri = freshPhotos[item.id] || item.coverPhotoUrl;
-    const showCover = coverUri && !brokenImages[item.id];
-
+  const renderTrip = (item) => {
+    // Cover comes straight from the destination's place id (the backend keeps
+    // it fresh). Falls back to the first saved place, then the stored cover.
+    const coverPlaceId = item.primaryPlaceId || (Array.isArray(item.placeIds) ? item.placeIds[0] : null);
+    const coverUri = placePhotoUrl(coverPlaceId, 800) || normalizePhotoUrl(item.coverPhotoUrl, 800);
+    const isOwner = tripRole(item, myUserId) === 'owner';
     return (
-      <TouchableOpacity
-        style={styles.tripCard}
-        activeOpacity={0.9}
-        onPress={() => navigation.navigate('TripDetail', { tripId: item.id, tripName: item.name })}
+      <SwipeableCard
+        enabled={isOwner}
+        isOpen={openSwipeId === item.id}
+        onOpenChange={(open) => setOpenSwipeId(open ? item.id : null)}
+        actions={[
+          { key: 'edit', label: 'Edit', icon: 'create-outline', color: COLORS.primary, onPress: () => editTrip(item) },
+          { key: 'delete', label: 'Delete', icon: 'trash-outline', color: COLORS.error, onPress: () => removeTrip(item) },
+        ]}
       >
-        <View style={styles.tripImageWrap}>
-          {showCover ? (
-            <Image
-              source={{ uri: coverUri }}
-              style={styles.tripImage}
-              onError={() => setBrokenImages((prev) => ({ ...prev, [item.id]: true }))}
-            />
-          ) : (
-            <View style={[styles.tripImage, styles.tripImagePlaceholder]}>
-              <Ionicons name="image-outline" size={30} color={COLORS.textMuted} />
-            </View>
-          )}
-          <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-            <Text style={[styles.statusText, { color: badge.color }]}>{badge.label}</Text>
-          </View>
-        </View>
-
-        <View style={styles.tripContent}>
-          <Text style={styles.tripName} numberOfLines={1}>{item.name}</Text>
-
-          <View style={styles.tripMetaRow}>
-            <Ionicons name="location-outline" size={14} color={COLORS.textSecondary} />
-            <Text style={styles.tripMetaText} numberOfLines={1}>{destination}</Text>
-          </View>
-
-          <View style={styles.tripMetaRow}>
-            <Ionicons name="calendar-outline" size={14} color={COLORS.textSecondary} />
-            <Text style={styles.tripMetaText}>{formatDateRange(item.startDate, item.endDate)}</Text>
-          </View>
-
-          <View style={styles.tripFooter}>
-            {item.travelersCount > 0 && (
-              <View style={styles.footerChip}>
-                <Ionicons name="people-outline" size={13} color={COLORS.textSecondary} />
-                <Text style={styles.footerChipText}>{item.travelersCount}</Text>
-              </View>
-            )}
-            {placeCount > 0 && (
-              <View style={styles.footerChip}>
-                <Ionicons name="pin-outline" size={13} color={COLORS.textSecondary} />
-                <Text style={styles.footerChipText}>{placeCount} {placeCount === 1 ? 'place' : 'places'}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </TouchableOpacity>
+        <TripStackCard
+          trip={item}
+          imageUri={coverUri}
+          onPress={() => navigation.navigate('TripDetail', { tripId: item.id, tripName: item.name })}
+          accessibilityActions={isOwner ? [{ name: 'edit', label: 'Edit trip' }, { name: 'delete', label: 'Delete trip' }] : undefined}
+          onAccessibilityAction={(e) => {
+            if (e.nativeEvent.actionName === 'edit') editTrip(item);
+            if (e.nativeEvent.actionName === 'delete') removeTrip(item);
+          }}
+        />
+      </SwipeableCard>
     );
   };
-
   const renderEmpty = () => {
     if (loading) return null;
     if (error) {
@@ -330,34 +223,31 @@ export default function MyTripsScreen({ navigation }) {
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {loading ? (
-        <View style={styles.stateContainer}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
+        // Offset below the floating header, like the real list.
+        <View style={{ paddingTop: headerHeight + SIZES.spacing_sm }}>
+          <TripListSkeleton />
         </View>
       ) : (
         <Animated.View style={[styles.listWrap, { opacity: listOpacity }]}>
-          <FlatList
-            data={visibleTrips}
-            renderItem={renderTrip}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={[
-              visibleTrips.length === 0 ? styles.listEmpty : styles.listContent,
-              // Only offset for the floating header when there ARE items, so the
-              // empty state centers in the full screen instead of sitting low.
-              visibleTrips.length > 0 && { paddingTop: headerHeight + SIZES.spacing_sm },
-            ]}
-            ListEmptyComponent={renderEmpty}
-            showsVerticalScrollIndicator={false}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={COLORS.accent}
-                progressViewOffset={headerHeight}
-              />
-            }
-          />
+          {visibleTrips.length === 0 ? (
+            <View style={[styles.listEmpty, { paddingTop: headerHeight }]}>
+              {renderEmpty()}
+            </View>
+          ) : (
+            <TripFan
+              trips={visibleTrips}
+              renderCard={(trip) => renderTrip(trip)}
+              topInset={headerHeight + SIZES.spacing_sm}
+              bottomInset={120}
+              onScrollBeginDrag={() => setOpenSwipeId(null)}
+              refreshControlProps={{
+                refreshing,
+                onRefresh,
+                tintColor: COLORS.accent,
+                progressViewOffset: headerHeight,
+              }}
+            />
+          )}
         </Animated.View>
       )}
 
@@ -369,7 +259,7 @@ export default function MyTripsScreen({ navigation }) {
             ? `${trips.length} ${trips.length === 1 ? 'adventure' : 'adventures'} planned`
             : 'Your journeys, all in one place'
         }
-        collapsed={headerCollapsed}
+        collapsed={false}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
         {!loading && trips.length > 0 && (
@@ -381,6 +271,12 @@ export default function MyTripsScreen({ navigation }) {
           />
         )}
       </ScreenHeader>
+      <EditTripSheet
+        visible={!!editingTrip}
+        trip={editingTrip}
+        onClose={() => setEditingTrip(null)}
+        onSaved={() => { setEditingTrip(null); loadTrips(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -403,83 +299,6 @@ const styles = StyleSheet.create({
   },
 
   // Trip card
-  tripCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    marginBottom: SIZES.spacing_base,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-    overflow: 'hidden',
-  },
-  tripImageWrap: {
-    position: 'relative',
-  },
-  tripImage: {
-    width: '100%',
-    height: 150,
-  },
-  tripImagePlaceholder: {
-    backgroundColor: COLORS.cardBackground,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  statusBadge: {
-    position: 'absolute',
-    top: SIZES.spacing_md,
-    left: SIZES.spacing_md,
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: SIZES.spacing_xs,
-    borderRadius: SIZES.radius_full,
-  },
-  statusText: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-  },
-  tripContent: {
-    padding: SIZES.spacing_base,
-  },
-  tripName: {
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-    marginBottom: SIZES.spacing_sm,
-  },
-  tripMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: SIZES.spacing_xs,
-  },
-  tripMetaText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    marginLeft: SIZES.spacing_xs,
-    flex: 1,
-  },
-  tripFooter: {
-    flexDirection: 'row',
-    marginTop: SIZES.spacing_sm,
-  },
-  footerChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.cardBackground,
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: SIZES.spacing_xs,
-    borderRadius: SIZES.radius_full,
-    marginRight: SIZES.spacing_sm,
-  },
-  footerChipText: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-    marginLeft: SIZES.spacing_xs,
-  },
 
   // State (loading / empty / error)
   stateContainer: {

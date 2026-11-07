@@ -25,6 +25,10 @@ import { COLORS, SIZES } from '../constants';
  * @param {(key: string) => void} onChange
  * @param {'text'|'icon-selective'} [variant]
  * @param {boolean} [embedded] - render without the glass chrome (for headers)
+ * @param {boolean} [compact] - "pills" only: force tight sizing (defaults to
+ *   true when there are more than 3 filters)
+ * @param {boolean} [fullWidth] - "pills" only: stretch the bar to the full
+ *   width of its parent, with equal-width segments
  */
 export default function FilterChips({
   filters,
@@ -32,6 +36,8 @@ export default function FilterChips({
   onChange,
   variant = 'text',
   embedded = false,
+  compact: compactProp,
+  fullWidth = false,
 }) {
   // Measured layout (x + width) of each item, keyed by filter key.
   const [layouts, setLayouts] = useState({});
@@ -126,7 +132,50 @@ export default function FilterChips({
   // filter chips elsewhere.
   if (variant === 'pills') {
     // More than 3 tabs (My Trips, Favorites) use tighter sizing so they fit.
-    const compact = filters.length > 3;
+    const compact = compactProp ?? filters.length > 3;
+    if (fullWidth) {
+      return (
+        <View style={[styles.segment, styles.segmentFull]}>
+          {activeLayout && (
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.segmentCapsule, { left: capsuleX, width: capsuleW }]}
+            />
+          )}
+          {filters.map((filter) => {
+            const isActive = filter.key === activeKey;
+            return (
+              <TouchableOpacity
+                key={filter.key}
+                style={[styles.segmentItem, styles.segmentItemFull]}
+                onLayout={handleLayout(filter.key)}
+                onPress={() => onChange(filter.key)}
+                activeOpacity={0.8}
+              >
+                {!!filter.icon && (
+                  <Ionicons
+                    name={filter.icon}
+                    size={15}
+                    color={isActive ? COLORS.white : COLORS.accent}
+                  />
+                )}
+                <Text
+                  style={[
+                    styles.segmentLabel,
+                    styles.segmentLabelFull,
+                    isActive && styles.segmentLabelActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      );
+    }
+
     return (
       // Horizontal scroller as a safety net: centers the control when it fits
       // and scrolls instead of overflowing on narrow screens.
@@ -308,6 +357,20 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_full,
     // Sit above the sliding capsule so labels/icons stay visible.
     zIndex: 1,
+  },
+  // Full-width bar: track stretches, segments share the width equally.
+  segmentFull: {
+    alignSelf: 'stretch',
+    backgroundColor: '#fff1e8',
+    borderColor: '#ffd9c2',
+  },
+  segmentLabelFull: {
+    fontSize: 14,
+  },
+  segmentItemFull: {
+    flex: 1,
+    paddingHorizontal: 4,
+    gap: 4,
   },
   // Tighter segment for rows with more than 3 tabs.
   segmentItemCompact: {
