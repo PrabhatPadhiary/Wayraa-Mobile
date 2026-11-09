@@ -16,14 +16,14 @@ const MAX_AVATARS = 3;
 
 // Solid avatar colors, picked per name so a person keeps their color.
 const AVATAR_COLORS = ['#e85d04', '#0685c0', '#2d6a4f', '#6a4c93', '#c0392b', '#415a77'];
-function avatarColorFor(name) {
+export function avatarColorFor(name) {
   const text = name || '?';
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) % 997;
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
-function initialsFor(name) {
+export function initialsFor(name) {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
   const first = parts[0][0] || '';
@@ -32,7 +32,7 @@ function initialsFor(name) {
 }
 
 /** Status pill styling, matching the colors used elsewhere for trip status. */
-function statusInfo(status) {
+export function statusInfo(status) {
   switch ((status || '').toLowerCase()) {
     case 'completed':
       return { label: 'Completed', color: COLORS.textSecondary };

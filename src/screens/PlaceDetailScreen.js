@@ -17,7 +17,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { AddToTripSheet } from '../components';
+import { AddToTripSheet, PhotoViewer } from '../components';
 import {
   getPlaceDetails,
   getFavourites,
@@ -181,6 +181,10 @@ export default function PlaceDetailScreen({ navigation, route }) {
 
   // ── Add to trip ─────────────────────────────────────────────────────────────
   const [tripSheetOpen, setTripSheetOpen] = useState(false);
+  // Full-screen photo viewer: index of the photo open, or null when closed.
+  const [viewerIndex, setViewerIndex] = useState(null);
+  // Which hero photo is showing (for the dots).
+  const [heroPage, setHeroPage] = useState(0);
 
   // Shape the sheet expects. `photos` and `geometry` come straight from the
   // details response so the saved place keeps its photo and coordinates.
@@ -279,18 +283,37 @@ export default function PlaceDetailScreen({ navigation, route }) {
         )}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
       >
-        {/* ── Hero image — static, no parallax ── */}
+        {/* ── Hero: every photo, swipe sideways, dots below ── */}
         <View style={styles.heroContainer}>
           {heroPhoto ? (
-            <Image source={{ uri: heroPhoto }} style={styles.heroImage} resizeMode="cover" />
+            <>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={(e) => setHeroPage(Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH))}
+                accessibilityLabel={`Photos of ${routeName || details?.name || 'this place'}, ${heroPage + 1} of ${displayPhotos.length}`}
+              >
+                {displayPhotos.map((url, i) => (
+                  <Image key={i} source={{ uri: url }} style={styles.heroImage} resizeMode="cover" />
+                ))}
+              </ScrollView>
+              {displayPhotos.length > 1 && (
+                <View style={styles.heroDots} pointerEvents="none">
+                  {displayPhotos.map((_, i) => (
+                    <View key={i} style={[styles.heroDot, i === heroPage && styles.heroDotOn]} />
+                  ))}
+                </View>
+              )}
+            </>
           ) : (
             <View style={[styles.heroImage, styles.heroPlaceholder]}>
               <Ionicons name="image-outline" size={52} color={COLORS.textMuted} />
             </View>
           )}
 
-          {/* Back + heart float over the image */}
-          <View style={[styles.heroControls, { paddingTop: insets.top + 12 }]}>
+          {/* Back + heart float over the image (box-none: swipes pass through) */}
+          <View style={[styles.heroControls, { paddingTop: insets.top + 12 }]} pointerEvents="box-none">
             <TouchableOpacity
               style={styles.backBtn}
               onPress={() => navigation.goBack()}
@@ -581,7 +604,15 @@ export default function PlaceDetailScreen({ navigation, route }) {
                 contentContainerStyle={styles.galleryScroll}
               >
                 {displayPhotos.map((url, i) => (
-                  <Image key={i} source={{ uri: url }} style={styles.galleryThumb} resizeMode="cover" />
+                  <TouchableOpacity
+                    key={i}
+                    activeOpacity={0.85}
+                    onPress={() => setViewerIndex(i)}
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`Photo ${i + 1} of ${displayPhotos.length}`}
+                  >
+                    <Image source={{ uri: url }} style={styles.galleryThumb} resizeMode="cover" />
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>
@@ -594,10 +625,6 @@ export default function PlaceDetailScreen({ navigation, route }) {
                 <View style={styles.sectionHeaderLeft}>
                   <Ionicons name="chatbubble-outline" size={18} color={COLORS.primary} />
                   <Text style={styles.sectionTitle}>Reviews</Text>
-                </View>
-                <View style={styles.overallRating}>
-                  <Ionicons name="star" size={14} color="#FFC107" />
-                  <Text style={styles.overallRatingText}>{displayRating?.toFixed(1)}</Text>
                 </View>
               </View>
               <ScrollView
@@ -656,6 +683,13 @@ export default function PlaceDetailScreen({ navigation, route }) {
         {/* close sheet */}
       </Animated.ScrollView>
 
+      {/* Full-screen photos (hero + gallery). */}
+      <PhotoViewer
+        visible={viewerIndex !== null}
+        photos={displayPhotos}
+        initialIndex={viewerIndex || 0}
+        onClose={() => setViewerIndex(null)}
+      />
       <AddToTripSheet
         visible={tripSheetOpen}
         place={tripSheetPlace}
@@ -728,6 +762,29 @@ const styles = StyleSheet.create({
   heroImage: {
     width: SCREEN_WIDTH,
     height: HERO_HEIGHT,
+  },
+  // Dots sit just above the white sheet, which overlaps the photo by 24px.
+  heroDots: {
+    position: 'absolute',
+    bottom: 24 + 12,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  heroDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+  },
+  heroDotOn: {
+    width: 16,
+    backgroundColor: '#ffffff',
   },
   heroPlaceholder: {
     justifyContent: 'center',
@@ -1040,8 +1097,6 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-
-
   directionsLink: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
@@ -1072,7 +1127,7 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
   },
   mapTapOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'flex-end',
     alignItems: 'flex-end',
     padding: SIZES.spacing_sm,
@@ -1187,20 +1242,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textMuted,
     marginLeft: 2,
-  },
-  overallRating: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: COLORS.cardBackground,
-    borderRadius: SIZES.radius_full,
-    paddingHorizontal: SIZES.spacing_sm,
-    paddingVertical: 4,
-  },
-  overallRatingText: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
   },
 
   // CTA

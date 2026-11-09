@@ -204,7 +204,6 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
   // Drive the shared persistent tab bar (collapse + CTA) via context.
   const { setCollapsed, setCta, reset } = useBottomBar();
-  const [collapsed, setLocalCollapsed] = useState(false);
 
   const handleCreateTrip = useCallback(() => {
     const location = details?.geometry?.location;
@@ -218,17 +217,18 @@ export default function DestinationDetailScreen({ navigation, route }) {
     });
   }, [navigation, placeId, name, secondary, details]);
 
-  // Register the CTA on the shared tab bar while focused; clear the bar's
-  // collapse + CTA state when leaving this screen. The picking CTA ("Added (N)")
-  // is kept in sync by a separate effect below so a count change doesn't reset
-  // the bar's collapsed state.
+  // While focused, the shared tab bar stays collapsed (Home circle) with a
+  // permanent "Create a trip" button beside it — not only after scrolling.
+  // Cleared when leaving. The picking CTA ("Added (N)") is kept in sync by a
+  // separate effect below so a count change doesn't reset the bar.
   useFocusEffect(
     useCallback(() => {
       if (!pickForTrip) {
+        setCollapsed(true);
         setCta({ label: 'Create a trip', icon: 'add-circle-outline', onPress: handleCreateTrip });
       }
       return () => reset();
-    }, [setCta, reset, handleCreateTrip, pickForTrip])
+    }, [setCta, setCollapsed, reset, handleCreateTrip, pickForTrip])
   );
 
   // ── Trip picking (only when opened with `pickForTrip`) ─────────────────────
@@ -316,18 +316,6 @@ export default function DestinationDetailScreen({ navigation, route }) {
     });
   }, [pickForTrip, isFocused, pickedCount, setCta, setCollapsed, navigation]);
 
-  const handleScroll = (e) => {
-    // Picking mode keeps the bar collapsed; scrolling must not expand it.
-    if (pickForTrip) return;
-    const y = e.nativeEvent.contentOffset.y;
-    if (y > 40 && !collapsed) {
-      setLocalCollapsed(true);
-      setCollapsed(true);
-    } else if (y <= 10 && collapsed) {
-      setLocalCollapsed(false);
-      setCollapsed(false);
-    }
-  };
 
   // Favourites: set of placeIds currently favourited, plus a per-place pending
   // flag so the heart can't be double-tapped mid-request.
@@ -551,7 +539,6 @@ export default function DestinationDetailScreen({ navigation, route }) {
         }
         ListEmptyComponent={renderListState}
         showsVerticalScrollIndicator={false}
-        onScroll={handleScroll}
         scrollEventThrottle={16}
       />
 
@@ -579,6 +566,21 @@ export default function DestinationDetailScreen({ navigation, route }) {
           >
             <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
           </TouchableOpacity>
+
+          {/* Create a trip here (also in the bottom bar). Hidden while picking
+              places for an existing trip. */}
+          {!pickForTrip && (
+            <TouchableOpacity
+              style={styles.createTripButton}
+              onPress={handleCreateTrip}
+              accessibilityRole="button"
+              accessibilityLabel={`Create a trip to ${name || details?.name || 'this place'}`}
+              activeOpacity={0.85}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="add" size={24} color={COLORS.white} />
+            </TouchableOpacity>
+          )}
 
           <View style={styles.headerTitleCenter}>
             <Text style={styles.headerTitle} numberOfLines={1}>
@@ -656,6 +658,17 @@ const styles = StyleSheet.create({
     minHeight: 38,
   },
   // Back button absolutely positioned so the title stays truly centered.
+  createTripButton: {
+    position: 'absolute',
+    right: 0,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.accentDeep,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
   backButton: {
     position: 'absolute',
     left: 0,

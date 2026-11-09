@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { createAccountWithEmail } from '../services';
+import { checkPassword, initialPasswordRules } from '../utils/passwordPolicy';
 
 /**
  * SignUpScreen - Shown when a new user needs to create an account.
@@ -27,16 +28,30 @@ export default function SignUpScreen({ navigation, route }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [focusedField, setFocusedField] = useState(null);
+  // Password rules from the Firebase password policy, re-checked as you type.
+  const [passwordCheck, setPasswordCheck] = useState({
+    isValid: false,
+    rules: initialPasswordRules(),
+  });
+  const latestPassword = useRef(password);
 
-  const isFormValid = name.trim() && password.trim();
+  useEffect(() => {
+    latestPassword.current = password;
+    checkPassword(password).then((result) => {
+      // Ignore results for a password that has since changed.
+      if (latestPassword.current === password) setPasswordCheck(result);
+    });
+  }, [password]);
+
+  const isFormValid = !!name.trim() && passwordCheck.isValid;
 
   const handleSignUp = async () => {
     if (!name.trim()) {
       setError('Please enter your name.');
       return;
     }
-    if (password.length < 6) {
-      setError('Password should be at least 6 characters.');
+    if (!passwordCheck.isValid) {
+      setError('Please choose a password that meets all the requirements below.');
       return;
     }
 
@@ -94,11 +109,12 @@ export default function SignUpScreen({ navigation, route }) {
           <Text style={styles.label}>Password</Text>
           <View style={[
             styles.inputContainer,
+            styles.passwordContainer,
             focusedField === 'password' && styles.inputFocused,
           ]}>
             <TextInput
               style={styles.input}
-              placeholder="At least 6 characters"
+              placeholder="Create a password"
               placeholderTextColor={COLORS.textMuted}
               secureTextEntry={!showPassword}
               value={password}
@@ -116,6 +132,27 @@ export default function SignUpScreen({ navigation, route }) {
                 color={COLORS.textMuted}
               />
             </TouchableOpacity>
+          </View>
+
+          {/* Password requirements: each turns green once met. */}
+          <View style={styles.rules} accessibilityLabel="Password requirements">
+            {passwordCheck.rules.map((rule) => (
+              <View
+                key={rule.key}
+                style={styles.ruleRow}
+                accessible
+                accessibilityLabel={`${rule.label}, ${rule.met ? 'met' : 'not met'}`}
+              >
+                <Ionicons
+                  name={rule.met ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={16}
+                  color={rule.met ? COLORS.success : COLORS.textMuted}
+                />
+                <Text style={[styles.ruleText, rule.met && styles.ruleTextMet]}>
+                  {rule.label}
+                </Text>
+              </View>
+            ))}
           </View>
 
           {/* Error */}
@@ -185,6 +222,27 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_md,
     paddingHorizontal: SIZES.spacing_base,
     marginBottom: SIZES.spacing_lg,
+  },
+  // Password field sits closer to its requirements list.
+  passwordContainer: {
+    marginBottom: SIZES.spacing_md,
+  },
+  rules: {
+    gap: 6,
+    marginBottom: SIZES.spacing_lg,
+  },
+  ruleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+  },
+  ruleText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  ruleTextMet: {
+    color: COLORS.textPrimary,
   },
   inputFocused: {
     borderColor: COLORS.accent,

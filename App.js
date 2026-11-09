@@ -14,11 +14,12 @@ import { View, Text, Image, Animated, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
+import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
 import { getStoredUser } from './src/services';
-import { WelcomeScreen, LoginScreen, SignUpScreen } from './src/screens';
+import { WelcomeScreen, LoginScreen, SignUpScreen, WriteJournalScreen } from './src/screens';
 import { MainTabs } from './src/navigation';
 import { BottomBarProvider } from './src/context/BottomBarContext';
 import { COLORS } from './src/constants';
@@ -78,6 +79,31 @@ function DotsIndicator({ delay }) {
 
 const Stack = createNativeStackNavigator();
 
+/**
+ * Links that open the app: an invite opens the Join trip screen.
+ *  - wayraa://join/<inviteId>            (installed app)
+ *  - exp://<host>/--/join/<inviteId>     (Expo Go, via Linking.createURL)
+ * https://wayraa.com/join/<id> links open the website unless universal links
+ * are set up for the domain; on the phone they can be pasted into
+ * My Trips → Join a trip instead.
+ */
+const linking = {
+  prefixes: [Linking.createURL('/'), 'wayraa://'],
+  config: {
+    screens: {
+      Main: {
+        screens: {
+          MyTrips: {
+            screens: {
+              JoinTrip: 'join/:inviteId',
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 export default function App() {
   const [fontsLoaded] = useFonts({
     PlayfairDisplay_700Bold,
@@ -122,7 +148,7 @@ export default function App() {
     <GestureHandlerRootView style={styles.root}>
     <SafeAreaProvider>
       <BottomBarProvider>
-        <NavigationContainer>
+        <NavigationContainer linking={linking}>
           <Stack.Navigator
             initialRouteName={initialRoute}
             screenOptions={{ headerShown: false }}
@@ -135,6 +161,15 @@ export default function App() {
               component={MainTabs}
               initialParams={{ user: storedUser }}
               options={{ gestureEnabled: false }}
+            />
+            {/* Story composer: full screen over the tabs, sliding up like a
+                "new post". A plain card, not a native modal: leaving an iOS
+                fullScreenModal into a nested tab screen could leave the safe-area
+                insets stale and push the whole app down. */}
+            <Stack.Screen
+              name="WriteJournal"
+              component={WriteJournalScreen}
+              options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
             />
           </Stack.Navigator>
         </NavigationContainer>

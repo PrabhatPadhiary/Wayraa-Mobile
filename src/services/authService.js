@@ -15,6 +15,59 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const USER_STORAGE_KEY = 'wayraa_user';
 
 /**
+ * True when a request never got an answer: the phone is offline, or can't
+ * reach Firebase or the Wayraa API (wrong API_URL, different Wi-Fi, firewall).
+ * Covers Firebase's code and React Native fetch's "Network request failed".
+ */
+function isNetworkError(error) {
+  return (
+    error?.code === 'auth/network-request-failed' ||
+    (error instanceof TypeError && /network request failed/i.test(error.message || ''))
+  );
+}
+
+/**
+ * Message for Firebase's password-policy error. When the project has a
+ * password policy (Firebase console → Authentication → Settings), the error
+ * text lists the rules that weren't met in brackets, e.g.
+ * "[Password must contain an upper case character, ...]". Show those.
+ */
+function passwordPolicyMessage(error) {
+  const match = /\[([^\]]+)\]/.exec(error?.message || '');
+  const rules = match
+    ? match[1].split(',').map((r) => r.trim().replace(/^Password must /i, '')).filter(Boolean)
+    : [];
+  if (rules.length === 0) {
+    return 'Password is too weak. Use a mix of upper and lower case letters, numbers and symbols.';
+  }
+  return `Password must ${rules.join(', ')}.`;
+}
+
+/**
+ * Logs the real auth error (visible in the Metro terminal) and turns it into a
+ * message for the user. `known` maps Firebase error codes to messages.
+ */
+function describeAuthError(context, error, fallback, known = {}) {
+  console.warn(`[auth] ${context} failed:`, error?.code || '', error?.message || error);
+  if (known[error?.code]) return known[error.code];
+  if (error?.code === 'auth/password-does-not-meet-requirements') {
+    return passwordPolicyMessage(error);
+  }
+  // Our API didn't answer (the Firebase step already worked).
+  if (error?.code === 'backend/unreachable') {
+    return `Can't reach the Wayraa server (${API_URL}). Check that this phone is on the same Wi-Fi as the server.`;
+  }
+  // Firebase itself couldn't be reached.
+  if (isNetworkError(error)) {
+    return 'No internet connection. Please check your connection and try again.';
+  }
+  if (error?.code === 'backend/rejected') {
+    return `The Wayraa server couldn't sign you in (${error.status}). Please try again.`;
+  }
+  return fallback;
+}
+
+/**
  * Check if an email already exists in Firebase.
  * Returns: { exists: boolean, methods: string[] }
  */
@@ -23,8 +76,14 @@ export async function checkEmailExists(email) {
     const methods = await fetchSignInMethodsForEmail(auth, email);
     return { exists: methods.length > 0, methods };
   } catch (error) {
-    // Firebase may return an error for invalid emails
-    return { exists: false, methods: [], error: error.message };
+    // `error` is a user-facing message: invalid email, or a network problem.
+    return {
+      exists: false,
+      methods: [],
+      error: describeAuthError('email check', error, 'Please enter a valid email address.', {
+        'auth/invalid-email': 'Please enter a valid email address.',
+      }),
+    };
   }
 }
 
@@ -37,15 +96,15 @@ export async function signInWithEmail(email, password) {
     const token = await result.user.getIdToken();
     return await loginWithBackend(token);
   } catch (error) {
-    let errorMessage = 'Sign-in failed';
-    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-      errorMessage = 'Incorrect password. Please try again.';
-    } else if (error.code === 'auth/too-many-requests') {
-      errorMessage = 'Too many attempts. Please try again later.';
-    } else if (error.code === 'auth/user-not-found') {
-      errorMessage = 'No account found with this email.';
-    }
-    return { success: false, error: errorMessage };
+    return {
+      success: false,
+      error: describeAuthError('email sign-in', error, 'Sign-in failed', {
+        'auth/wrong-password': 'Incorrect password. Please try again.',
+        'auth/invalid-credential': 'Incorrect password. Please try again.',
+        'auth/too-many-requests': 'Too many attempts. Please try again later.',
+        'auth/user-not-found': 'No account found with this email.',
+      }),
+    };
   }
 }
 
@@ -64,15 +123,14 @@ export async function createAccountWithEmail(email, password, name) {
     const token = await result.user.getIdToken(true); // force refresh to get updated claims
     return await loginWithBackend(token);
   } catch (error) {
-    let errorMessage = 'Account creation failed';
-    if (error.code === 'auth/email-already-in-use') {
-      errorMessage = 'An account with this email already exists.';
-    } else if (error.code === 'auth/weak-password') {
-      errorMessage = 'Password should be at least 6 characters.';
-    } else if (error.code === 'auth/invalid-email') {
-      errorMessage = 'Please enter a valid email address.';
-    }
-    return { success: false, error: errorMessage };
+    return {
+      success: false,
+      error: describeAuthError('sign-up', error, 'Account creation failed', {
+        'auth/email-already-in-use': 'An account with this email already exists. Try signing in instead.',
+        'auth/weak-password': 'Password should be at least 6 characters.',
+        'auth/invalid-email': 'Please enter a valid email address.',
+      }),
+    };
   }
 }
 
@@ -99,14 +157,25 @@ export async function signInWithGoogle() {
  * Send Firebase token to backend and store user.
  */
 async function loginWithBackend(token) {
-  const response = await fetch(`${API_URL}/Auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token }),
-  });
+  let response;
+  try {
+    response = await fetch(`${API_URL}/Auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+  } catch (e) {
+    // No response at all: the API isn't reachable from this device.
+    const err = new Error(`Backend unreachable at ${API_URL}: ${e?.message || e}`);
+    err.code = 'backend/unreachable';
+    throw err;
+  }
 
   if (!response.ok) {
-    throw new Error('Backend login failed');
+    const err = new Error(`Backend login failed (${response.status})`);
+    err.code = 'backend/rejected';
+    err.status = response.status;
+    throw err;
   }
 
   const user = await response.json();
@@ -133,7 +202,10 @@ export async function completeGoogleSignIn(idToken) {
     const firebaseToken = await result.user.getIdToken();
     return await loginWithBackend(firebaseToken);
   } catch (error) {
-    return { success: false, error: 'Google sign-in failed. Please try again.' };
+    return {
+      success: false,
+      error: describeAuthError('Google sign-in', error, 'Google sign-in failed. Please try again.'),
+    };
   }
 }
 

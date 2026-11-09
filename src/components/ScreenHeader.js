@@ -26,6 +26,8 @@ import { COLORS, SIZES } from '../constants';
  * - children:   optional extra content rendered under the title (e.g. a
  *               FilterChips row). Wrapped in a full-width container.
  * - style:      extra style applied to the outer panel (optional)
+ * - right:      optional small control (e.g. an icon button, ~40px) pinned to
+ *               the right of the title row. The title stays centered.
  */
 export default function ScreenHeader({
   title,
@@ -35,6 +37,7 @@ export default function ScreenHeader({
   collapsed = false,
   children,
   style,
+  right,
 }) {
   const insets = useSafeAreaInsets();
 
@@ -87,6 +90,13 @@ export default function ScreenHeader({
           ) : null}
         </View>
       </Animated.View>
+
+      {right ? (
+        // Aligned with the title line (28px font, ~42px tall).
+        <View style={[styles.right, { top: insets.top + SIZES.spacing_base + 1 }]}>
+          {right}
+        </View>
+      ) : null}
 
       {children ? (
         <Animated.View
@@ -146,6 +156,11 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
     textAlign: 'center',
+  },
+  right: {
+    position: 'absolute',
+    right: SIZES.spacing_lg,
+    zIndex: 1,
   },
   childrenWrap: {
     marginHorizontal: -SIZES.spacing_lg, // let a scroll row span full width

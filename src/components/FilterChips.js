@@ -29,6 +29,8 @@ import { COLORS, SIZES } from '../constants';
  *   true when there are more than 3 filters)
  * @param {boolean} [fullWidth] - "pills" only: stretch the bar to the full
  *   width of its parent, with equal-width segments
+ * @param {boolean} [tinted] - "pills" + fullWidth only: warm orange track
+ *   (default) instead of the standard grey one
  */
 export default function FilterChips({
   filters,
@@ -38,6 +40,7 @@ export default function FilterChips({
   embedded = false,
   compact: compactProp,
   fullWidth = false,
+  tinted = true,
 }) {
   // Measured layout (x + width) of each item, keyed by filter key.
   const [layouts, setLayouts] = useState({});
@@ -135,7 +138,7 @@ export default function FilterChips({
     const compact = compactProp ?? filters.length > 3;
     if (fullWidth) {
       return (
-        <View style={[styles.segment, styles.segmentFull]}>
+        <View style={[styles.segment, styles.segmentFull, tinted && styles.segmentTinted]}>
           {activeLayout && (
             <Animated.View
               pointerEvents="none"
@@ -361,6 +364,8 @@ const styles = StyleSheet.create({
   // Full-width bar: track stretches, segments share the width equally.
   segmentFull: {
     alignSelf: 'stretch',
+  },
+  segmentTinted: {
     backgroundColor: '#fff1e8',
     borderColor: '#ffd9c2',
   },

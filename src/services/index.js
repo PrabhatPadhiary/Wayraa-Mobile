@@ -44,3 +44,29 @@ export {
   deleteChecklistItem,
 } from './checklistService';
 export { AuthRequiredError, ForbiddenError } from './errors';
+export {
+  INVITE_WEB_BASE,
+  inviteLinkFor,
+  parseInviteId,
+  createInvitation,
+  getPendingInvitations,
+  revokeInvitation,
+  getInvitationPreview,
+  joinTrip,
+  changeMemberRole,
+  removeMember,
+} from './invitationsService';
+export { getMyProfile, updateMyName, signInMethods, sendPasswordReset, deleteMyAccount } from './profileService';
+export {
+  JOURNAL_VIBES,
+  vibeLabel,
+  getJournalFeed,
+  getJournal,
+  toggleJournalLike,
+  addJournalComment,
+  deleteJournalComment,
+  createJournal,
+  updateJournal,
+  uploadJournalPhoto,
+  deleteJournal,
+} from './journalsService';

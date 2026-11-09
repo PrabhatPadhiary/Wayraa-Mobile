@@ -17,7 +17,8 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "package": "com.wayraa.mobile"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -32,6 +33,14 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Wayraa uses your location to show destinations and places near you."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Wayraa uses your photos so you can add them to the trip stories you share.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ]
     ]

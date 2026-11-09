@@ -13,6 +13,9 @@ import {
   PlaceDetailScreen,
   CreateTripScreen,
   TripDetailScreen,
+  JoinTripScreen,
+  ProfileScreen,
+  JournalDetailScreen,
 } from '../screens';
 
 const Tab = createBottomTabNavigator();
@@ -34,6 +37,8 @@ function ExploreStack({ route }) {
       <Stack.Screen name="CategoryResults" component={CategoryResultsScreen} />
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       <Stack.Screen name="CreateTrip" component={CreateTripScreen} />
+      {/* Opened from the avatar on Home. */}
+      <Stack.Screen name="Profile" component={ProfileScreen} />
     </Stack.Navigator>
   );
 }
@@ -48,6 +53,8 @@ function MyTripsStack() {
       {/* "Add place" on a trip opens the destination here, in picking mode, so
           back returns to the trip instead of switching to the Explore tab. */}
       <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
+      {/* Joining a shared trip: from an invite link, or by pasting one. */}
+      <Stack.Screen name="JoinTrip" component={JoinTripScreen} />
     </Stack.Navigator>
   );
 }
@@ -66,6 +73,9 @@ function CommunityStack() {
   return (
     <Stack.Navigator screenOptions={commonStackOptions}>
       <Stack.Screen name="CommunityHome" component={CommunityScreen} />
+      <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
+      {/* Places mentioned in a journal open the shared place page. */}
+      <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
     </Stack.Navigator>
   );
 }

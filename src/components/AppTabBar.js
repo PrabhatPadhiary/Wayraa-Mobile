@@ -8,7 +8,7 @@ import {
   Animated,
   Easing,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import { COLORS, SIZES, MAIN_TABS } from '../constants';
 import GlassSurface from './GlassSurface';
 import { useBottomBar } from '../context/BottomBarContext';
@@ -79,11 +79,20 @@ function SectionTabs({ tabs, width }) {
             accessibilityState={{ selected: isActive }}
             accessibilityLabel={tab.label}
           >
-            <Ionicons
-              name={isActive ? tab.icon : `${tab.icon}-outline`}
-              size={22}
-              color={isActive ? COLORS.accent : COLORS.textPrimary}
-            />
+            {tab.iconFamily === 'feather' ? (
+              // Line icon in both states; the active one is just orange.
+              <Feather
+                name={tab.icon}
+                size={20}
+                color={isActive ? COLORS.accent : COLORS.textPrimary}
+              />
+            ) : (
+              <Ionicons
+                name={isActive ? tab.icon : `${tab.icon}-outline`}
+                size={22}
+                color={isActive ? COLORS.accent : COLORS.textPrimary}
+              />
+            )}
             <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
               {tab.label}
             </Text>
@@ -306,7 +315,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(232, 93, 4, 0.25)',
   },
   iconOnly: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -344,7 +353,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_sm,
   },
   sectionLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   ctaContent: {
     height: 64,

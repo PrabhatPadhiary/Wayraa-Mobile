@@ -11,7 +11,9 @@ import React, { createContext, useContext, useState, useCallback, useMemo } from
  *   - register `tabs` (the trip screen's section tabs) that appear beside the
  *     circle instead. Tabs keep the bar collapsed while registered.
  *
- * `tabs` is owned: { owner, items: [{ key, label, icon }], activeKey, onChange }.
+ * `tabs` is owned: { owner, items: [{ key, label, icon, iconFamily? }], activeKey, onChange }.
+ * `iconFamily: 'feather'` draws a Feather line icon; otherwise Ionicons
+ * (filled when active, `-outline` when not).
  * `clearTabs(owner)` only clears tabs registered by that owner, so a screen
  * that is leaving can't wipe tabs the next screen has already registered.
  *

@@ -238,7 +238,8 @@ export default function WelcomeScreen({ navigation }) {
     setIsLoading(false);
 
     if (result.error) {
-      showToast('Please enter a valid email address.');
+      // Invalid email, or a network problem — the service says which.
+      showToast(result.error);
       return;
     }
 
@@ -1158,7 +1159,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(255,255,255,0.92)',
     justifyContent: 'center',
     alignItems: 'center',

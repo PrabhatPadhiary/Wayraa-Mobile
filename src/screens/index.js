@@ -10,3 +10,7 @@ export { default as LoginScreen } from './LoginScreen';
 export { default as SignUpScreen } from './SignUpScreen';
 export { default as CreateTripScreen } from './CreateTripScreen';
 export { default as TripDetailScreen } from './TripDetailScreen';
+export { default as JoinTripScreen } from './JoinTripScreen';
+export { default as ProfileScreen } from './ProfileScreen';
+export { default as JournalDetailScreen } from './JournalDetailScreen';
+export { default as WriteJournalScreen } from './WriteJournalScreen';

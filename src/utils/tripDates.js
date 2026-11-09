@@ -48,8 +48,11 @@ export function daysUntil(startDate) {
   return Math.round((utcDay(new Date(startDate)) - today) / DAY_MS);
 }
 
+// Soonest start first; trips without a start date go last.
 function byStartAsc(a, b) {
-  return new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+  const start = (t) => (t.startDate ? new Date(t.startDate).getTime() : Infinity);
+  const diff = start(a) - start(b);
+  return Number.isNaN(diff) ? 0 : diff;
 }
 
 /**
@@ -77,4 +80,20 @@ export function pickActiveTrips(trips) {
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
   return [...live, ...upcoming, ...drafts];
+}
+
+/**
+ * Order for the My Trips list: the active trips in the same order as the home
+ * carousel (ongoing, upcoming, drafts — see pickActiveTrips), then completed
+ * trips, most recently finished first. Trips with an unknown status go last.
+ */
+export function sortTripsForList(trips) {
+  if (!Array.isArray(trips)) return [];
+  const active = pickActiveTrips(trips);
+  const finishedAt = (t) => new Date(t.endDate || t.startDate || t.createdAt || 0).getTime() || 0;
+  const completed = trips
+    .filter((t) => (t.status || '').toLowerCase() === 'completed')
+    .sort((a, b) => finishedAt(b) - finishedAt(a));
+  const known = new Set([...active, ...completed]);
+  return [...active, ...completed, ...trips.filter((t) => !known.has(t))];
 }

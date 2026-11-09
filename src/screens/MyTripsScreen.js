@@ -8,15 +8,18 @@ import {
   StatusBar,
   Animated,
   Alert,
+  FlatList,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
-import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, EditTripSheet, SwipeableCard } from '../components';
+import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
 import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
 import { getMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
+import { sortTripsForList } from '../utils/tripDates';
 import useAuth from '../hooks/useAuth';
 
 /**
@@ -30,6 +33,13 @@ const FILTERS = [
   { key: 'completed', label: 'Done', match: ['completed'] },
   { key: 'draft', label: 'Draft', match: ['draft'] },
 ];
+
+/**
+ * Most trips the photo fan shows. Past this the fan gets long and each card
+ * only shows a thin strip, so the rest are reached through "See all", which
+ * switches to a compact list of every trip.
+ */
+const FAN_LIMIT = 6;
 
 /**
  * MyTripsScreen - lists the signed-in user's trips fetched from the backend.
@@ -51,6 +61,8 @@ export default function MyTripsScreen({ navigation }) {
   }, []);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
+  // true = compact list of every trip instead of the photo fan.
+  const [showAll, setShowAll] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
   const listOpacity = useRef(new Animated.Value(1)).current;
 
@@ -63,6 +75,7 @@ export default function MyTripsScreen({ navigation }) {
       useNativeDriver: true,
     }).start(() => {
       setActiveFilter(key);
+      setShowAll(false);
       Animated.timing(listOpacity, {
         toValue: 1,
         duration: 180,
@@ -71,12 +84,28 @@ export default function MyTripsScreen({ navigation }) {
     });
   };
 
-  // Trips visible under the current filter.
+  // Trips visible under the current filter, most relevant first: ongoing,
+  // upcoming, drafts, then completed.
   const visibleTrips = (() => {
     const filter = FILTERS.find((f) => f.key === activeFilter);
-    if (!filter || !filter.match) return trips;
-    return trips.filter((t) => filter.match.includes((t.status || '').toLowerCase()));
+    const matching = !filter || !filter.match
+      ? trips
+      : trips.filter((t) => filter.match.includes((t.status || '').toLowerCase()));
+    return sortTripsForList(matching);
   })();
+  const fanTrips = visibleTrips.slice(0, FAN_LIMIT);
+  const hiddenCount = visibleTrips.length - fanTrips.length;
+  // The list view only makes sense while there are more trips than the fan shows.
+  const listMode = showAll && hiddenCount > 0;
+
+  // Switch between the fan and the full list with the same cross-fade as filters.
+  const toggleShowAll = (next) => {
+    setOpenSwipeId(null);
+    Animated.timing(listOpacity, { toValue: 0, duration: 120, useNativeDriver: true }).start(() => {
+      setShowAll(next);
+      Animated.timing(listOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    });
+  };
 
   // Resolve fresh cover photos (from placeId) for trips, in parallel,
   // updating state as they arrive. Clears any prior broken flags.
@@ -135,25 +164,28 @@ export default function MyTripsScreen({ navigation }) {
     loadTrips();
   };
 
-  // Collapse the header title on scroll down, expand it back near the top.
-  // Hysteresis band avoids flip-flopping right at the threshold.
-  const renderTrip = (item) => {
+  // Renders a trip as a fan card or, with `compact`, as a list row. Both get
+  // the same swipe actions (owners only) and open the trip on tap.
+  const renderTrip = (item, { compact = false } = {}) => {
     // Cover comes straight from the destination's place id (the backend keeps
     // it fresh). Falls back to the first saved place, then the stored cover.
     const coverPlaceId = item.primaryPlaceId || (Array.isArray(item.placeIds) ? item.placeIds[0] : null);
-    const coverUri = placePhotoUrl(coverPlaceId, 800) || normalizePhotoUrl(item.coverPhotoUrl, 800);
+    const photoWidth = compact ? 200 : 800;
+    const coverUri = placePhotoUrl(coverPlaceId, photoWidth) || normalizePhotoUrl(item.coverPhotoUrl, photoWidth);
     const isOwner = tripRole(item, myUserId) === 'owner';
+    const Card = compact ? TripListRow : TripStackCard;
     return (
       <SwipeableCard
         enabled={isOwner}
         isOpen={openSwipeId === item.id}
         onOpenChange={(open) => setOpenSwipeId(open ? item.id : null)}
+        actionsHeight={compact ? 64 : undefined}
         actions={[
           { key: 'edit', label: 'Edit', icon: 'create-outline', color: COLORS.primary, onPress: () => editTrip(item) },
           { key: 'delete', label: 'Delete', icon: 'trash-outline', color: COLORS.error, onPress: () => removeTrip(item) },
         ]}
       >
-        <TripStackCard
+        <Card
           trip={item}
           imageUri={coverUri}
           onPress={() => navigation.navigate('TripDetail', { tripId: item.id, tripName: item.name })}
@@ -166,6 +198,38 @@ export default function MyTripsScreen({ navigation }) {
       </SwipeableCard>
     );
   };
+
+  const refreshControlProps = {
+    refreshing,
+    onRefresh,
+    tintColor: COLORS.accent,
+    progressViewOffset: headerHeight,
+  };
+
+  // Round button at the top-right of the header (always on screen), shown
+  // whenever the fan can't hold every trip: switches between cards and list.
+  const viewToggle = hiddenCount > 0 ? (
+    <TouchableOpacity
+      style={styles.viewToggle}
+      activeOpacity={0.8}
+      onPress={() => toggleShowAll(!listMode)}
+      accessibilityRole="button"
+      accessibilityLabel={listMode ? 'Show trips as cards' : `See all ${visibleTrips.length} trips as a list`}
+      hitSlop={6}
+    >
+      <Ionicons
+        name={listMode ? 'albums-outline' : 'list-outline'}
+        size={20}
+        color={COLORS.accentDeep}
+      />
+      {!listMode && (
+        // Count badge: how many trips the list holds.
+        <View style={styles.viewToggleBadge}>
+          <Text style={styles.viewToggleBadgeText}>{visibleTrips.length}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
+  ) : null;
   const renderEmpty = () => {
     if (loading) return null;
     if (error) {
@@ -189,6 +253,14 @@ export default function MyTripsScreen({ navigation }) {
           <Text style={styles.stateSubtitle}>Explore a destination and create your first trip.</Text>
           <TouchableOpacity style={styles.retryButton} onPress={() => navigation.navigate('Explore')}>
             <Text style={styles.retryText}>Start exploring</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.joinLink}
+            onPress={() => navigation.navigate('JoinTrip')}
+            accessibilityRole="button"
+            hitSlop={8}
+          >
+            <Text style={styles.joinLinkText}>Have an invite? Join a trip</Text>
           </TouchableOpacity>
         </View>
       );
@@ -219,7 +291,10 @@ export default function MyTripsScreen({ navigation }) {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    // No top safe-area padding here: the floating header already clears the
+    // status bar / notch itself, and content is offset by its measured height.
+    // Padding the top too would push the cards down twice.
+    <SafeAreaView style={styles.screen} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {loading ? (
@@ -234,19 +309,29 @@ export default function MyTripsScreen({ navigation }) {
               {renderEmpty()}
             </View>
           ) : (
-            <TripFan
-              trips={visibleTrips}
-              renderCard={(trip) => renderTrip(trip)}
-              topInset={headerHeight + SIZES.spacing_sm}
-              bottomInset={120}
-              onScrollBeginDrag={() => setOpenSwipeId(null)}
-              refreshControlProps={{
-                refreshing,
-                onRefresh,
-                tintColor: COLORS.accent,
-                progressViewOffset: headerHeight,
-              }}
-            />
+            listMode ? (
+              <FlatList
+                data={visibleTrips}
+                keyExtractor={(t, i) => String(t.id ?? i)}
+                renderItem={({ item }) => renderTrip(item, { compact: true })}
+                ItemSeparatorComponent={() => <View style={styles.rowGap} />}
+                contentContainerStyle={[styles.listContent, { paddingTop: headerHeight + SIZES.spacing_sm }]}
+                showsVerticalScrollIndicator={false}
+                onScrollBeginDrag={() => setOpenSwipeId(null)}
+                refreshControl={<RefreshControl {...refreshControlProps} />}
+              />
+            ) : (
+              <TripFan
+                // Remount when the set of trips changes so the scroll resets.
+                key={`${activeFilter}-${fanTrips.length}`}
+                trips={fanTrips}
+                renderCard={(trip) => renderTrip(trip)}
+                topInset={headerHeight + SIZES.spacing_sm}
+                bottomInset={120}
+                onScrollBeginDrag={() => setOpenSwipeId(null)}
+                refreshControlProps={refreshControlProps}
+              />
+            )
           )}
         </Animated.View>
       )}
@@ -260,15 +345,36 @@ export default function MyTripsScreen({ navigation }) {
             : 'Your journeys, all in one place'
         }
         collapsed={false}
+        right={loading ? null : (
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.joinButton}
+              activeOpacity={0.8}
+              onPress={() => navigation.navigate('JoinTrip')}
+              accessibilityRole="button"
+              accessibilityLabel="Join a trip with an invite link"
+              hitSlop={6}
+            >
+              <Ionicons name="person-add-outline" size={19} color={COLORS.accentDeep} />
+            </TouchableOpacity>
+            {viewToggle}
+          </View>
+        )}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
         {!loading && trips.length > 0 && (
-          <FilterChips
-            filters={FILTERS}
-            activeKey={activeFilter}
-            onChange={changeFilter}
-            variant="pills"
-          />
+          // The header's children area runs edge to edge; re-apply its side
+          // inset so the full-width track lines up with the header content.
+          <View style={styles.filterRow}>
+            <FilterChips
+              filters={FILTERS}
+              activeKey={activeFilter}
+              onChange={changeFilter}
+              variant="pills"
+              fullWidth
+              tinted={false}
+            />
+          </View>
         )}
       </ScreenHeader>
       <EditTripSheet
@@ -287,6 +393,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
+  // Main list view: same as container but without the Android status bar
+  // padding (the floating header handles that).
+  screen: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
   listWrap: {
     flex: 1,
   },
@@ -296,6 +408,55 @@ const styles = StyleSheet.create({
   },
   listEmpty: {
     flexGrow: 1,
+  },
+  rowGap: {
+    height: SIZES.spacing_md,
+  },
+
+  filterRow: {
+    paddingHorizontal: SIZES.spacing_lg,
+  },
+  // Top-right header buttons: join a shared trip, and the list / cards toggle.
+  headerActions: {
+    flexDirection: 'row',
+    gap: SIZES.spacing_sm,
+  },
+  joinButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.sand,
+  },
+  viewToggle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.sand,
+  },
+  viewToggleBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    // Deeper orange keeps the small white number readable (theme note).
+    backgroundColor: COLORS.accentDeep,
+    borderWidth: 1.5,
+    borderColor: COLORS.white,
+  },
+  viewToggleBadgeText: {
+    fontSize: SIZES.xs,
+    lineHeight: 13,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
   },
 
   // Trip card
@@ -326,6 +487,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_xl,
     paddingVertical: SIZES.spacing_md,
     borderRadius: SIZES.radius_full,
+  },
+  joinLink: {
+    marginTop: SIZES.spacing_base,
+  },
+  joinLinkText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
   },
   retryText: {
     fontSize: SIZES.base,

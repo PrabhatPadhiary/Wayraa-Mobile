@@ -40,13 +40,14 @@ import {
   getLocationPermission,
   getNearbyPlaces,
   reverseGeocode,
-  logoutUser,
   getMyTrips,
   getFavourites,
 } from '../services';
 import { API_URL } from '../config';
 import useAuth from '../hooks/useAuth';
-import { pickActiveTrips } from '../utils/tripDates';
+import { pickActiveTrips, daysUntil, dayCount } from '../utils/tripDates';
+import { LinearGradient } from 'expo-linear-gradient';
+import { initialsFor } from '../components/TripStackCard';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -147,6 +148,9 @@ const POPULAR_DESTINATIONS = [
 /**
  * ExploreScreen - Main home screen with search, destinations, and journals.
  */
+// Example searches the Home search pill cycles through (every ~3s).
+const SEARCH_HINTS = ['Search destinations, stays & more', 'Try "Goa"', 'Try "Kyoto"', 'Try "Swiss Alps"'];
+
 export default function ExploreScreen({ route, navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -171,13 +175,11 @@ export default function ExploreScreen({ route, navigation }) {
   const routeUser = route?.params?.user;
   const user = firebaseUser || routeUser;
 
-  // Profile avatar: prefer the Firebase photo, else show the first initial of
-  // the display name or email.
+  // Profile avatar: prefer the Firebase photo, else initials of the display
+  // name (or email).
   const profilePhoto = firebaseUser?.photoURL || routeUser?.photoUrl || null;
   const profileName = firebaseUser?.displayName || routeUser?.name || firebaseUser?.email || '';
-  const profileInitial = (profileName.trim()[0] || 'U').toUpperCase();
 
-  const [menuOpen, setMenuOpen] = useState(false);
 
   // Time-aware greeting.
   const greeting = (() => {
@@ -188,8 +190,22 @@ export default function ExploreScreen({ route, navigation }) {
   })();
   const firstName = (profileName || '').trim().split(' ')[0];
 
+  // Slim search pill: the hint rotates through a few example searches.
+  const [hintIndex, setHintIndex] = useState(0);
+  const hintFade = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const timer = setInterval(() => {
+      Animated.timing(hintFade, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
+        setHintIndex((i) => (i + 1) % SEARCH_HINTS.length);
+        Animated.timing(hintFade, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+      });
+    }, 3200);
+    return () => clearInterval(timer);
+  }, [hintFade]);
+
   // Collapsing header: greeting + location chip shrink away on scroll down,
-  // leaving just the search pill; they expand back on scroll up.
+  // leaving a compact bar (search pill + small avatar); they expand back on
+  // scroll up.
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const headerAnim = useRef(new Animated.Value(0)).current; // 0 = expanded, 1 = collapsed
 
@@ -261,6 +277,73 @@ export default function ExploreScreen({ route, navigation }) {
   // whenever the tab regains focus so new trips/favourites show up right away.
   // Any failure just hides the section, since both are optional extras.
   const [activeTrips, setActiveTrips] = useState([]);
+
+  // Greeting subline about your next trip: "Kyoto in 9 days", "Day 3 in
+  // Osaka", "Goa starts today", else "Where to next?". Tapping it opens the trip.
+  // Uses the first active trip that has dates and isn't already over (a trip
+  // still marked ongoing after its end date, or a draft without dates, is
+  // skipped rather than hiding the line).
+  const lineFor = (trip) => {
+    if (!trip?.startDate) return null;
+    const place = trip.primaryDestination || trip.name;
+    const until = daysUntil(trip.startDate);
+    if (until === null) return null;
+    if (until > 0) {
+      return { icon: 'airplane', text: `${place} in ${until} ${until === 1 ? 'day' : 'days'}` };
+    }
+    if (until === 0) return { icon: 'airplane', text: `${place} starts today` };
+    const total = dayCount(trip.startDate, trip.endDate);
+    const dayNo = 1 - until;
+    if (!total || dayNo > total) return null; // over (or no end date to count from)
+    return { icon: 'sunny', text: `Day ${dayNo} in ${place}` };
+  };
+  let headlineTrip = null;
+  let tripLine = null;
+  for (const trip of activeTrips) {
+    const line = lineFor(trip);
+    if (line) { headlineTrip = trip; tripLine = line; break; }
+  }
+  // Avatar used in the greeting row (48) and the collapsed bar (40): a thin
+  // orange ring around your photo, or white initials on the brand navy
+  // gradient. No shadow: on iOS a shadow on an image/clipped view is drawn
+  // around its square box, not the circle.
+  const renderAvatar = (size) => {
+    const outer = { width: size, height: size, borderRadius: size / 2 };
+    const innerSize = size - 6; // 2px ring + 1px gap on each side
+    const inner = { width: innerSize, height: innerSize, borderRadius: innerSize / 2 };
+    if (!isAuthenticated) {
+      return (
+        <View style={[styles.avatarRing, styles.avatarRingGuest, outer]}>
+          <Ionicons name="person-outline" size={size * 0.45} color={COLORS.primary} />
+        </View>
+      );
+    }
+    return (
+      <View style={[styles.avatarRing, outer]}>
+        {profilePhoto ? (
+          <Image source={{ uri: profilePhoto }} style={[styles.avatarInner, inner]} />
+        ) : (
+          <LinearGradient
+            colors={[COLORS.primary, COLORS.primaryLight]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.avatarInner, inner]}
+          >
+            <Text style={[styles.avatarInitials, { fontSize: size * 0.34 }]}>{initialsFor(profileName)}</Text>
+          </LinearGradient>
+        )}
+      </View>
+    );
+  };
+
+  const openHeadlineTrip = () => {
+    if (!headlineTrip) return;
+    navigation.navigate('MyTrips', {
+      screen: 'TripDetail',
+      params: { tripId: headlineTrip.id, tripName: headlineTrip.name },
+      initial: false,
+    });
+  };
   const [favourites, setFavourites] = useState([]);
   // True once each request has finished (success or failure) at least once,
   // so skeletons show only on the first load, not on every refocus refresh.
@@ -333,23 +416,14 @@ export default function ExploreScreen({ route, navigation }) {
 
   const handleProfilePress = () => {
     if (isAuthenticated) {
-      // Toggle the account dropdown.
-      setMenuOpen((v) => !v);
+      // Profile: account, stats, settings and log out.
+      navigation.navigate('Profile');
     } else {
       // Guest: send them to the auth flow.
       navigation.navigate('Welcome');
     }
   };
 
-  const handleLogout = async () => {
-    setMenuOpen(false);
-    await logoutUser();
-    // Walk up to the ROOT navigator (Explore is now nested: root > tabs > stack)
-    // and reset it to the Welcome screen.
-    let root = navigation;
-    while (root.getParent && root.getParent()) root = root.getParent();
-    root.reset({ index: 0, routes: [{ name: 'Welcome' }] });
-  };
 
   // Prevent back button from going to Welcome/Login screens
   useEffect(() => {
@@ -615,57 +689,6 @@ export default function ExploreScreen({ route, navigation }) {
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
-
-      {/* Account dropdown (logged-in users). Tap outside to dismiss. */}
-      <Modal
-        visible={menuOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setMenuOpen(false)}
-      >
-        <TouchableOpacity
-          style={styles.menuOverlay}
-          activeOpacity={1}
-          onPress={() => setMenuOpen(false)}
-        >
-          <View style={[styles.menuCard, { top: insets.top + 72 }]}>
-            {/* Account header */}
-            <View style={styles.menuHeader}>
-              <View style={styles.menuAvatar}>
-                {profilePhoto ? (
-                  <Image source={{ uri: profilePhoto }} style={styles.menuAvatarImg} />
-                ) : (
-                  <Text style={styles.menuAvatarInitial}>{profileInitial}</Text>
-                )}
-              </View>
-              <View style={styles.menuHeaderText}>
-                <Text style={styles.menuName} numberOfLines={1}>
-                  {firebaseUser?.displayName || routeUser?.name || 'Traveler'}
-                </Text>
-                {!!(firebaseUser?.email || routeUser?.email) && (
-                  <Text style={styles.menuEmail} numberOfLines={1}>
-                    {firebaseUser?.email || routeUser?.email}
-                  </Text>
-                )}
-              </View>
-            </View>
-
-            <View style={styles.menuDivider} />
-
-            {/* Log out */}
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={handleLogout}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Log out"
-            >
-              <Ionicons name="log-out-outline" size={20} color="#d32f2f" />
-              <Text style={styles.menuItemTextDanger}>Log out</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
       {/* Full Screen Search Modal */}
       <Modal
@@ -1051,6 +1074,14 @@ export default function ExploreScreen({ route, navigation }) {
         }}
       >
         <GlassSurface radius={SIZES.radius_xl} style={StyleSheet.absoluteFill} />
+        {/* Warm sand wash over the glass: gives the header colour while the
+            blur still shows through toward the bottom. */}
+        <LinearGradient
+          colors={['rgba(255,232,214,0.95)', 'rgba(255,244,236,0.8)', 'rgba(255,251,248,0.55)']}
+          locations={[0, 0.55, 1]}
+          style={[StyleSheet.absoluteFill, { borderRadius: SIZES.radius_xl }]}
+          pointerEvents="none"
+        />
 
         {/* Foreground content (greeting/pill/chip) sits above the glass. */}
         <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]}>
@@ -1058,7 +1089,8 @@ export default function ExploreScreen({ route, navigation }) {
           <Animated.View
             style={{
               opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
-              maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [64, 0] }),
+              // Room for the greeting plus the trip pill (~72px); collapses to 0.
+              maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [90, 0] }),
               marginBottom: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_base, 0] }),
               transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }],
               overflow: 'hidden',
@@ -1069,7 +1101,29 @@ export default function ExploreScreen({ route, navigation }) {
                 <Text style={styles.greeting}>
                   {greeting}{isAuthenticated && firstName ? `, ${firstName}` : ''}
                 </Text>
-                <Text style={styles.greetingSub}>Where to next?</Text>
+                {tripLine ? (
+                  <TouchableOpacity
+                    style={styles.tripLine}
+                    onPress={openHeadlineTrip}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${tripLine.text}. Open trip`}
+                    hitSlop={{ top: 6, bottom: 6 }}
+                  >
+                    <LinearGradient
+                      colors={[COLORS.accentDeep, COLORS.accent]}
+                      start={{ x: 0, y: 0.5 }}
+                      end={{ x: 1, y: 0.5 }}
+                      style={styles.tripLinePill}
+                    >
+                      <Ionicons name={tripLine.icon} size={13} color={COLORS.white} />
+                      <Text style={styles.tripLineText} numberOfLines={1}>{tripLine.text}</Text>
+                      <Ionicons name="chevron-forward" size={13} color={COLORS.white} />
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.greetingSub}>Where to next?</Text>
+                )}
               </View>
 
               <TouchableOpacity
@@ -1077,35 +1131,47 @@ export default function ExploreScreen({ route, navigation }) {
                 activeOpacity={0.85}
                 onPress={handleProfilePress}
                 accessibilityRole="button"
-                accessibilityLabel={isAuthenticated ? 'Open account menu' : 'Log in'}
+                accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
               >
-                {isAuthenticated ? (
-                  profilePhoto ? (
-                    <Image source={{ uri: profilePhoto }} style={styles.profileImage} />
-                  ) : (
-                    <View style={styles.profileFallback}>
-                      <Text style={styles.profileInitial}>{profileInitial}</Text>
-                    </View>
-                  )
-                ) : (
-                  <View style={styles.profileFallback}>
-                    <Ionicons name="person-outline" size={22} color={COLORS.accent} />
-                  </View>
-                )}
+                {renderAvatar(48)}
               </TouchableOpacity>
             </View>
           </Animated.View>
 
-          {/* Search pill (always visible, full width). */}
-          <TouchableOpacity style={styles.homeSearchBar} activeOpacity={0.9} onPress={openSearch}>
-            <View style={styles.searchIconCircle}>
-              <Ionicons name="search" size={20} color={COLORS.textPrimary} />
-            </View>
-            <View style={styles.searchTextWrap}>
-              <Text style={styles.searchTitle}>Where to?</Text>
-              <Text style={styles.searchSubtitle} numberOfLines={1}>Search destinations, stays & more</Text>
-            </View>
-          </TouchableOpacity>
+          {/* Search row: slim pill, plus a small avatar that slides in when the
+              header collapses (so the profile stays one tap away). */}
+          <View style={styles.searchRow}>
+            <TouchableOpacity
+              style={styles.homeSearchBar}
+              activeOpacity={0.9}
+              onPress={openSearch}
+              accessibilityRole="search"
+              accessibilityLabel="Search destinations, stays and more"
+            >
+              <Ionicons name="search" size={19} color={COLORS.accent} />
+              <Animated.Text style={[styles.searchHint, { opacity: hintFade }]} numberOfLines={1}>
+                {SEARCH_HINTS[hintIndex]}
+              </Animated.Text>
+            </TouchableOpacity>
+            <Animated.View
+              style={{
+                width: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 40] }),
+                marginLeft: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, SIZES.spacing_sm] }),
+                opacity: headerAnim.interpolate({ inputRange: [0.75, 1], outputRange: [0, 1], extrapolate: 'clamp' }),
+                overflow: 'hidden',
+              }}
+              pointerEvents={headerCollapsed ? 'auto' : 'none'}
+            >
+              <TouchableOpacity
+                onPress={handleProfilePress}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
+              >
+                {renderAvatar(40)}
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
 
           {/* Nearby detected location chip — collapses away on scroll down. */}
           {nearbyLabel && (
@@ -1184,44 +1250,78 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
   },
-  // Two-line search pill (full width).
-  homeSearchBar: {
+  // Search row: slim pill + compact avatar (shown when collapsed).
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  // Slim one-line search pill.
+  homeSearchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 48,
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.borderLight,
     borderRadius: SIZES.radius_full,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    gap: SIZES.spacing_md,
+    paddingHorizontal: SIZES.spacing_base,
+    gap: SIZES.spacing_sm,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
     shadowRadius: 12,
     elevation: 3,
   },
-  searchIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.sand,
-    alignItems: 'center',
+  // Greeting-row avatar button: just the tap target (renderAvatar draws it).
+  profileButton: {
+    borderRadius: 24,
+  },
+  // Avatar: thin orange ring (white gap inside) around photo / initials.
+  avatarRing: {
     justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.white,
   },
-  searchTextWrap: {
-    flex: 1,
+  avatarRingGuest: {
+    borderColor: COLORS.primary,
   },
-  searchTitle: {
-    fontSize: SIZES.base,
+  avatarInner: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  avatarInitials: {
     fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
+    color: COLORS.white,
   },
-  searchSubtitle: {
-    fontSize: SIZES.sm,
+  searchHint: {
+    flex: 1,
+    fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
-    color: COLORS.textMuted,
-    marginTop: 1,
+    color: COLORS.textSecondary,
+  },
+  // Greeting subline about the next trip (tappable).
+  tripLine: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    marginTop: 4,
+  },
+  tripLinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: 4,
+    borderRadius: SIZES.radius_full,
+  },
+  tripLineText: {
+    flexShrink: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
   },
   // Nearby detected location chip (plain text).
   locationChip: {
@@ -1237,114 +1337,12 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   // Profile circle.
-  profileButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.sand,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-  },
-  profileImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 24,
-  },
-  profileFallback: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(232, 93, 4, 0.12)',
-  },
 
-  // Account dropdown
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.15)',
-  },
-  menuCard: {
-    position: 'absolute',
-    right: SIZES.spacing_lg,
-    width: 240,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    paddingVertical: SIZES.spacing_sm,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
-    elevation: 12,
-  },
-  menuHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: SIZES.spacing_base,
-    paddingVertical: SIZES.spacing_sm,
-    gap: SIZES.spacing_md,
-  },
-  menuAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(232, 93, 4, 0.12)',
-  },
-  menuAvatarImg: {
-    width: '100%',
-    height: '100%',
-  },
-  menuAvatarInitial: {
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.accent,
-  },
-  menuHeaderText: {
-    flex: 1,
-  },
-  menuName: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  menuEmail: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: COLORS.borderLight,
-    marginVertical: SIZES.spacing_xs,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_md,
-    paddingHorizontal: SIZES.spacing_base,
-    paddingVertical: SIZES.spacing_md,
-  },
-  menuItemTextDanger: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_500Medium',
-    color: '#d32f2f',
-  },
-  profileInitial: {
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.accent,
-  },
 
   // Full Screen Search Modal
   // Full-screen search sheet (Airbnb style): opaque, fills the whole screen.
   searchModal: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     flex: 1,
     backgroundColor: COLORS.white,
     paddingHorizontal: SIZES.spacing_lg,

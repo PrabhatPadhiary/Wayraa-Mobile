@@ -27,3 +27,12 @@ export const GOOGLE_WEB_CLIENT_ID =
 export const GOOGLE_IOS_CLIENT_ID =
   '411332993861-mjhe3ib8elhk3a9qd81spkpgtvdl1m0m.apps.googleusercontent.com';
 
+/**
+ * Google OAuth Android client ID (Application type: Android in Google Cloud
+ * Console, package com.wayraa.mobile + the signing key's SHA-1). Required by
+ * expo-auth-session on Android. While empty, Google sign-in is disabled on
+ * Android (the button explains why) instead of crashing the screen.
+ * TODO: paste the Android client ID here.
+ */
+export const GOOGLE_ANDROID_CLIENT_ID = '';
+

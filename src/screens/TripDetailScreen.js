@@ -10,6 +10,7 @@ import {
   Animated,
   Alert,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
@@ -17,8 +18,12 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import MaskedView from '@react-native-masked-view/masked-view';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
-import { SignInPrompt, TripDetailSkeleton, FilterChips, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet } from '../components';
+import { SignInPrompt, TripDetailSkeleton, FilterChips, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet } from '../components';
+import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { TripHeroBackdrop, TripHeroOverlay } from '../components/TripHero';
 import { showTripActionMenu, confirmDeleteTrip } from '../utils/tripActions';
 import { useBottomBar } from '../context/BottomBarContext';
 import useAuth from '../hooks/useAuth';
@@ -41,29 +46,32 @@ import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinD
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 const SHEET_BG = '#f3f5f7';
 /** Trip sections, shown in the bottom bar beside the Home circle. */
+// Feather line icons: one even stroke weight, so they stay crisp and calm
+// (the active tab is shown by color and the capsule, not a filled glyph).
 const TRIP_TABS = [
-  { key: 'overview', label: 'Overview', icon: 'compass' },
-  { key: 'itinerary', label: 'Itinerary', icon: 'calendar' },
-  { key: 'budget', label: 'Budget', icon: 'wallet' },
-  { key: 'checklist', label: 'Checklist', icon: 'checkbox' },
+  { key: 'overview', label: 'Overview', icon: 'compass', iconFamily: 'feather' },
+  { key: 'itinerary', label: 'Itinerary', icon: 'calendar', iconFamily: 'feather' },
+  { key: 'budget', label: 'Budget', icon: 'credit-card', iconFamily: 'feather' },
+  { key: 'checklist', label: 'Checklist', icon: 'check-square', iconFamily: 'feather' },
 ];
-// Bands of the progressive hero blur, as % of the blur area measured from its
-// bottom. They stack, so the blur builds up toward the sheet.
-const HERO_BLUR_BANDS = [
-  { height: 100, intensity: 8 },
-  { height: 75, intensity: 12 },
-  { height: 50, intensity: 16 },
-  { height: 30, intensity: 22 },
-  { height: 15, intensity: 30 },
-];
+// Progressive hero blur: one blur layer, masked by a vertical gradient so it
+// goes smoothly from sharp (top) to fully blurred (bottom, at the sheet edge).
+// A single masked layer avoids the visible steps that stacked bands produce.
+const HERO_BLUR_INTENSITY = 40;
 const HEADER_CONTENT_HEIGHT = 56;
 
 /** Sections for saved places, in display order. */
-const PLACE_SECTIONS = [
-  { key: 'stays', label: 'Stays', icon: 'bed-outline' },
-  { key: 'food', label: 'Restaurants', icon: 'restaurant-outline' },
-  { key: 'activities', label: 'Activities', icon: 'walk-outline' },
+/** Place type filters on the overview. `noun` is used in empty-state copy. */
+const PLACE_FILTERS = [
+  { key: 'all', label: 'All', icon: 'bookmark-outline', noun: 'places' },
+  { key: 'stays', label: 'Stays', icon: 'bed-outline', noun: 'stays' },
+  { key: 'food', label: 'Food', icon: 'restaurant-outline', noun: 'restaurants' },
+  { key: 'activities', label: 'Activities', icon: 'walk-outline', noun: 'activities' },
 ];
+// Width of a saved-place photo card in the horizontal row.
+const PLACE_CARD_WIDTH = 180;
+// Remembers the Saved spots layout (cards / list) across trips and launches.
+const SPOTS_VIEW_KEY = 'wayraa_saved_spots_view';
 
 /** Map the many category spellings the app/backend use onto a section key. */
 function sectionKeyFor(category) {
@@ -129,7 +137,7 @@ function statusStyle(status) {
   }
 }
 
-/** Tints for the countdown card's icon bubble, matching the section icons. */
+/** Icon colors for the countdown pill on the hero, by tone. */
 const COUNTDOWN_TONES = {
   soon: { tint: '#fff1e8', color: COLORS.accent },
   later: { tint: '#e6f4fb', color: COLORS.primaryLight },
@@ -209,10 +217,6 @@ function neighborhoodOf(vicinity, cityName) {
   return useful[useful.length - 1] || parts[0] || null;
 }
 
-function memberInitial(name) {
-  return (name || '?').trim().charAt(0).toUpperCase() || '?';
-}
-
 function formatBudget(amount, currency) {
   if (amount == null) return null;
   const rounded = Math.round(amount).toLocaleString();
@@ -232,6 +236,11 @@ export default function TripDetailScreen({ navigation, route }) {
   const [trip, setTrip] = useState(null);
   // Vertical scroll offset, drives the frosted header bar's fade-in.
   const scrollY = useRef(new Animated.Value(0)).current;
+  // Horizontal offset of the hero photo carousel (multi-stop trips).
+  const heroPageX = useRef(new Animated.Value(0)).current;
+  // Dark status bar text once the frosted (light) header covers the photo.
+  const [darkStatusBar, setDarkStatusBar] = useState(false);
+  const darkStatusBarRef = useRef(false);
 
   // ── Section tabs in the bottom bar ─────────────────────────────────────
   const [activeTab, setActiveTab] = useState('overview');
@@ -244,16 +253,48 @@ export default function TripDetailScreen({ navigation, route }) {
   const selectTab = useCallback((key) => {
     setActiveTab(key);
     scrollY.setValue(0);
+    // Overview reopens at the top, under the photo: light status bar again.
+    darkStatusBarRef.current = false;
+    setDarkStatusBar(false);
   }, [scrollY]);
+
+  // Budget / Itinerary / Checklist are sections of this screen, not screens of
+  // their own, so "back" from one returns to Overview instead of leaving the
+  // trip. Android: the hardware back button / gesture.
+  useFocusEffect(
+    useCallback(() => {
+      if (activeTab === 'overview') return undefined;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        selectTab('overview');
+        return true; // handled: don't leave the trip
+      });
+      return () => sub.remove();
+    }, [activeTab, selectTab])
+  );
+  // iOS: the edge-swipe would leave the trip, so it's off while in a section
+  // (the header back button returns to Overview instead).
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: activeTab === 'overview' });
+  }, [navigation, activeTab]);
   // Bumped by pull-to-refresh on the work tabs so they reload their data.
   const [tabRefreshKey, setTabRefreshKey] = useState(0);
   const [tabHeaderHeight, setTabHeaderHeight] = useState(120);
-  const [photoBroken, setPhotoBroken] = useState(false);
   // Which destination "Add place" targets (matters only for multi-stop trips).
   // Selected stop: its places are listed and "Add place" adds to it.
   const [addDestId, setAddDestId] = useState('');
   // Active tab of the saved-places switcher.
-  const [placeTab, setPlaceTab] = useState('stays');
+  const [placeTab, setPlaceTab] = useState('all');
+  // Saved spots layout: 'cards' (horizontal photo cards) or 'list' (rows).
+  const [spotsView, setSpotsView] = useState('cards');
+  useEffect(() => {
+    AsyncStorage.getItem(SPOTS_VIEW_KEY)
+      .then((v) => { if (v === 'cards' || v === 'list') setSpotsView(v); })
+      .catch(() => {});
+  }, []);
+  const changeSpotsView = (view) => {
+    setSpotsView(view);
+    AsyncStorage.setItem(SPOTS_VIEW_KEY, view).catch(() => {});
+  };
   // Destination sheet: null (closed) | { mode: 'add' } | { mode: 'edit', dest }
   const [destSheet, setDestSheet] = useState(null);
   // Destination id currently being removed (shows a spinner on its row).
@@ -278,7 +319,6 @@ export default function TripDetailScreen({ navigation, route }) {
         if (mine?.role) data.myRole = mine.role;
       }
       setTrip(data);
-      setPhotoBroken(false);
       setBrokenPlaceImages({});
     } catch (e) {
       if (e instanceof AuthRequiredError) {
@@ -314,6 +354,8 @@ export default function TripDetailScreen({ navigation, route }) {
   const [openBudgetSheet, setOpenBudgetSheet] = useState(false);
   // Owner trip actions (⋯ menu): edit sheet + delete.
   const [editOpen, setEditOpen] = useState(false);
+  // Travellers sheet: who's on the trip, and inviting friends.
+  const [travellersOpen, setTravellersOpen] = useState(false);
   const [deletingTrip, setDeletingTrip] = useState(false);
   // Itinerary items, for the Overview "Next up" card.
   const [planItems, setPlanItems] = useState(null);
@@ -351,6 +393,8 @@ export default function TripDetailScreen({ navigation, route }) {
   // backend), assume editable: the server rejects viewers' edits anyway.
   const canEdit = (trip?.myRole || '').toLowerCase() !== 'viewer';
   const isOwner = (trip?.myRole || '').toLowerCase() === 'owner';
+  // Owners and editors can invite people (same rule as the backend).
+  const canInvite = ['owner', 'member'].includes((trip?.myRole || '').toLowerCase());
 
   const removeTrip = async () => {
     setDeletingTrip(true);
@@ -381,12 +425,22 @@ export default function TripDetailScreen({ navigation, route }) {
   // The trip's traveller count can exceed the joined members (people who
   // haven't signed up), so draw one circle per traveller, not per member.
   const travellerCount = Math.max(members.length, trip?.travelersCount || 1);
-  // Cover comes straight from the destination's place id (the backend keeps
-  // it fresh), falling back to the stored cover photo.
-  const heroUri = !photoBroken
-    ? placePhotoUrl(primaryDestination?.googlePlaceId, 1200)
-      || normalizePhotoUrl(trip?.coverPhotoUrl || primaryDestination?.photoUrl, 1200)
-    : null;
+  // Hero photos: one per stop, in trip order. Each comes straight from the
+  // stop's place id (the backend keeps it fresh), falling back to its stored
+  // photo (and the trip cover for the first stop). TripHero shows a gradient
+  // for any stop whose photo is missing or fails to load.
+  const heroPhotos = sortedDestinations.length
+    ? sortedDestinations.map((d, i) => ({
+      key: String(d.id),
+      name: d.name,
+      uri: placePhotoUrl(d.googlePlaceId, 1200)
+        || normalizePhotoUrl(i === 0 ? (trip?.coverPhotoUrl || d.photoUrl) : d.photoUrl, 1200),
+    }))
+    : [{
+      key: 'cover',
+      name: trip?.primaryDestination || trip?.name || '',
+      uri: normalizePhotoUrl(trip?.coverPhotoUrl, 1200),
+    }];
   const placeThumbFor = (place) => (brokenPlaceImages[place.id]
     ? null
     : placePhotoUrl(place.placeId, 300) || normalizePhotoUrl(place.photoUrl, 300));
@@ -406,8 +460,10 @@ export default function TripDetailScreen({ navigation, route }) {
   const destByPlaceId = {};
   destinations.forEach((d) => (d.places || []).forEach((p) => { destByPlaceId[p.id] = d; }));
 
-  const tabPlaces = shownPlaces.filter((p) => sectionKeyFor(p.category) === placeTab);
-  const activeSection = PLACE_SECTIONS.find((s) => s.key === placeTab) || PLACE_SECTIONS[0];
+  const tabPlaces = placeTab === 'all'
+    ? shownPlaces
+    : shownPlaces.filter((p) => sectionKeyFor(p.category) === placeTab);
+  const activeSection = PLACE_FILTERS.find((s) => s.key === placeTab) || PLACE_FILTERS[0];
 
   // ── Destinations: add / edit dates / remove ────────────────────────────
   // The backend recalculates the trip's dates from destinations that have
@@ -682,6 +738,26 @@ export default function TripDetailScreen({ navigation, route }) {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+  // The header title rises into place as the hero title fades out below it.
+  const headerTitleShift = scrollY.interpolate({
+    inputRange: [fadeEnd - 60, fadeEnd],
+    outputRange: [10, 0],
+    extrapolate: 'clamp',
+  });
+  // The sheet's rounded top corners square off as it meets the header.
+  const sheetCornerFill = scrollY.interpolate({
+    inputRange: [fadeEnd - 30, fadeEnd + 12],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  // Flip the status bar to dark text once the light header is mostly in.
+  const onOverviewScroll = (e) => {
+    const dark = e.nativeEvent.contentOffset.y > fadeEnd - 30;
+    if (dark !== darkStatusBarRef.current) {
+      darkStatusBarRef.current = dark;
+      setDarkStatusBar(dark);
+    }
+  };
 
   // Blur fades in over the first stretch of scrolling...
   const heroBlurOpacity = scrollY.interpolate({
@@ -699,23 +775,55 @@ export default function TripDetailScreen({ navigation, route }) {
   const badge = statusStyle(trip.status);
   const dateRange = formatDateRange(trip.startDate, trip.endDate);
   const days = dayCount(trip.startDate, trip.endDate);
-  const budget = formatBudget(trip.totalBudget, trip.currency);
-  const countdown = countdownInfo(trip);
+  // Countdown pill on the hero ("9 days to go", "Day 3 of 8", ...), with its
+  // icon color picked by tone.
+  const countdownBase = countdownInfo(trip);
+  const countdown = countdownBase
+    ? { ...countdownBase, color: COUNTDOWN_TONES[countdownBase.tone]?.color }
+    : null;
   const createdOn = trip.createdAt ? formatDay(new Date(trip.createdAt), true) : null;
 
-  const stats = [
-    { key: 'days', icon: 'calendar-outline', tint: '#fff1e8', color: COLORS.accent, value: days ? String(days) : '–', label: days === 1 ? 'Day' : 'Days' },
-    {
-      key: 'travelers',
-      icon: 'people-outline',
-      tint: '#e6f4fb',
-      color: COLORS.primaryLight,
-      value: String(trip.travelersCount || 1),
-      label: (trip.travelersCount || 1) === 1 ? 'Traveler' : 'Travelers',
-    },
-    { key: 'places', icon: 'bookmark-outline', tint: '#e8f5e9', color: '#2e7d32', value: String(allPlaces.length), label: allPlaces.length === 1 ? 'Place' : 'Places' },
-  ];
-  if (budget) stats.push({ key: 'budget', icon: 'wallet-outline', tint: '#fff6e0', color: '#b7791f', value: budget, label: 'Budget' });
+  // Shared by the Saved spots card and list layouts.
+  const spotInfo = (place) => {
+    const dest = destByPlaceId[place.id];
+    const area = neighborhoodOf(place.vicinity, dest?.name);
+    const distance = formatDistance(
+      distanceKm(place.latitude, place.longitude, dest?.latitude, dest?.longitude)
+    );
+    return {
+      locationLine: [area, distance].filter(Boolean).join(' · '),
+      section: PLACE_FILTERS.find((f) => f.key === sectionKeyFor(place.category)),
+      thumb: placeThumbFor(place),
+    };
+  };
+  const spotLabel = (place, locationLine) => [
+    place.placeName,
+    locationLine,
+    place.rating > 0 ? `rated ${place.rating}` : null,
+  ].filter(Boolean).join(', ');
+  const renderRemoveSpot = (place, style, iconSize) => {
+    if (!canEdit) return null;
+    if (removingPlaceId === place.id) {
+      return (
+        <View style={style}>
+          <ActivityIndicator size="small" color={COLORS.error} />
+        </View>
+      );
+    }
+    return (
+      <TouchableOpacity
+        style={style}
+        onPress={() => confirmRemovePlace(place)}
+        disabled={!!removingPlaceId}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${place.placeName} from this trip`}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Ionicons name="trash-outline" size={iconSize} color={COLORS.error} />
+      </TouchableOpacity>
+    );
+  };
 
   // ── Itinerary / Budget / Checklist: plain header like My Trips, no photo ──
   if (activeTab !== 'overview') {
@@ -769,8 +877,8 @@ export default function TripDetailScreen({ navigation, route }) {
         {/* Back button sits on the white header, beside the title. */}
         <TouchableOpacity
           style={[styles.backButton, styles.backButtonOnHeader, { top: insets.top + SIZES.spacing_base }]}
-          onPress={() => navigation.goBack()}
-          accessibilityLabel="Go back"
+          onPress={() => selectTab('overview')}
+          accessibilityLabel="Back to overview"
           activeOpacity={0.8}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
@@ -784,32 +892,19 @@ export default function TripDetailScreen({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={darkStatusBar ? 'dark-content' : 'light-content'} animated />
 
-    {/* Hero stays fixed behind the scrolling sheet */}
+      {/* Hero stays fixed behind the scrolling sheet (parallax, stretch, carousel). */}
       <View style={styles.hero}>
-        {heroUri ? (
-          <Image
-            source={{ uri: heroUri }}
-            style={styles.heroImage}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={200}
-            onError={() => setPhotoBroken(true)}
-          />
-        ) : (
-          <View style={[styles.heroImage, styles.heroPlaceholder]}>
-            <Ionicons name="image-outline" size={40} color={COLORS.textMuted} />
-          </View>
-        )}
-        <LinearGradient
-          colors={['rgba(0,0,0,0.35)', 'rgba(0,0,0,0)']}
-          style={styles.heroTopShade}
-          pointerEvents="none"
+        <TripHeroBackdrop
+          photos={heroPhotos}
+          scrollY={scrollY}
+          pageX={heroPageX}
+          height={HERO_HEIGHT}
         />
 
-        {/* Progressive blur: stacked blur bands, strongest at the bottom, that ride
-            up with the sheet's top edge and fade in as you scroll. */}
+        {/* Progressive blur: strongest at the bottom, riding up with the sheet's
+            top edge and fading in as you scroll. */}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -817,18 +912,23 @@ export default function TripDetailScreen({ navigation, route }) {
             { opacity: heroBlurOpacity, transform: [{ translateY: heroBlurShift }] },
           ]}
         >
-          {HERO_BLUR_BANDS.map((band) => (
-            <BlurView
-              key={band.height}
-              intensity={band.intensity}
-              tint="light"
-              style={[styles.heroBlurBand, { height: `${band.height}%` }]}
+          <MaskedView
+            style={StyleSheet.absoluteFill}
+            maskElement={
+              <LinearGradient
+                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,1)']}
+                locations={[0, 0.55, 1]}
+                style={StyleSheet.absoluteFill}
+              />
+            }
+          >
+            <BlurView intensity={HERO_BLUR_INTENSITY} tint="light" style={StyleSheet.absoluteFill} />
+            {/* Soft tint toward the sheet color, so the photo eases into it. */}
+            <LinearGradient
+              colors={['rgba(243,245,247,0)', 'rgba(243,245,247,0.6)']}
+              style={styles.heroBlurFade}
             />
-          ))}
-          <LinearGradient
-            colors={['rgba(243,245,247,0)', 'rgba(243,245,247,0.6)']}
-            style={styles.heroBlurFade}
-          />
+          </MaskedView>
         </Animated.View>
       </View>
 
@@ -837,253 +937,131 @@ export default function TripDetailScreen({ navigation, route }) {
         scrollEventThrottle={16}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: true,
+          listener: onOverviewScroll,
         })}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.white} />
         }
       >
-        {/* Transparent spacer: the fixed hero shows through it, and the sheet scrolls over the hero. */}
-        <View style={styles.heroSpacer} pointerEvents="none" />
+        {/* Spacer over the fixed hero: holds the title, countdown and the photo
+            swiper, and scrolls with the page so the sheet slides over the hero. */}
+        <TripHeroOverlay
+          title={trip.name}
+          countdown={countdown}
+          photos={heroPhotos}
+          scrollY={scrollY}
+          pageX={heroPageX}
+          height={HERO_HEIGHT}
+          bottomInset={SIZES.spacing_lg}
+          handoffAt={fadeEnd}
+        />
 
         {/* Sheet overlapping the hero */}
         <View style={styles.sheet}>
+          {/* Fill the rounded corners as the sheet meets the header. */}
+          <Animated.View pointerEvents="none" style={[styles.sheetCorner, { left: 0, opacity: sheetCornerFill }]} />
+          <Animated.View pointerEvents="none" style={[styles.sheetCorner, { right: 0, opacity: sheetCornerFill }]} />
           <View style={styles.grabber} />
 
           {activeTab === 'overview' && (
           <>
-          {/* Summary card */}
-          <View style={styles.card}>
-          <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-            <View style={[styles.statusDot, { backgroundColor: badge.color }]} />
-            <Text style={[styles.statusText, { color: badge.color }]}>{badge.label}</Text>
-          </View>
-
-          <Text style={styles.tripName}>{trip.name}</Text>
-
-          <View style={styles.metaChips}>
-            {!!(trip.primaryDestination || primaryDestination?.name) && (
-              <View style={[styles.metaChip, { backgroundColor: '#e6f4fb' }]}>
-                <Ionicons name="location" size={14} color={COLORS.primaryLight} />
-                <Text style={[styles.metaChipText, { color: COLORS.primary }]} numberOfLines={1}>
-                  {trip.primaryDestination || primaryDestination?.name}
+          {/* Summary: status + dates, three key numbers, and who's going
+              (opens the Travellers sheet to see everyone and invite friends). */}
+          <View style={[styles.card, styles.summaryCard]}>
+            <View style={styles.summaryTop}>
+              <View style={styles.summaryDateIcon}>
+                <Ionicons name="calendar" size={18} color={COLORS.accent} />
+              </View>
+              <View style={styles.summaryDateText}>
+                <Text style={styles.summaryDates} numberOfLines={1}>{dateRange || 'Dates not set'}</Text>
+                <Text style={styles.summaryDatesSub} numberOfLines={1}>
+                  {days ? `${days} ${days === 1 ? 'day' : 'days'}` : 'Add dates to plan each day'}
                 </Text>
               </View>
-            )}
-            <View style={[styles.metaChip, { backgroundColor: '#fff1e8' }]}>
-              <Ionicons name="calendar" size={14} color={COLORS.accent} />
-              <Text style={[styles.metaChipText, { color: COLORS.accentDeep }]}>
-                {dateRange || 'Dates not set'}
-              </Text>
-            </View>
-          </View>
-          {!!trip.description && <Text style={styles.description}>{trip.description}</Text>}
-
-          {/* Summary */}
-          <View style={styles.statsRow}>
-            {stats.map((stat) => (
-              <View key={stat.key} style={[styles.statTile, { backgroundColor: stat.tint }]}>
-                <View style={styles.statIcon}>
-                  <Ionicons name={stat.icon} size={16} color={stat.color} />
-                </View>
-                <Text style={styles.statValue} numberOfLines={1}>{stat.value}</Text>
-                <Text style={styles.statLabel}>{stat.label}</Text>
+              <View style={[styles.statusBadge, styles.statusBadgeInline, { backgroundColor: badge.bg }]}>
+                <View style={[styles.statusDot, { backgroundColor: badge.color }]} />
+                <Text style={[styles.statusText, { color: badge.color }]}>{badge.label}</Text>
               </View>
-            ))}
-          </View>
+            </View>
 
-          {/* Travellers */}
-          <View
-            style={styles.membersRow}
-            accessible
-            accessibilityLabel={`${travellerCount} ${travellerCount === 1 ? 'traveller' : 'travellers'}`}
-          >
-            {/* Overlapping circles: first shows initials, the rest a default profile icon. */}
-            <View style={styles.avatarStack}>
-              {Array.from({ length: Math.min(travellerCount, 5) }, (_, i) => (
+            {!!trip.description && <Text style={styles.description}>{trip.description}</Text>}
+
+            <View style={styles.summaryStats}>
+              {[
+                { key: 'days', value: days || '–', label: days === 1 ? 'Day' : 'Days' },
+                { key: 'stops', value: sortedDestinations.length || 1, label: sortedDestinations.length === 1 ? 'Stop' : 'Stops' },
+                { key: 'spots', value: allPlaces.length, label: allPlaces.length === 1 ? 'Spot' : 'Spots' },
+              ].map((stat, i) => (
                 <View
-                  key={i}
-                  style={[
-                    styles.avatar,
-                    i > 0 && styles.avatarOverlap,
-                    i > 0 && styles.avatarDefault,
-                    { zIndex: 10 - i },
-                  ]}
+                  key={stat.key}
+                  style={[styles.summaryStat, i > 0 && styles.summaryStatDivider]}
+                  accessible
+                  accessibilityLabel={`${stat.value} ${stat.label}`}
                 >
-                  {i === 0 && members[0]?.name ? (
-                    <Text style={styles.avatarText}>{memberInitial(members[0].name)}</Text>
-                  ) : (
-                    <Ionicons name="person" size={18} color={i === 0 ? COLORS.white : COLORS.textMuted} />
-                  )}
+                  <Text style={styles.summaryStatValue}>{stat.value}</Text>
+                  <Text style={styles.summaryStatLabel}>{stat.label}</Text>
                 </View>
               ))}
-              {travellerCount > 5 && (
-                <View style={[styles.avatar, styles.avatarOverlap, styles.avatarDefault]}>
-                  <Text style={styles.avatarMoreText}>+{travellerCount - 5}</Text>
-                </View>
-              )}
             </View>
-            <Text style={styles.membersLabel}>
-              {travellerCount} {travellerCount === 1 ? 'traveller' : 'travellers'}
-            </Text>
-          </View>
-          </View>
 
-          {/* Countdown card */}
-          {countdown && (
-            <View style={[styles.card, styles.countdownCard]}>
-              <View style={styles.countdownRow}>
-                <View style={[styles.countdownIcon, { backgroundColor: COUNTDOWN_TONES[countdown.tone].tint }]}>
-                  <Ionicons name={countdown.icon} size={22} color={COUNTDOWN_TONES[countdown.tone].color} />
-                </View>
-                <View style={styles.countdownText}>
-                  <Text style={styles.countdownLine} numberOfLines={1}>
-                    <Text style={[styles.countdownValue, { color: COUNTDOWN_TONES[countdown.tone].color }]}>
-                      {countdown.value}
-                    </Text>
-                    {!!countdown.label && <Text style={styles.countdownLabel}>{`  ${countdown.label}`}</Text>}
-                  </Text>
-                  {!!countdown.sub && <Text style={styles.countdownSub}>{countdown.sub}</Text>}
-                </View>
-              </View>
-              {countdown.progress != null && (
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${Math.round(countdown.progress * 100)}%`, backgroundColor: COUNTDOWN_TONES[countdown.tone].color },
-                    ]}
-                  />
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* Budget card: tap to open the Budget tab */}
-          {(trip.totalBudget > 0 || isOwner || spentTotal > 0) && (() => {
-            const total = trip.totalBudget || 0;
-            const spent = spentTotal || 0;
-            const ratio = total > 0 ? spent / total : 0;
-            const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#d97706' : '#2e7d32';
-            const setUp = !total && isOwner;
-            return (
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => {
-                  if (setUp) setOpenBudgetSheet(true);
-                  selectTab('budget');
-                }}
-                activeOpacity={0.9}
-                accessibilityRole="button"
-                accessibilityLabel={setUp ? 'Set a budget for this trip' : 'Open budget'}
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <SectionTitle icon="wallet" tint="#fff6e0" color="#b7791f" title="Budget" />
-                  <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-                </View>
-                {setUp ? (
-                  <View style={styles.budgetSetup}>
-                    <Text style={styles.budgetSetupText}>
-                      Set a budget to track spending and see how much is left.
-                    </Text>
-                    <View style={styles.addStopButton}>
-                      <Ionicons name="add" size={16} color={COLORS.primary} />
-                      <Text style={styles.addStopText}>Set budget</Text>
+            <TouchableOpacity
+              style={styles.travellersRow}
+              onPress={() => setTravellersOpen(true)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`${travellerCount} ${travellerCount === 1 ? 'traveller' : 'travellers'}${canInvite ? ', invite friends' : ''}`}
+            >
+              <View style={styles.avatarStack}>
+                {Array.from({ length: Math.min(travellerCount, 4) }, (_, i) => {
+                  const m = members[i];
+                  return (
+                    <View
+                      key={m?.userId || `t${i}`}
+                      style={[
+                        styles.avatar,
+                        styles.avatarSmall,
+                        i > 0 && styles.avatarOverlap,
+                        { zIndex: 10 - i, backgroundColor: m ? avatarColorFor(m.name) : COLORS.borderLight },
+                      ]}
+                    >
+                      {m ? (
+                        <Text style={styles.avatarTextSmall}>{initialsFor(m.name)}</Text>
+                      ) : (
+                        <Ionicons name="person" size={13} color={COLORS.textMuted} />
+                      )}
                     </View>
+                  );
+                })}
+                {travellerCount > 4 && (
+                  <View style={[styles.avatar, styles.avatarSmall, styles.avatarOverlap, styles.avatarDefault]}>
+                    <Text style={styles.avatarMoreText}>+{travellerCount - 4}</Text>
                   </View>
-                ) : (
-                  <>
-                    <Text style={styles.budgetLine}>
-                      <Text style={styles.budgetSpent}>{formatBudget(spent, trip.currency) || '0'}</Text>
-                      <Text style={styles.budgetOf}>
-                        {total ? `  spent of ${formatBudget(total, trip.currency)}` : '  spent'}
-                      </Text>
-                    </Text>
-                    {total > 0 && (
-                      <>
-                        <View style={styles.progressTrack}>
-                          <View
-                            style={[
-                              styles.progressFill,
-                              { width: `${Math.min(100, Math.round(ratio * 100))}%`, backgroundColor: barColor },
-                            ]}
-                          />
-                        </View>
-                        <Text style={[styles.budgetLeft, spent > total && { color: COLORS.error }]}>
-                          {spent <= total
-                            ? `${formatBudget(total - spent, trip.currency)} left`
-                            : `${formatBudget(spent - total, trip.currency)} over budget`}
-                        </Text>
-                      </>
-                    )}
-                  </>
                 )}
-              </TouchableOpacity>
-            );
-          })()}
-
-          {/* Itinerary card: next planned item; tap to open the Itinerary tab */}
-          {(() => {
-            const planDays = tripDays(trip, sortedDestinations);
-            if (!planDays.length) return null;
-            const list = planItems || [];
-            const firstDay = planDays[0].day;
-            const lastDay = planDays[planDays.length - 1].day;
-            const today = itinToday();
-            const inTrip = list.filter((i) => {
-              const d = itinDay(i.scheduledDate);
-              return d >= firstDay && d <= lastDay;
-            });
-            const fromDay = Math.max(today, firstDay);
-            const next = inTrip
-              .filter((i) => itinDay(i.scheduledDate) >= fromDay)
-              .sort((a, b) => itinDay(a.scheduledDate) - itinDay(b.scheduledDate) || compareByTime(a, b))[0];
-            const plannedDays = new Set(inTrip.map((i) => itinDay(i.scheduledDate))).size;
-            const nextDayNo = next ? itinDay(next.scheduledDate) - firstDay + 1 : null;
-            return (
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => selectTab('itinerary')}
-                activeOpacity={0.9}
-                accessibilityRole="button"
-                accessibilityLabel="Open itinerary"
-              >
-                <View style={styles.sectionHeaderRow}>
-                  <SectionTitle icon="calendar" tint="#e6f4fb" color={COLORS.primaryLight} title="Itinerary" />
-                  <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-                </View>
-                {next ? (
-                  <>
-                    <Text style={styles.planLabel}>
-                      Next up · Day {nextDayNo}, {itinDayLabel(itinDay(next.scheduledDate))}
-                    </Text>
-                    <Text style={styles.planTitle} numberOfLines={1}>
-                      {next.title}
-                      {next.startTime ? <Text style={styles.planTime}>{`  ${next.startTime}`}</Text> : null}
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={styles.budgetSetupText}>
-                    {inTrip.length ? 'All planned days are behind you.' : 'Nothing planned yet. Map out each day of the trip.'}
+              </View>
+              <View style={styles.travellersText}>
+                <Text style={styles.travellersTitle} numberOfLines={1}>
+                  {travellerCount} {travellerCount === 1 ? 'traveller' : 'travellers'}
+                </Text>
+                {members.length > 0 && (
+                  <Text style={styles.travellersNames} numberOfLines={1}>
+                    {members.map((m) => (m.name || '').split(' ')[0]).filter(Boolean).join(', ')}
                   </Text>
                 )}
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: `${Math.round((plannedDays / planDays.length) * 100)}%`,
-                        backgroundColor: COLORS.primaryLight,
-                      },
-                    ]}
-                  />
+              </View>
+              {canInvite ? (
+                <View style={styles.inviteButton}>
+                  <Ionicons name="person-add" size={14} color={COLORS.white} />
+                  <Text style={styles.inviteButtonText}>Invite</Text>
                 </View>
-                <Text style={styles.budgetLeft}>{plannedDays} of {planDays.length} days planned</Text>
-              </TouchableOpacity>
-            );
-          })()}
+              ) : (
+                <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+              )}
+            </TouchableOpacity>
+          </View>
 
-          {/* Destinations card */}
+          {/* Destinations card: the trip's stops. On multi-stop trips, tapping a stop
+              picks whose places the Places card below shows. */}
           <View style={styles.card}>
           <View style={styles.sectionHeaderRow}>
             <SectionTitle icon="navigate" tint="#e6f4fb" color={COLORS.primaryLight} title="Destinations" />
@@ -1154,163 +1132,306 @@ export default function TripDetailScreen({ navigation, route }) {
 
           </View>
 
-          {/* Saved places card */}
+          {/* Saved spots: the main section. Search to add, then browse by type,
+              as photo cards or a list. */}
           <View style={styles.card}>
-          <View style={styles.sectionHeaderRow}>
-            <SectionTitle icon="bookmark" tint="#fff1e8" color={COLORS.accent} title="Saved places" />
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.placesTitleRow}>
+                <SectionTitle icon="bookmark" tint="#fff1e8" color={COLORS.accent} title="Saved spots" />
+                <Text style={styles.sectionCount}>{allPlaces.length}</Text>
+              </View>
+              <View style={styles.placesHeaderRight}>
+                {/* Multi-stop: which stop's spots are shown (picked in Destinations). */}
+                {multiStop && !!addTarget && (
+                  <View style={styles.placesStop}>
+                    <Ionicons name="location" size={12} color={COLORS.primaryLight} />
+                    <Text style={styles.placesStopText} numberOfLines={1}>{addTarget.name}</Text>
+                  </View>
+                )}
+                <View style={styles.viewToggle} accessibilityRole="radiogroup" accessibilityLabel="Layout">
+                  {[
+                    { key: 'cards', icon: 'albums-outline', label: 'Cards' },
+                    { key: 'list', icon: 'list-outline', label: 'List' },
+                  ].map((opt) => {
+                    const on = spotsView === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        style={[styles.viewToggleButton, on && styles.viewToggleButtonOn]}
+                        onPress={() => changeSpotsView(opt.key)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: on }}
+                        accessibilityLabel={`${opt.label} view`}
+                        hitSlop={{ top: 6, bottom: 6 }}
+                      >
+                        <Ionicons name={opt.icon} size={15} color={on ? COLORS.primary : COLORS.textMuted} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+
             {canEdit && !!addTarget?.googlePlaceId && (
               <TouchableOpacity
-                style={styles.addStopButton}
+                style={styles.searchBar}
                 onPress={openAddPlaces}
                 activeOpacity={0.85}
                 accessibilityRole="button"
-                accessibilityLabel={`Add a place to ${addTarget.name}`}
+                accessibilityLabel={`Search spots to add in ${addTarget.name}`}
               >
-                <Ionicons name="add" size={16} color={COLORS.primary} />
-                <Text style={styles.addStopText}>Add place</Text>
+                <Ionicons name="search" size={18} color={COLORS.textMuted} />
+                <Text style={styles.searchText} numberOfLines={1}>
+                  Search spots in {addTarget.name}…
+                </Text>
+                <View style={styles.searchAdd}>
+                  <Ionicons name="add" size={18} color={COLORS.white} />
+                </View>
               </TouchableOpacity>
             )}
-          </View>
 
-          {/* Stop switcher: picks whose places are listed below (and where "Add place" adds). */}
-          {multiStop && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.destPillsScroll}
-              contentContainerStyle={styles.destPills}
-            >
-              {sortedDestinations.map((d) => {
-                const active = d.id === addTarget?.id;
-                const count = (d.places || []).length;
-                return (
-                  <TouchableOpacity
-                    key={d.id}
-                    style={[styles.destPill, active && styles.destPillActive]}
-                    onPress={() => setAddDestId(d.id)}
-                    activeOpacity={0.85}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={`${d.name}, ${count} ${count === 1 ? 'place' : 'places'}`}
-                  >
-                    <Ionicons name="location" size={13} color={active ? COLORS.white : COLORS.textMuted} />
-                    <Text style={[styles.destPillText, active && styles.destPillTextActive]} numberOfLines={1}>
-                      {d.name}
-                    </Text>
-                    <View style={[styles.destPillCount, active && styles.destPillCountActive]}>
-                      <Text style={[styles.destPillCountText, active && styles.destPillTextActive]}>{count}</Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          )}
+            <View style={styles.placeFilters}>
+              <FilterChips
+                filters={PLACE_FILTERS}
+                activeKey={placeTab}
+                onChange={setPlaceTab}
+                variant="pills"
+                compact
+                fullWidth
+              />
+            </View>
 
-          <FilterChips
-            filters={PLACE_SECTIONS}
-            activeKey={placeTab}
-            onChange={setPlaceTab}
-            variant="pills"
-            compact
-            fullWidth
-          />
-          <View style={styles.placeList} key={`${placeTab}-${addTarget?.id || ''}`}>
-            {tabPlaces.length === 0 ? (
-              <View style={styles.emptyPlaces}>
-                <Ionicons name={activeSection.icon} size={36} color={COLORS.textMuted} />
-                <Text style={styles.emptyTitle}>No {activeSection.label.toLowerCase()} yet</Text>
-                <Text style={styles.emptySubtitle}>
-                  {canEdit
-                    ? `Find ${activeSection.label.toLowerCase()} for this trip.`
-                    : 'Nothing has been saved here yet.'}
-                </Text>
-                {canEdit && !!addTarget?.googlePlaceId && (
-                  <TouchableOpacity style={styles.emptyButton} onPress={openAddPlaces} activeOpacity={0.9}>
-                    <Text style={styles.emptyButtonText}>
-                      Add places in {addTarget.name}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : (
-              <View style={styles.placeRows}>
-                {tabPlaces.map((place, index) => {
-                  const dest = destByPlaceId[place.id];
-                  const area = neighborhoodOf(place.vicinity, dest?.name);
-                  const distance = formatDistance(
-                    distanceKm(place.latitude, place.longitude, dest?.latitude, dest?.longitude)
-                  );
-                  const locationLine = [area, distance].filter(Boolean).join(' · ');
-                  return (
-                    <FadeInCard key={place.id} index={index}>
-                      <TouchableOpacity
-                        style={styles.placeRow}
-                        onPress={() => openPlace(place)}
-                        activeOpacity={0.9}
-                        accessibilityRole="button"
-                        accessibilityLabel={[
-                          place.placeName,
-                          locationLine,
-                          place.rating > 0 ? `rated ${place.rating}` : null,
-                        ].filter(Boolean).join(', ')}
-                      >
-                        {placeThumbFor(place) ? (
-                          <Image
-                            source={{ uri: placeThumbFor(place) }}
-                            style={styles.placeThumb}
-                            contentFit="cover"
-                            cachePolicy="memory-disk"
-                            transition={200}
-                            onError={() => setBrokenPlaceImages((prev) => ({ ...prev, [place.id]: true }))}
-                          />
-                        ) : (
-                          <View style={[styles.placeThumb, styles.placeImagePlaceholder]}>
-                            <Ionicons name={activeSection.icon} size={20} color={COLORS.textMuted} />
+            <View style={styles.placeList} key={`${placeTab}-${addTarget?.id || ''}`}>
+              {tabPlaces.length === 0 ? (
+                <View style={styles.emptyPlaces}>
+                  <Ionicons name={activeSection.icon} size={36} color={COLORS.textMuted} />
+                  <Text style={styles.emptyTitle}>No {activeSection.noun} yet</Text>
+                  <Text style={styles.emptySubtitle}>
+                    {canEdit
+                      ? `Search above to add ${activeSection.noun} to this trip.`
+                      : 'Nothing has been saved here yet.'}
+                  </Text>
+                  {canEdit && !!addTarget?.googlePlaceId && (
+                    <TouchableOpacity style={styles.emptyButton} onPress={openAddPlaces} activeOpacity={0.9}>
+                      <Text style={styles.emptyButtonText}>Add places in {addTarget.name}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : spotsView === 'list' ? (
+                <View style={styles.placeRows}>
+                  {tabPlaces.map((place, index) => {
+                    const { locationLine, section, thumb } = spotInfo(place);
+                    return (
+                      <FadeInCard key={place.id} index={index}>
+                        <TouchableOpacity
+                          style={styles.placeRow}
+                          onPress={() => openPlace(place)}
+                          activeOpacity={0.9}
+                          accessibilityRole="button"
+                          accessibilityLabel={spotLabel(place, locationLine)}
+                        >
+                          {thumb ? (
+                            <Image
+                              source={{ uri: thumb }}
+                              style={styles.placeThumb}
+                              contentFit="cover"
+                              cachePolicy="memory-disk"
+                              transition={200}
+                              onError={() => setBrokenPlaceImages((prev) => ({ ...prev, [place.id]: true }))}
+                            />
+                          ) : (
+                            <View style={[styles.placeThumb, styles.placeImagePlaceholder]}>
+                              <Ionicons name={section?.icon || 'bookmark-outline'} size={20} color={COLORS.textMuted} />
+                            </View>
+                          )}
+                          <View style={styles.placeRowBody}>
+                            <Text style={styles.placeRowName} numberOfLines={1}>{place.placeName}</Text>
+                            {!!locationLine && (
+                              <Text style={styles.placeRowArea} numberOfLines={1}>{locationLine}</Text>
+                            )}
+                            {place.rating > 0 && (
+                              <View style={styles.ratingPill}>
+                                <Ionicons name="star" size={11} color="#f59e0b" />
+                                <Text style={styles.ratingPillText}>
+                                  {place.rating}
+                                  {place.userRatingsTotal > 0 ? ` · ${place.userRatingsTotal.toLocaleString()}` : ''}
+                                </Text>
+                              </View>
+                            )}
                           </View>
-                        )}
-                        <View style={styles.placeRowBody}>
-                          <Text style={styles.placeRowName} numberOfLines={1}>{place.placeName}</Text>
-                          {!!locationLine && (
-                            <Text style={styles.placeRowArea} numberOfLines={1}>{locationLine}</Text>
+                          {renderRemoveSpot(place, styles.removePlaceButton, 17)}
+                        </TouchableOpacity>
+                      </FadeInCard>
+                    );
+                  })}
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.placeCardsScroll}
+                  contentContainerStyle={styles.placeCards}
+                  decelerationRate="fast"
+                  snapToInterval={PLACE_CARD_WIDTH + SIZES.spacing_md}
+                  snapToAlignment="start"
+                >
+                  {tabPlaces.map((place, index) => {
+                    const { locationLine, section, thumb } = spotInfo(place);
+                    return (
+                      <FadeInCard key={place.id} index={index}>
+                        <TouchableOpacity
+                          style={styles.placeCard}
+                          onPress={() => openPlace(place)}
+                          activeOpacity={0.9}
+                          accessibilityRole="button"
+                          accessibilityLabel={spotLabel(place, locationLine)}
+                        >
+                          {thumb ? (
+                            <Image
+                              source={{ uri: thumb }}
+                              style={styles.placeCardImage}
+                              contentFit="cover"
+                              cachePolicy="memory-disk"
+                              transition={200}
+                              onError={() => setBrokenPlaceImages((prev) => ({ ...prev, [place.id]: true }))}
+                            />
+                          ) : (
+                            <View style={[styles.placeCardImage, styles.placeImagePlaceholder]}>
+                              <Ionicons name={section?.icon || 'bookmark-outline'} size={26} color={COLORS.textMuted} />
+                            </View>
                           )}
                           {place.rating > 0 && (
-                            <View style={styles.ratingPill}>
+                            <View style={styles.placeCardRating}>
                               <Ionicons name="star" size={11} color="#f59e0b" />
-                              <Text style={styles.ratingPillText}>
-                                {place.rating}
-                                {place.userRatingsTotal > 0 ? ` · ${place.userRatingsTotal.toLocaleString()}` : ''}
-                              </Text>
+                              <Text style={styles.ratingPillText}>{place.rating}</Text>
                             </View>
                           )}
-                        </View>
-                        {canEdit && (
-                          removingPlaceId === place.id ? (
-                            <View style={styles.removePlaceButton}>
-                              <ActivityIndicator size="small" color={COLORS.error} />
-                            </View>
-                          ) : (
-                            <TouchableOpacity
-                              style={styles.removePlaceButton}
-                              onPress={() => confirmRemovePlace(place)}
-                              disabled={!!removingPlaceId}
-                              activeOpacity={0.7}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Remove ${place.placeName} from this trip`}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            >
-                              <Ionicons name="trash-outline" size={17} color={COLORS.error} />
-                            </TouchableOpacity>
-                          )
-                        )}
-                      </TouchableOpacity>
-                    </FadeInCard>
-                  );
-                })}
-              </View>
-            )}
+                          {renderRemoveSpot(place, styles.placeCardRemove, 15)}
+                          <View style={styles.placeCardBody}>
+                            <Text style={styles.placeCardName} numberOfLines={1}>{place.placeName}</Text>
+                            <Text style={styles.placeCardArea} numberOfLines={1}>
+                              {locationLine || section?.label || ' '}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      </FadeInCard>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
           </View>
 
-          </View>
+          {/* Budget + Itinerary: compact side-by-side tiles; tap to open the tab. */}
+          {(() => {
+            const showBudget = trip.totalBudget > 0 || isOwner || spentTotal > 0;
+            const planDays = tripDays(trip, sortedDestinations);
+            const showPlan = planDays.length > 0;
+            if (!showBudget && !showPlan) return null;
+
+            let budgetTile = null;
+            if (showBudget) {
+              const total = trip.totalBudget || 0;
+              const spent = spentTotal || 0;
+              const ratio = total > 0 ? spent / total : 0;
+              const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#d97706' : '#2e7d32';
+              const setUp = !total && isOwner;
+              budgetTile = (
+                <TouchableOpacity
+                  style={[styles.card, styles.tile]}
+                  onPress={() => {
+                    if (setUp) setOpenBudgetSheet(true);
+                    selectTab('budget');
+                  }}
+                  activeOpacity={0.9}
+                  accessibilityRole="button"
+                  accessibilityLabel={setUp ? 'Set a budget for this trip' : 'Open budget'}
+                >
+                  <View style={styles.tileHeader}>
+                    <SectionTitle icon="wallet" tint="#fff6e0" color="#b7791f" title="Budget" />
+                  </View>
+                  {setUp ? (
+                    <>
+                      <Text style={styles.tileValueMuted}>Not set</Text>
+                      <Text style={styles.tileLink}>+ Set budget</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.tileValue} numberOfLines={1}>
+                        {formatBudget(spent, trip.currency) || '0'}
+                      </Text>
+                      <Text style={styles.tileSub} numberOfLines={1}>
+                        {total ? `of ${formatBudget(total, trip.currency)}` : 'spent'}
+                      </Text>
+                      {total > 0 && (
+                        <View style={styles.progressTrack}>
+                          <View
+                            style={[
+                              styles.progressFill,
+                              { width: `${Math.min(100, Math.round(ratio * 100))}%`, backgroundColor: barColor },
+                            ]}
+                          />
+                        </View>
+                      )}
+                    </>
+                  )}
+                </TouchableOpacity>
+              );
+            }
+
+            let planTile = null;
+            if (showPlan) {
+              const list = planItems || [];
+              const firstDay = planDays[0].day;
+              const lastDay = planDays[planDays.length - 1].day;
+              const inTrip = list.filter((it) => {
+                const d = itinDay(it.scheduledDate);
+                return d >= firstDay && d <= lastDay;
+              });
+              const fromDay = Math.max(itinToday(), firstDay);
+              const next = inTrip
+                .filter((it) => itinDay(it.scheduledDate) >= fromDay)
+                .sort((a, b) => itinDay(a.scheduledDate) - itinDay(b.scheduledDate) || compareByTime(a, b))[0];
+              const plannedDays = new Set(inTrip.map((it) => itinDay(it.scheduledDate))).size;
+              planTile = (
+                <TouchableOpacity
+                  style={[styles.card, styles.tile]}
+                  onPress={() => selectTab('itinerary')}
+                  activeOpacity={0.9}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open itinerary, ${plannedDays} of ${planDays.length} days planned`}
+                >
+                  <View style={styles.tileHeader}>
+                    <SectionTitle icon="calendar" tint="#e6f4fb" color={COLORS.primaryLight} title="Itinerary" />
+                  </View>
+                  <Text style={styles.tileValue} numberOfLines={1}>
+                    {plannedDays}<Text style={styles.tileValueOf}>{` / ${planDays.length}`}</Text>
+                  </Text>
+                  <Text style={styles.tileSub} numberOfLines={1}>
+                    {next ? `Next: ${next.title}` : inTrip.length ? 'All done' : 'days planned'}
+                  </Text>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        {
+                          width: `${Math.round((plannedDays / planDays.length) * 100)}%`,
+                          backgroundColor: COLORS.primaryLight,
+                        },
+                      ]}
+                    />
+                  </View>
+                </TouchableOpacity>
+              );
+            }
+
+            return (
+              <View style={styles.tilesRow}>
+                {budgetTile}
+                {planTile}
+              </View>
+            );
+          })()}
 
           {/* Map card */}
           {mapPlaces.some((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (
@@ -1338,7 +1459,12 @@ export default function TripDetailScreen({ navigation, route }) {
       >
         <BlurView intensity={70} tint="light" style={StyleSheet.absoluteFill} />
         <View style={[styles.headerBarContent, { paddingTop: insets.top }]}>
-          <Text style={styles.headerBarTitle} numberOfLines={1}>{trip.name}</Text>
+          <Animated.Text
+            style={[styles.headerBarTitle, { transform: [{ translateY: headerTitleShift }] }]}
+            numberOfLines={1}
+          >
+            {trip.name}
+          </Animated.Text>
         </View>
       </Animated.View>
 
@@ -1354,6 +1480,12 @@ export default function TripDetailScreen({ navigation, route }) {
       {backButton}
       {renderMenuButton(false)}
       {editSheet}
+      <TravellersSheet
+        visible={travellersOpen}
+        trip={trip}
+        onClose={() => setTravellersOpen(false)}
+        onChanged={loadTrip}
+      />
     </View>
   );
 }
@@ -1419,7 +1551,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: HERO_HEIGHT,
-    overflow: 'hidden',
+    // Not clipped: the photo stretches below this box when pulled down.
     backgroundColor: COLORS.cardBackground,
   },
   heroBlur: {
@@ -1430,33 +1562,8 @@ const styles = StyleSheet.create({
     bottom: SIZES.spacing_lg,
     height: '60%',
   },
-  heroBlurBand: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
   heroBlurFade: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  heroSpacer: {
-    height: HERO_HEIGHT,
-  },
-  heroImage: {
-    width: '100%',
-    height: '100%',
-  },
-  heroPlaceholder: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.borderLight,
-  },
-  heroTopShade: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 110,
+    ...StyleSheet.absoluteFill,
   },
 
   // Sheet that overlaps the bottom of the hero
@@ -1472,6 +1579,457 @@ const styles = StyleSheet.create({
     paddingBottom: 150,
     flexGrow: 1,
   },
+  // Squares off a top corner of the sheet (faded in near the header).
+  sheetCorner: {
+    position: 'absolute',
+    top: 0,
+    width: SIZES.radius_xl,
+    height: SIZES.radius_xl,
+    backgroundColor: SHEET_BG,
+  },
+  // ── Overview: summary ──
+  summaryCard: {
+    paddingBottom: SIZES.spacing_md,
+  },
+  summaryTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+  },
+  summaryDateIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: SIZES.radius_md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff1e8',
+  },
+  summaryDateText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  summaryDates: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  summaryDatesSub: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  // Three numbers split by hairlines.
+  summaryStats: {
+    flexDirection: 'row',
+    marginTop: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_md,
+    borderRadius: SIZES.radius_md,
+    backgroundColor: COLORS.cardBackground,
+  },
+  summaryStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  summaryStatDivider: {
+    borderLeftWidth: 1,
+    borderLeftColor: COLORS.border,
+  },
+  summaryStatValue: {
+    fontSize: SIZES.xl,
+    lineHeight: 28,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+  },
+  summaryStatLabel: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  travellersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+    marginTop: SIZES.spacing_md,
+  },
+  travellersText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  travellersTitle: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  travellersNames: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  inviteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: 7,
+    borderRadius: SIZES.radius_full,
+    // Deeper orange keeps the small white label readable (theme note).
+    backgroundColor: COLORS.accentDeep,
+  },
+  inviteButtonText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+  statusBadgeInline: {
+    marginBottom: 0,
+  },
+  avatarSmall: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+  },
+  avatarTextSmall: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+
+  // ── Overview: places ──
+  sectionCount: {
+    minWidth: 26,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: SIZES.radius_full,
+    overflow: 'hidden',
+    textAlign: 'center',
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+    backgroundColor: '#fff1e8',
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingLeft: SIZES.spacing_base,
+    paddingRight: 6,
+    height: 50,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.cardBackground,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  searchText: {
+    flex: 1,
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+  },
+  searchAdd: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  placeFilters: {
+    marginTop: SIZES.spacing_md,
+  },
+  placesTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    flexShrink: 1,
+  },
+  placesStop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 1,
+    maxWidth: 120,
+    paddingHorizontal: SIZES.spacing_sm,
+    paddingVertical: 3,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: '#e6f4fb',
+  },
+  placesStopText: {
+    flexShrink: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
+  },
+  // ── Overview: destinations (stop timeline) ──
+  addStopButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: 7,
+    borderRadius: SIZES.radius_full,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+  },
+  addStopText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
+  },
+  timeline: {
+    marginBottom: SIZES.spacing_xs,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  timelineRail: {
+    width: 24,
+    alignItems: 'center',
+  },
+  timelineDot: {
+    width: 22,
+    height: 22,
+    marginTop: 14,
+    borderRadius: 11,
+    backgroundColor: COLORS.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timelineDotActive: {
+    backgroundColor: COLORS.accent,
+  },
+  timelineDotText: {
+    fontSize: 11,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+  timelineLine: {
+    flex: 1,
+    width: 2,
+    backgroundColor: COLORS.borderLight,
+  },
+  timelineBody: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    marginLeft: SIZES.spacing_sm,
+    marginBottom: SIZES.spacing_sm,
+    paddingVertical: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_md,
+    borderRadius: SIZES.radius_md,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  timelineBodyActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: '#fff8f3',
+  },
+  timelineText: {
+    flex: 1,
+  },
+  timelineName: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  timelineMeta: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  timelineMore: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBackground,
+  },
+  placesHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    flexShrink: 1,
+    justifyContent: 'flex-end',
+  },
+  // Cards / list switch in the Saved spots header.
+  viewToggle: {
+    flexDirection: 'row',
+    padding: 2,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.cardBackground,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  viewToggleButton: {
+    width: 30,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  viewToggleButtonOn: {
+    backgroundColor: COLORS.white,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  // ── Saved spots: list layout ──
+  placeRows: {
+    gap: SIZES.spacing_sm,
+  },
+  placeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+    padding: 6,
+    paddingRight: SIZES.spacing_md,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: '#eef1f4',
+    backgroundColor: COLORS.white,
+  },
+  placeThumb: {
+    width: 62,
+    height: 62,
+    borderRadius: 20,
+  },
+  placeRowBody: {
+    flex: 1,
+    gap: 1,
+  },
+  placeRowName: {
+    fontSize: SIZES.md,
+    lineHeight: 18,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  placeRowArea: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  ratingPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 1,
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: '#fff7e6',
+  },
+  removePlaceButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#fff0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeCardsScroll: {
+    marginHorizontal: -SIZES.spacing_base,
+  },
+  placeCards: {
+    gap: SIZES.spacing_md,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingBottom: 2,
+  },
+  placeCard: {
+    width: PLACE_CARD_WIDTH,
+    borderRadius: SIZES.radius_lg,
+    overflow: 'hidden',
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: '#e9edf1',
+  },
+  placeCardImage: {
+    width: '100%',
+    height: 120,
+  },
+  placeCardRating: {
+    position: 'absolute',
+    top: SIZES.spacing_sm,
+    left: SIZES.spacing_sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+  },
+  placeCardRemove: {
+    position: 'absolute',
+    top: SIZES.spacing_sm,
+    right: SIZES.spacing_sm,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.94)',
+  },
+  placeCardBody: {
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: SIZES.spacing_sm,
+  },
+  placeCardName: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  placeCardArea: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+
+  // ── Overview: budget / itinerary tiles ──
+  tilesRow: {
+    flexDirection: 'row',
+    gap: SIZES.spacing_md,
+  },
+  tile: {
+    flex: 1,
+    minWidth: 0,
+  },
+  tileHeader: {
+    marginBottom: SIZES.spacing_sm,
+  },
+  tileValue: {
+    fontSize: SIZES.xl,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+  },
+  tileValueOf: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  tileValueMuted: {
+    fontSize: SIZES.xl,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textMuted,
+  },
+  tileSub: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  tileLink: {
+    marginTop: 2,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
+
   // One white card per section.
   card: {
     backgroundColor: COLORS.white,
@@ -1485,50 +2043,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 10,
     elevation: 2,
-  },
-  planLabel: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textMuted,
-  },
-  planTitle: {
-    marginTop: 2,
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
-  },
-  planTime: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.primaryLight,
-  },
-  budgetSetup: {
-    gap: SIZES.spacing_md,
-    alignItems: 'flex-start',
-  },
-  budgetSetupText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
-  budgetLine: {
-    flexShrink: 1,
-  },
-  budgetSpent: {
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
-  },
-  budgetOf: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-  },
-  budgetLeft: {
-    marginTop: SIZES.spacing_xs,
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
   },
   // Work tabs (no cover photo)
   tabScroll: {
@@ -1588,26 +2102,6 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
   },
-  metaChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SIZES.spacing_sm,
-    marginTop: SIZES.spacing_xs,
-  },
-  metaChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    maxWidth: '100%',
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: 6,
-    borderRadius: SIZES.radius_full,
-  },
-  metaChipText: {
-    flexShrink: 1,
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_500Medium',
-  },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1621,12 +2115,6 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
-  },
-  tripName: {
-    fontSize: SIZES.xxl,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.primary,
-    marginBottom: SIZES.spacing_xs,
   },
   metaRow: {
     flexDirection: 'row',
@@ -1649,75 +2137,8 @@ const styles = StyleSheet.create({
   },
 
   // Summary tiles
-  statsRow: {
-    flexDirection: 'row',
-    gap: SIZES.spacing_sm,
-    marginTop: SIZES.spacing_lg,
-  },
-  statTile: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 2,
-    paddingVertical: SIZES.spacing_md,
-    paddingHorizontal: SIZES.spacing_xs,
-    borderRadius: SIZES.radius_lg,
-  },
-  statIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    marginBottom: 2,
-    backgroundColor: COLORS.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.textPrimary,
-  },
-  statLabel: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textMuted,
-  },
 
   // Countdown
-  countdownCard: {
-    paddingVertical: SIZES.spacing_md,
-  },
-  countdownRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_md,
-  },
-  countdownIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  countdownText: {
-    flex: 1,
-  },
-  countdownLine: {
-    flexShrink: 1,
-  },
-  countdownValue: {
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_700Bold',
-  },
-  countdownLabel: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textPrimary,
-  },
-  countdownSub: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
   progressTrack: {
     height: 6,
     marginTop: SIZES.spacing_md,
@@ -1731,12 +2152,6 @@ const styles = StyleSheet.create({
   },
 
   // Members
-  membersRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_md,
-    marginTop: SIZES.spacing_md,
-  },
   avatarStack: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1754,11 +2169,6 @@ const styles = StyleSheet.create({
   avatarOverlap: {
     marginLeft: -10,
   },
-  avatarText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
-  },
   avatarDefault: {
     backgroundColor: COLORS.borderLight,
   },
@@ -1767,100 +2177,8 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textSecondary,
   },
-  membersLabel: {
-    flex: 1,
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textPrimary,
-  },
 
   // Destination timeline
-  timeline: {
-    marginBottom: SIZES.spacing_xs,
-  },
-  timelineRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-  },
-  timelineRail: {
-    width: 24,
-    alignItems: 'center',
-  },
-  timelineDot: {
-    width: 22,
-    height: 22,
-    marginTop: 14,
-    borderRadius: 11,
-    backgroundColor: COLORS.textMuted,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  timelineDotText: {
-    fontSize: 11,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
-  },
-  timelineText: {
-    flex: 1,
-  },
-  timelineMore: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.cardBackground,
-  },
-  addStopButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: 7,
-    borderRadius: SIZES.radius_full,
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-  },
-  addStopText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.primary,
-  },
-  timelineDotActive: {
-    backgroundColor: COLORS.accent,
-  },
-  timelineLine: {
-    flex: 1,
-    width: 2,
-    backgroundColor: COLORS.borderLight,
-  },
-  timelineBody: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_sm,
-    marginLeft: SIZES.spacing_sm,
-    marginBottom: SIZES.spacing_sm,
-    paddingVertical: SIZES.spacing_sm,
-    paddingHorizontal: SIZES.spacing_md,
-    borderRadius: SIZES.radius_md,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-  },
-  timelineBodyActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: '#fff8f3',
-  },
-  timelineName: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  timelineMeta: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
   createdText: {
     marginTop: SIZES.spacing_xs,
     textAlign: 'center',
@@ -1883,116 +2201,14 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_700Bold',
     color: COLORS.primary,
   },
-  destPillsScroll: {
-    flexGrow: 0,
-    marginBottom: SIZES.spacing_md,
-  },
-  destPills: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_sm,
-  },
-  destPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingLeft: SIZES.spacing_md,
-    paddingRight: 6,
-    paddingVertical: 6,
-    borderRadius: SIZES.radius_full,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
-  },
-  destPillCount: {
-    minWidth: 22,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 11,
-    alignItems: 'center',
-    backgroundColor: COLORS.cardBackground,
-  },
-  destPillCountActive: {
-    backgroundColor: 'rgba(255,255,255,0.22)',
-  },
-  destPillCountText: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textSecondary,
-  },
-  destPillActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  destPillText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-  },
-  destPillTextActive: {
-    color: COLORS.white,
-  },
   placeList: {
     marginTop: SIZES.spacing_md,
   },
   // Full-width place rows: thumbnail left, details right.
-  placeRows: {
-    gap: SIZES.spacing_sm,
-  },
-  placeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_md,
-    padding: 6,
-    paddingRight: SIZES.spacing_md,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: '#eef1f4',
-    backgroundColor: COLORS.white,
-  },
-  placeThumb: {
-    width: 62,
-    height: 62,
-    borderRadius: 20,
-  },
   placeImagePlaceholder: {
     backgroundColor: COLORS.cardBackground,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  removePlaceButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#fff0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeRowBody: {
-    flex: 1,
-    gap: 1,
-  },
-  placeRowName: {
-    fontSize: SIZES.md,
-    lineHeight: 18,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  placeRowArea: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
-  ratingPill: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 1,
-    paddingHorizontal: 7,
-    paddingVertical: 1,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff7e6',
   },
   ratingPillText: {
     fontSize: SIZES.sm,

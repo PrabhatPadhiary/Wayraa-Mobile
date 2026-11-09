@@ -529,7 +529,9 @@ export default function FavoritesScreen({ navigation }) {
   const noItemsAtAll = favourites.length === 0 || error;
 
   return (
-    <SafeAreaView style={styles.container}>
+    // No top safe-area padding: the floating header already clears the
+    // status bar / notch, and content is offset by its measured height.
+    <SafeAreaView style={styles.screen} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {loading ? (
@@ -601,6 +603,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.white,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  // Main view: like container, minus the Android status bar padding (the
+  // floating header handles the top inset).
+  screen: {
+    flex: 1,
+    backgroundColor: COLORS.white,
   },
   fill: {
     flex: 1,
