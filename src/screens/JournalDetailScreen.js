@@ -36,10 +36,12 @@ const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
 const MAX_COMMENT = 1000;
 
-function Avatar({ name, size = 36 }) {
+function Avatar({ name, photoUrl, size = 36 }) {
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: avatarColorFor(name) }]}>
-      <Text style={[styles.avatarText, { fontSize: size * 0.38 }]}>{initialsFor(name)}</Text>
+      {photoUrl
+        ? <Image source={{ uri: photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+        : <Text style={[styles.avatarText, { fontSize: size * 0.38 }]}>{initialsFor(name)}</Text>}
     </View>
   );
 }
@@ -254,7 +256,7 @@ export default function JournalDetailScreen({ navigation, route }) {
             <Text style={styles.title} accessibilityRole="header">{journal.title || routeTitle}</Text>
 
             <View style={styles.authorRow}>
-              <Avatar name={author} />
+              <Avatar name={author} photoUrl={journal.author?.photoUrl} />
               <View style={styles.flex}>
                 <Text style={styles.authorName}>{author}</Text>
                 <Text style={styles.posted}>Shared {timeAgo(journal.publishedAt || journal.createdAt)}</Text>
@@ -321,21 +323,25 @@ export default function JournalDetailScreen({ navigation, route }) {
 
             {/* Like / comment bar */}
             <View style={styles.actions}>
+              {/* Just a heart: outline, red when liked, with the count beside it. */}
               <TouchableOpacity
-                style={[styles.likeButton, journal.isLiked && styles.likeButtonOn]}
+                style={styles.likeButton}
                 onPress={handleLike}
-                activeOpacity={0.85}
+                activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 accessibilityRole="button"
                 accessibilityState={{ selected: !!journal.isLiked }}
                 accessibilityLabel={`${journal.isLiked ? 'Unlike' : 'Like'}, ${journal.likesCount || 0} likes`}
               >
-                <Ionicons name={journal.isLiked ? 'heart' : 'heart-outline'} size={20} color={journal.isLiked ? COLORS.white : '#e0245e'} />
-                <Text style={[styles.likeText, journal.isLiked && styles.likeTextOn]}>
-                  {journal.likesCount || 0} {journal.likesCount === 1 ? 'like' : 'likes'}
-                </Text>
+                <Ionicons
+                  name={journal.isLiked ? 'heart' : 'heart-outline'}
+                  size={24}
+                  color={journal.isLiked ? '#e0245e' : COLORS.textPrimary}
+                />
+                <Text style={styles.likeText}>{journal.likesCount || 0}</Text>
               </TouchableOpacity>
               <View style={styles.commentCount}>
-                <Feather name="message-circle" size={18} color={COLORS.textSecondary} />
+                <Feather name="message-circle" size={22} color={COLORS.textPrimary} />
                 <Text style={styles.commentCountText}>{journal.commentsCount || 0}</Text>
               </View>
             </View>
@@ -349,7 +355,7 @@ export default function JournalDetailScreen({ navigation, route }) {
               const mine = myUserId && c.author?.id === myUserId;
               return (
                 <View key={c.id} style={styles.comment}>
-                  <Avatar name={c.author?.name} size={32} />
+                  <Avatar name={c.author?.name} photoUrl={c.author?.photoUrl} size={32} />
                   <View style={styles.commentBubble}>
                     <View style={styles.commentHead}>
                       <Text style={styles.commentAuthor} numberOfLines={1}>{c.author?.name || 'Traveller'}</Text>
@@ -614,7 +620,7 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_md,
+    gap: SIZES.spacing_lg,
     marginTop: SIZES.spacing_xl,
     paddingVertical: SIZES.spacing_md,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -625,32 +631,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: SIZES.spacing_base,
-    paddingVertical: 8,
-    borderRadius: SIZES.radius_full,
-    borderWidth: 1.5,
-    borderColor: '#e0245e',
   },
-  likeButtonOn: {
-    backgroundColor: '#e0245e',
-  },
+  // Like and comment counts share one plain style.
   likeText: {
-    fontSize: SIZES.md,
+    fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
-    color: '#e0245e',
+    color: COLORS.textPrimary,
   },
-  likeTextOn: {
-    color: COLORS.white,
+  commentCountText: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
   },
   commentCount: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-  },
-  commentCountText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textSecondary,
   },
   noComments: {
     fontSize: SIZES.md,

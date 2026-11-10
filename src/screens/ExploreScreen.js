@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Platform,
   StatusBar,
-  Image,
   Dimensions,
   FlatList,
   ScrollView,
@@ -17,15 +16,17 @@ import {
   Easing,
   ActivityIndicator,
   AppState,
+  Alert,
   Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// expo-image: shares the disk/memory cache the startup preload fills.
+import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, SIZES } from '../constants';
+import { COLORS, SIZES, HEADER_TINT } from '../constants';
 import {
-  GlassSurface,
   PlaceTile,
   NextTripCarousel,
   NearbyPlaceCard,
@@ -42,7 +43,12 @@ import {
   reverseGeocode,
   getMyTrips,
   getFavourites,
+  useMyPhoto,
+  searchAnyPlace,
+  isRegionResult,
 } from '../services';
+import { NEARBY_CARD_HEIGHT } from '../components/NearbyPlaceCard';
+import { peekPreloaded, takePreloaded } from '../services/homePreload';
 import { API_URL } from '../config';
 import useAuth from '../hooks/useAuth';
 import { pickActiveTrips, daysUntil, dayCount } from '../utils/tripDates';
@@ -145,6 +151,12 @@ const POPULAR_DESTINATIONS = [
   },
 ];
 
+/** Fixed photos on the home page, cached during the startup logo screen. */
+export const HOME_STATIC_IMAGES = [
+  ...POPULAR_DESTINATIONS.map((d) => d.image),
+  ...CATEGORIES.map((c) => c.image),
+].filter(Boolean);
+
 /**
  * ExploreScreen - Main home screen with search, destinations, and journals.
  */
@@ -156,17 +168,18 @@ export default function ExploreScreen({ route, navigation }) {
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
   const [searchResults, setSearchResults] = useState([]);
-  const [nearbyPlaces, setNearbyPlaces] = useState([]);
+  // Rows start filled when the startup preload already has them.
+  const [nearbyPlaces, setNearbyPlaces] = useState(() => peekPreloaded('nearby')?.places || []);
   const [nearbyLoading, setNearbyLoading] = useState(false);
   // Id of the popular-destination card currently resolving its placeId (tap feedback).
   const [resolvingCardId, setResolvingCardId] = useState(null);
   const [locationDenied, setLocationDenied] = useState(false);
   // Denied and the OS won't show the prompt again: only Settings can fix it.
   const [locationBlocked, setLocationBlocked] = useState(false);
-  const [journals, setJournals] = useState([]);
+  const [journals, setJournals] = useState(() => peekPreloaded('journals') || []);
   // True until the journals request has finished once, so the row shows a
   // skeleton instead of a misleading "No journals yet".
-  const [journalsLoading, setJournalsLoading] = useState(true);
+  const [journalsLoading, setJournalsLoading] = useState(() => !peekPreloaded('journals'));
   const searchInputRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const insets = useSafeAreaInsets();
@@ -177,7 +190,8 @@ export default function ExploreScreen({ route, navigation }) {
 
   // Profile avatar: prefer the Firebase photo, else initials of the display
   // name (or email).
-  const profilePhoto = firebaseUser?.photoURL || routeUser?.photoUrl || null;
+  // Updates live when you change it on the Profile page.
+  const profilePhoto = useMyPhoto(firebaseUser?.photoURL || routeUser?.photoUrl);
   const profileName = firebaseUser?.displayName || routeUser?.name || firebaseUser?.email || '';
 
 
@@ -227,7 +241,10 @@ export default function ExploreScreen({ route, navigation }) {
   };
 
   // Detected nearby location label (reverse-geocoded), shown as a chip.
-  const [nearbyLabel, setNearbyLabel] = useState(null);
+  const [nearbyLabel, setNearbyLabel] = useState(() => peekPreloaded('nearby')?.label || null);
+  // Where "Near you" was looked up, so "Show all" can find that city.
+  const [nearbyCoords, setNearbyCoords] = useState(() => peekPreloaded('nearby')?.loc || null);
+  const [openingNearbyAll, setOpeningNearbyAll] = useState(false);
 
   // Use a location fix for both the "Near you" chip and the nearby places.
   const applyLocation = useCallback(async (loc) => {
@@ -240,6 +257,7 @@ export default function ExploreScreen({ route, navigation }) {
     ]);
     setNearbyPlaces(places);
     if (label) setNearbyLabel(label);
+    setNearbyCoords({ lat: loc.lat, lng: loc.lng });
     setNearbyLoading(false);
   }, []);
 
@@ -248,6 +266,16 @@ export default function ExploreScreen({ route, navigation }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Already loaded during the logo screen: use it as is.
+      const preloaded = takePreloaded('nearby');
+      const pre = preloaded ? await preloaded : null;
+      if (cancelled) return;
+      if (pre) {
+        setNearbyPlaces(pre.places);
+        if (pre.label) setNearbyLabel(pre.label);
+        setNearbyCoords({ lat: pre.loc.lat, lng: pre.loc.lng });
+        return;
+      }
       const loc = await getCurrentLocation();
       if (cancelled) return;
       if (loc.granted) {
@@ -276,7 +304,10 @@ export default function ExploreScreen({ route, navigation }) {
   // Signed-in extras: the featured trip and the latest favourites. Refreshed
   // whenever the tab regains focus so new trips/favourites show up right away.
   // Any failure just hides the section, since both are optional extras.
-  const [activeTrips, setActiveTrips] = useState([]);
+  const [activeTrips, setActiveTrips] = useState(() => {
+    const trips = peekPreloaded('trips');
+    return trips ? pickActiveTrips(trips) : [];
+  });
 
   // Greeting subline about your next trip: "Kyoto in 9 days", "Day 3 in
   // Osaka", "Goa starts today", else "Where to next?". Tapping it opens the trip.
@@ -344,11 +375,11 @@ export default function ExploreScreen({ route, navigation }) {
       initial: false,
     });
   };
-  const [favourites, setFavourites] = useState([]);
+  const [favourites, setFavourites] = useState(() => (peekPreloaded('favourites') || []).slice(0, 8));
   // True once each request has finished (success or failure) at least once,
   // so skeletons show only on the first load, not on every refocus refresh.
-  const [tripsLoaded, setTripsLoaded] = useState(false);
-  const [favsLoaded, setFavsLoaded] = useState(false);
+  const [tripsLoaded, setTripsLoaded] = useState(() => !!peekPreloaded('trips'));
+  const [favsLoaded, setFavsLoaded] = useState(() => !!peekPreloaded('favourites'));
 
   useFocusEffect(
     useCallback(() => {
@@ -365,7 +396,8 @@ export default function ExploreScreen({ route, navigation }) {
 
       (async () => {
         try {
-          const trips = await getMyTrips();
+          // First load uses the startup preload when it worked.
+          const trips = (await takePreloaded('trips')) || await getMyTrips();
           if (cancelled) return;
           setActiveTrips(pickActiveTrips(trips));
           setTripsLoaded(true);
@@ -378,7 +410,7 @@ export default function ExploreScreen({ route, navigation }) {
 
       (async () => {
         try {
-          const favs = await getFavourites();
+          const favs = (await takePreloaded('favourites')) || await getFavourites();
           if (cancelled) return;
           const latest = favs.slice(0, 8);
           setFavourites(latest);
@@ -502,6 +534,11 @@ export default function ExploreScreen({ route, navigation }) {
 
   const loadJournals = async () => {
     try {
+      const preloaded = await takePreloaded('journals');
+      if (preloaded) {
+        setJournals(preloaded);
+        return;
+      }
       const response = await fetch(`${API_URL}/Journals/feed`);
       if (response.ok) {
         const data = await response.json();
@@ -596,6 +633,33 @@ export default function ExploreScreen({ route, navigation }) {
     });
   };
 
+  // "Show all" on Near You: open your city's page (things to do, food,
+  // stays, search), found from the detected city name near your location.
+  const openNearbyAll = async () => {
+    if (openingNearbyAll) return;
+    if (!nearbyLabel) {
+      Alert.alert('Couldn\'t find your city', 'Search for it at the top instead.');
+      return;
+    }
+    setOpeningNearbyAll(true);
+    try {
+      const near = nearbyCoords ? { ...nearbyCoords, radius: 50000 } : null;
+      const results = await searchAnyPlace(nearbyLabel, { regionsOnly: true, near });
+      const match = results.find(isRegionResult) || results[0];
+      if (!match?.placeId) {
+        Alert.alert('Couldn\'t open ' + nearbyLabel, 'Search for it at the top instead.');
+        return;
+      }
+      openDestination({
+        placeId: match.placeId,
+        name: match.name || nearbyLabel,
+        secondary: match.secondary || '',
+      });
+    } finally {
+      setOpeningNearbyAll(false);
+    }
+  };
+
   const handleResultTap = (item) => {
     if (!item?.placeId) return;
     closeSearch();
@@ -670,7 +734,13 @@ export default function ExploreScreen({ route, navigation }) {
   const renderJournalCard = ({ item }) => {
     const coverPhoto = item.photos && item.photos.length > 0 ? item.photos[0].url : null;
     return (
-      <TouchableOpacity style={styles.journalCard} activeOpacity={0.9}>
+      <TouchableOpacity
+        style={styles.journalCard}
+        activeOpacity={0.9}
+        onPress={() => navigation.navigate('JournalDetail', { journalId: item.id, title: item.title })}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.title}, by ${item.author?.name || 'Anonymous'}`}
+      >
         {coverPhoto ? (
           <Image source={{ uri: coverPhoto }} style={styles.journalImage} />
         ) : (
@@ -816,7 +886,7 @@ export default function ExploreScreen({ route, navigation }) {
         scrollEventThrottle={16}
       >
         {/* Popular Destinations */}
-        <View style={styles.section}>
+        <View style={[styles.section, styles.sectionFirst]}>
           <Text style={styles.sectionTitle}>Popular Destinations</Text>
           <FlatList
             data={POPULAR_DESTINATIONS}
@@ -832,7 +902,9 @@ export default function ExploreScreen({ route, navigation }) {
 
         {/* Near You */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Near You</Text>
+          <Text style={styles.sectionTitle} numberOfLines={1}>
+            Near you{nearbyLabel ? <Text style={styles.sectionTitleSub}>{`  ·  ${nearbyLabel}`}</Text> : null}
+          </Text>
           {nearbyPlaces.length > 0 ? (
             <FlatList
               data={[...nearbyPlaces.slice(0, 5), { id: 'show-all', isShowAll: true }]}
@@ -842,24 +914,38 @@ export default function ExploreScreen({ route, navigation }) {
               contentContainerStyle={styles.cardsContainer}
               renderItem={({ item }) => {
                 if (item.isShowAll) {
-                  const collageImages = nearbyPlaces.slice(0, 3).map(p => p.photoUrl).filter(Boolean);
+                  // A 2x2 mosaic of the places not shown in the row hints at
+                  // what's behind it (falls back to the first ones).
+                  const extra = nearbyPlaces.slice(5).map((p) => p.photoUrl).filter(Boolean);
+                  const mosaic = (extra.length >= 4 ? extra : nearbyPlaces.map((p) => p.photoUrl).filter(Boolean)).slice(0, 4);
                   return (
-                    <TouchableOpacity style={styles.showAllCard} activeOpacity={0.8}>
-                      <View style={styles.collageContainer}>
-                        {collageImages.map((uri, i) => (
-                          <Image
-                            key={i}
-                            source={{ uri }}
-                            style={[styles.collageImage, {
-                              transform: [{ rotate: `${(i - 1) * 8}deg` }],
-                              zIndex: 3 - i,
-                              top: i * 8,
-                              left: i * 20,
-                            }]}
-                          />
+                    <TouchableOpacity
+                      style={styles.showAllCard}
+                      onPress={openNearbyAll}
+                      activeOpacity={0.9}
+                      accessibilityRole="button"
+                      accessibilityLabel={`See all places${nearbyLabel ? ` in ${nearbyLabel}` : ' near you'}`}
+                    >
+                      <View style={styles.showAllMosaic}>
+                        {mosaic.map((uri, i) => (
+                          <Image key={i} source={{ uri }} style={styles.showAllTile} contentFit="cover" transition={150} />
                         ))}
                       </View>
-                      <Text style={styles.showAllText}>Show all →</Text>
+                      <LinearGradient
+                        colors={['rgba(4,50,71,0.55)', 'rgba(4,50,71,0.85)']}
+                        style={StyleSheet.absoluteFill}
+                      />
+                      <View style={styles.showAllBody}>
+                        <View style={styles.showAllArrow}>
+                          {openingNearbyAll
+                            ? <ActivityIndicator size="small" color={COLORS.primary} />
+                            : <Ionicons name="arrow-forward" size={20} color={COLORS.primary} />}
+                        </View>
+                        <Text style={styles.showAllText}>See all</Text>
+                        <Text style={styles.showAllSub} numberOfLines={2}>
+                          {nearbyLabel ? `Things to do in ${nearbyLabel}` : 'More places near you'}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   );
                 }
@@ -1033,7 +1119,12 @@ export default function ExploreScreen({ route, navigation }) {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionHeaderTitle}>From the Community</Text>
-            <TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Community', { screen: 'CommunityHome' })}
+              accessibilityRole="button"
+              accessibilityLabel="See all community stories"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Text style={styles.seeAllText}>See all</Text>
             </TouchableOpacity>
           </View>
@@ -1058,9 +1149,8 @@ export default function ExploreScreen({ route, navigation }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Frosted glass header — uses the same GlassSurface as the menu bar
-          (proven working blur). Rendered AFTER the ScrollView so it blurs the
-          content scrolling behind it. */}
+      {/* Header: the same solid white panel as the other tabs (rounded
+          bottom, soft shadow). Rendered after the ScrollView so it floats on top. */}
       <View
         style={styles.searchContainer}
         onLayout={(e) => {
@@ -1073,17 +1163,16 @@ export default function ExploreScreen({ route, navigation }) {
           }
         }}
       >
-        <GlassSurface radius={SIZES.radius_xl} style={StyleSheet.absoluteFill} />
-        {/* Warm sand wash over the glass: gives the header colour while the
-            blur still shows through toward the bottom. */}
+
+        {/* Soft blue wash, the same on every tab's header. */}
         <LinearGradient
-          colors={['rgba(255,232,214,0.95)', 'rgba(255,244,236,0.8)', 'rgba(255,251,248,0.55)']}
+          colors={HEADER_TINT}
           locations={[0, 0.55, 1]}
-          style={[StyleSheet.absoluteFill, { borderRadius: SIZES.radius_xl }]}
+          style={styles.headerTint}
           pointerEvents="none"
         />
 
-        {/* Foreground content (greeting/pill/chip) sits above the glass. */}
+        {/* Foreground content (greeting, next trip, search). */}
         <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]}>
           {/* Greeting row (text + profile) — collapses away on scroll down. */}
           <Animated.View
@@ -1099,27 +1188,22 @@ export default function ExploreScreen({ route, navigation }) {
             <View style={styles.greetingRow}>
               <View style={styles.greetingText}>
                 <Text style={styles.greeting}>
-                  {greeting}{isAuthenticated && firstName ? `, ${firstName}` : ''}
+                  {greeting}{isAuthenticated && firstName ? ',' : ''}
+                  {isAuthenticated && firstName ? <Text style={styles.greetingName}>{` ${firstName}`}</Text> : null}
                 </Text>
                 {tripLine ? (
+                  // Your next trip as a quiet subtitle line (tap to open it).
                   <TouchableOpacity
                     style={styles.tripLine}
                     onPress={openHeadlineTrip}
-                    activeOpacity={0.85}
+                    activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityLabel={`${tripLine.text}. Open trip`}
                     hitSlop={{ top: 6, bottom: 6 }}
                   >
-                    <LinearGradient
-                      colors={[COLORS.accentDeep, COLORS.accent]}
-                      start={{ x: 0, y: 0.5 }}
-                      end={{ x: 1, y: 0.5 }}
-                      style={styles.tripLinePill}
-                    >
-                      <Ionicons name={tripLine.icon} size={13} color={COLORS.white} />
-                      <Text style={styles.tripLineText} numberOfLines={1}>{tripLine.text}</Text>
-                      <Ionicons name="chevron-forward" size={13} color={COLORS.white} />
-                    </LinearGradient>
+                    <Ionicons name={tripLine.icon} size={13} color={COLORS.accent} />
+                    <Text style={styles.tripLineText} numberOfLines={1}>{tripLine.text}</Text>
+                    <Ionicons name="chevron-forward" size={13} color={COLORS.accent} />
                   </TouchableOpacity>
                 ) : (
                   <Text style={styles.greetingSub}>Where to next?</Text>
@@ -1173,24 +1257,6 @@ export default function ExploreScreen({ route, navigation }) {
             </Animated.View>
           </View>
 
-          {/* Nearby detected location chip — collapses away on scroll down. */}
-          {nearbyLabel && (
-            <Animated.View
-              style={{
-                opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
-                maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }),
-                marginTop: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_md, 0] }),
-                overflow: 'hidden',
-              }}
-            >
-              <View style={styles.locationChip}>
-                <Ionicons name="location" size={14} color={COLORS.textSecondary} />
-                <Text style={styles.locationChipText} numberOfLines={1}>
-                  Near you · {nearbyLabel}
-                </Text>
-              </View>
-            </Animated.View>
-          )}
         </View>
       </View>
 
@@ -1220,14 +1286,21 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 20,
-    backgroundColor: 'transparent',
+    // Same panel as ScreenHeader (My Trips, Favorites, Community).
+    backgroundColor: COLORS.white,
+    borderBottomLeftRadius: SIZES.radius_xl,
+    borderBottomRightRadius: SIZES.radius_xl,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 8,
   },
-  // Foreground content sits above the GlassSurface backdrop; carries the
-  // header's padding.
+  // Carries the header's padding.
   headerForeground: {
     paddingTop: 0,
     paddingHorizontal: SIZES.spacing_lg,
-    paddingBottom: SIZES.spacing_lg,
+    paddingBottom: SIZES.spacing_md,
   },
   // Greeting row: greeting text + profile avatar.
   greetingRow: {
@@ -1244,6 +1317,14 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_700Bold',
     color: COLORS.primary,
   },
+  greetingName: {
+    color: COLORS.accent,
+  },
+  headerTint: {
+    ...StyleSheet.absoluteFill,
+    borderBottomLeftRadius: SIZES.radius_xl,
+    borderBottomRightRadius: SIZES.radius_xl,
+  },
   greetingSub: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
@@ -1256,22 +1337,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   // Slim one-line search pill.
+  // Same search pill as the destination page: soft grey fill, no shadow.
+  // White pill on the blue wash, with a light blue outline.
   homeSearchBar: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    height: 48,
+    height: 46,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: COLORS.borderLight,
+    borderColor: '#cfe6f7',
     borderRadius: SIZES.radius_full,
     paddingHorizontal: SIZES.spacing_base,
     gap: SIZES.spacing_sm,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 3,
   },
   // Greeting-row avatar button: just the tap target (renderAvatar draws it).
   profileButton: {
@@ -1304,35 +1382,27 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   // Greeting subline about the next trip (tappable).
+  // Next trip: a light orange pill.
   tripLine: {
     alignSelf: 'flex-start',
     maxWidth: '100%',
-    marginTop: 4,
-  },
-  tripLinePill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
+    marginTop: 6,
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 4,
     borderRadius: SIZES.radius_full,
+    backgroundColor: '#ffe9db',
   },
   tripLineText: {
     flexShrink: 1,
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
+    color: COLORS.accentDeep,
   },
   // Nearby detected location chip (plain text).
-  locationChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 5,
-    paddingVertical: 6,
-  },
-  locationChipText: {
-    fontSize: SIZES.sm,
+  sectionTitleSub: {
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textSecondary,
   },
@@ -1469,6 +1539,10 @@ const styles = StyleSheet.create({
   // Sections
   section: {
     marginTop: SIZES.spacing_lg,
+  },
+  // First section sits close under the header.
+  sectionFirst: {
+    marginTop: SIZES.spacing_md,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1632,32 +1706,50 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
   },
+  // "See all" card at the end of Near You: same height and corners as the
+  // place cards, a photo mosaic under a navy wash.
   showAllCard: {
-    width: 180,
+    width: 150,
+    height: NEARBY_CARD_HEIGHT,
+    borderRadius: SIZES.radius_lg,
+    overflow: 'hidden',
+    backgroundColor: COLORS.primary,
+  },
+  showAllMosaic: {
+    ...StyleSheet.absoluteFill,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  showAllTile: {
+    width: '50%',
+    height: '50%',
+  },
+  showAllBody: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_md,
+  },
+  showAllArrow: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    marginBottom: SIZES.spacing_sm,
   },
   showAllText: {
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-    marginTop: SIZES.spacing_sm,
+    color: COLORS.white,
   },
-  collageContainer: {
-    width: 160,
-    height: 130,
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  collageImage: {
-    width: 100,
-    height: 100,
-    borderRadius: SIZES.radius_md,
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: COLORS.white,
+  showAllSub: {
+    marginTop: 2,
+    textAlign: 'center',
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_500Medium',
+    color: 'rgba(255,255,255,0.85)',
   },
 
   // Journals

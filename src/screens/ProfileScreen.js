@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
@@ -30,6 +31,9 @@ import {
   signInMethods,
   sendPasswordReset,
   deleteMyAccount,
+  uploadProfilePhoto,
+  removeProfilePhoto,
+  useMyPhoto,
   getMyTrips,
   logoutUser,
   AuthRequiredError,
@@ -83,6 +87,7 @@ export default function ProfileScreen({ navigation }) {
   const [error, setError] = useState('');
   const [needsAuth, setNeedsAuth] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -128,10 +133,60 @@ export default function ProfileScreen({ navigation }) {
 
   const name = profile?.name || firebaseUser?.displayName || 'Traveller';
   const email = profile?.email || firebaseUser?.email || '';
-  const photo = !photoFailed ? firebaseUser?.photoURL : null;
+  const myPhoto = useMyPhoto(firebaseUser?.photoURL);
+  const photo = !photoFailed ? myPhoto : null;
   const since = profile?.createdAt ? new Date(profile.createdAt) : null;
   const methods = signInMethods();
   const stats = profile?.stats || {};
+
+  // ── Profile photo ──
+  const pickPhoto = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Photos access needed', 'Allow access to your photos in Settings to choose a profile photo.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true, // square crop
+      aspect: [1, 1],
+      quality: 1,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    setPhotoBusy(true);
+    try {
+      await uploadProfilePhoto(result.assets[0]);
+      setPhotoFailed(false);
+    } catch (e) {
+      Alert.alert('Couldn\'t update your photo', e?.message || 'Please try again.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const removePhoto = async () => {
+    setPhotoBusy(true);
+    try {
+      await removeProfilePhoto();
+    } catch (e) {
+      Alert.alert('Couldn\'t remove your photo', e?.message || 'Please try again.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const onAvatarPress = () => {
+    if (photoBusy) return;
+    if (!photo) {
+      pickPhoto();
+      return;
+    }
+    Alert.alert('Profile photo', undefined, [
+      { text: 'Choose a new photo', onPress: pickPhoto },
+      { text: 'Remove photo', style: 'destructive', onPress: removePhoto },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
 
   const openNameEditor = () => {
     setNameDraft(name === 'Traveller' ? '' : name);
@@ -290,7 +345,13 @@ export default function ProfileScreen({ navigation }) {
             <Feather name="chevron-left" size={22} color={COLORS.white} />
           </TouchableOpacity>
 
-          <View style={styles.avatarRing}>
+          <TouchableOpacity
+            style={styles.avatarRing}
+            onPress={onAvatarPress}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={photo ? 'Change or remove your profile photo' : 'Add a profile photo'}
+          >
             {photo ? (
               <Image source={{ uri: photo }} style={styles.avatar} onError={() => setPhotoFailed(true)} />
             ) : (
@@ -298,7 +359,16 @@ export default function ProfileScreen({ navigation }) {
                 <Text style={styles.avatarText}>{initialsFor(name)}</Text>
               </View>
             )}
-          </View>
+            {photoBusy && (
+              <View style={styles.avatarBusy}>
+                <ActivityIndicator color={COLORS.white} />
+              </View>
+            )}
+            {/* Camera badge: this is where you change the photo. */}
+            <View style={styles.avatarBadge}>
+              <Feather name="camera" size={14} color={COLORS.primary} />
+            </View>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.nameRow}
@@ -560,6 +630,30 @@ const styles = StyleSheet.create({
     padding: 4,
     borderRadius: 52,
     backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  avatarBusy: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  avatarBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
   },
   avatar: {
     width: 92,

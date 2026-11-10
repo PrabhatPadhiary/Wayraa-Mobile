@@ -279,6 +279,28 @@ export async function updateDestinationDates(tripId, updates) {
 }
 
 /**
+ * Make a stop the trip's primary destination (its name on cards, its cover
+ * photo). The route order doesn't change.
+ * Backend: PUT /api/Trips/{id}/primary-destination
+ */
+export async function setPrimaryDestination(tripId, destinationId) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}/primary-destination`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ destinationId }),
+  });
+
+  if (!response.ok) throw await destinationError(response, 'Could not change the primary destination.');
+  return response.json();
+}
+
+/**
  * Update a trip's details. Only the fields sent are changed.
  * Backend: PUT /api/Trips/{id} (owner only).
  *

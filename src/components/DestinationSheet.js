@@ -19,6 +19,28 @@ import { COLORS, SIZES } from '../constants';
 import { searchPlaces, getPlaceDetails } from '../services';
 import DateRangeCalendar from './DateRangeCalendar';
 import { DateRangeSummary } from './DateRangeSheet';
+import { isoToDay } from '../utils/itinerary';
+import { formatDateRange } from '../utils/tripDates';
+
+/**
+ * Other stops these dates overlap by more than a travel day. Sharing a single
+ * day where one stay ends and the other starts (leave Kyoto, arrive in Osaka
+ * on the 12th) is normal and not reported.
+ */
+function overlappingStops(startDate, endDate, otherStops) {
+  const s = isoToDay(startDate);
+  const e = isoToDay(endDate) ?? s;
+  if (s == null) return [];
+  return otherStops.filter((o) => {
+    const os = isoToDay(o.startDate);
+    const oe = isoToDay(o.endDate) ?? os;
+    if (os == null) return false;
+    const shared = Math.min(e, oe) - Math.max(s, os) + 1;
+    if (shared <= 0) return false;
+    const travelDay = shared === 1 && (s === oe || e === os);
+    return !travelDay;
+  });
+}
 
 const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.88;
 // The dates step holds a scrolling calendar, so the sheet gets a fixed height.
@@ -39,6 +61,7 @@ const SEARCH_DELAY_MS = 300;
  * @param {{ id, name, startDate, endDate }} [editing]  destination being edited
  * @param {string[]} [existingPlaceIds]  googlePlaceIds already in the trip
  * @param {string|null} [suggestedStart]  prefill for the start date (add mode)
+ * @param {Array} [otherStops]  the trip's other stops, to note overlapping dates
  * @param {() => void} onClose
  * @param {(result: { destination?: object, startDate: string|null, endDate: string|null }) => Promise<void>} onSubmit
  *   `destination` (add mode only): { googlePlaceId, name, latitude, longitude, photoUrl }
@@ -48,6 +71,7 @@ export default function DestinationSheet({
   editing,
   existingPlaceIds = [],
   suggestedStart = null,
+  otherStops = [],
   onClose,
   onSubmit,
 }) {
@@ -223,6 +247,22 @@ export default function DestinationSheet({
             ? 'Now tap your departure day.'
             : 'The trip\'s dates update to cover every stop.'}
       </Text>
+      {/* A gentle note, never a block: overlaps are often day or side trips. */}
+      {(() => {
+        const overlaps = overlappingStops(startDate, endDate, otherStops);
+        if (!overlaps.length) return null;
+        const names = overlaps
+          .map((o) => `${o.name}${formatDateRange(o.startDate, o.endDate) ? ` (${formatDateRange(o.startDate, o.endDate)})` : ''}`)
+          .join(', ');
+        return (
+          <View style={styles.overlapNote} accessibilityRole="text">
+            <Ionicons name="information-circle-outline" size={16} color="#8a5a00" />
+            <Text style={styles.overlapText}>
+              Overlaps {names}. That's fine for a day trip or a side trip.
+            </Text>
+          </View>
+        );
+      })()}
       <DateRangeCalendar
         startDate={startDate}
         endDate={endDate}
@@ -429,6 +469,22 @@ const styles = StyleSheet.create({
   },
   datesSummary: {
     marginTop: SIZES.spacing_base,
+  },
+  overlapNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: SIZES.spacing_sm,
+    marginBottom: SIZES.spacing_sm,
+    padding: SIZES.spacing_md,
+    borderRadius: SIZES.radius_md,
+    backgroundColor: '#fff8e6',
+  },
+  overlapText: {
+    flex: 1,
+    fontSize: SIZES.sm,
+    lineHeight: 19,
+    fontFamily: 'Poppins_400Regular',
+    color: '#6b4a00',
   },
   hint: {
     marginTop: SIZES.spacing_sm,

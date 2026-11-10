@@ -1,13 +1,16 @@
 export { app, auth, googleProvider } from './firebase';
 
-//export const API_URL = 'http://localhost:5273/api';
+// Backend address.
+//  - Release builds (the APK / store builds) use production.
+//  - Development (Expo Go / dev builds) uses your Mac's backend on the LAN.
+//  - EXPO_PUBLIC_API_URL (set in eas.json or the shell) overrides both.
+export const PROD_API_URL = 'https://wanderlust-backend-8qn5.onrender.com/api';
+const LOCAL_API_URL = 'http://192.168.1.6:5273/api'; // Home wifi (current IP)
+//const LOCAL_API_URL = 'http://192.168.1.9:5273/api'; // Home wifi (previous IP)
+//const LOCAL_API_URL = 'http://172.20.10.9:5273/api'; // Mobile hotspot
+//const LOCAL_API_URL = 'http://localhost:5273/api';
 
-export const API_URL = 'http://192.168.1.69:5273/api'; // Current wifi
-//export const API_URL = 'http://192.168.1.68:5273/api'; // Current wifi (earlier IP)
-//export const API_URL = 'http://192.168.1.9:5273/api'; // Home wifi (previous IP)
-
-//export const API_URL = 'http://192.168.1.2:5273/api'; // Home wifi (old IP)
-//export const API_URL = 'http://172.20.10.9:5273/api'; // Mobile hotspot
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || (__DEV__ ? LOCAL_API_URL : PROD_API_URL);
 
 
 /**

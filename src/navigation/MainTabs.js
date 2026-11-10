@@ -16,6 +16,7 @@ import {
   JoinTripScreen,
   ProfileScreen,
   JournalDetailScreen,
+  DestinationPlacesScreen,
 } from '../screens';
 
 const Tab = createBottomTabNavigator();
@@ -34,8 +35,12 @@ function ExploreStack({ route }) {
     <Stack.Navigator screenOptions={commonStackOptions}>
       <Stack.Screen name="ExploreHome" component={ExploreScreen} initialParams={{ user }} />
       <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
+      {/* All places / search inside a destination. */}
+      <Stack.Screen name="DestinationPlaces" component={DestinationPlacesScreen} />
       <Stack.Screen name="CategoryResults" component={CategoryResultsScreen} />
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      {/* Stories that tag a place open from its page. */}
+      <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
       <Stack.Screen name="CreateTrip" component={CreateTripScreen} />
       {/* Opened from the avatar on Home. */}
       <Stack.Screen name="Profile" component={ProfileScreen} />
@@ -50,9 +55,13 @@ function MyTripsStack() {
       <Stack.Screen name="TripDetail" component={TripDetailScreen} />
       {/* Saved places on a trip open the shared place page from this stack. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      {/* Stories that tag a place open from its page. */}
+      <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
       {/* "Add place" on a trip opens the destination here, in picking mode, so
           back returns to the trip instead of switching to the Explore tab. */}
       <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
+      {/* All places / search inside a destination. */}
+      <Stack.Screen name="DestinationPlaces" component={DestinationPlacesScreen} />
       {/* Joining a shared trip: from an invite link, or by pasting one. */}
       <Stack.Screen name="JoinTrip" component={JoinTripScreen} />
     </Stack.Navigator>
@@ -65,6 +74,8 @@ function FavoritesStack() {
       <Stack.Screen name="FavoritesHome" component={FavoritesScreen} />
       {/* Tapping a saved place opens its details. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      {/* Stories that tag a place open from its page. */}
+      <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
     </Stack.Navigator>
   );
 }

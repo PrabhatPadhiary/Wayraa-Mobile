@@ -189,7 +189,9 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
 
         <View style={styles.footer}>
           <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
-            <Text style={styles.avatarText}>{initialsFor(author)}</Text>
+            {journal.author?.photoUrl
+              ? <Image source={{ uri: journal.author?.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+              : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
           </View>
           <View style={styles.authorText}>
             <Text style={styles.authorName} numberOfLines={1}>{author}</Text>

@@ -23,7 +23,6 @@ import {
   SignInPrompt,
   ScreenHeader,
   GridSkeleton,
-  SwipeableCard,
   AddToTripSheet,
 } from '../components';
 import { getFavourites, removeFavourite, addFavourite, AuthRequiredError } from '../services';
@@ -81,7 +80,7 @@ function toMasonry(items) {
  *
  * City collections at the top (tap one to show just that city), then a
  * two-column masonry "mood board" of photo tiles. Each tile has a heart to
- * remove, a + to add it to a trip, and swipes left for the same actions.
+ * remove and a + to add it to a trip.
  * Removing shows an Undo toast.
  */
 export default function FavoritesScreen({ navigation }) {
@@ -96,7 +95,6 @@ export default function FavoritesScreen({ navigation }) {
   const [activeFilter, setActiveFilter] = useState('all');
   const [activeCity, setActiveCity] = useState(null); // collection key or null
   const [headerHeight, setHeaderHeight] = useState(0);
-  const [openSwipeId, setOpenSwipeId] = useState(null);
   const [tripPlace, setTripPlace] = useState(null); // favourite being added to a trip
   // Last removal, for the Undo toast: { item, index }.
   const [undo, setUndo] = useState(null);
@@ -321,17 +319,8 @@ export default function FavoritesScreen({ navigation }) {
     const showImage = uri && !brokenImages[item.id];
     const city = cityOf(item.vicinity);
     return (
-      <SwipeableCard
-        key={item.id}
-        isOpen={openSwipeId === item.id}
-        onOpenChange={(open) => setOpenSwipeId(open ? item.id : null)}
-        actionsHeight={52}
-        actions={[
-          { key: 'trip', label: 'Trip', icon: 'add-circle-outline', color: COLORS.primary, onPress: () => openAddToTrip(item) },
-          { key: 'remove', label: 'Remove', icon: 'heart-dislike-outline', color: COLORS.error, onPress: () => handleRemove(item) },
-        ]}
-      >
         <TouchableOpacity
+          key={item.id}
           style={[styles.tile, { height }]}
           onPress={() => openPlace(item)}
           activeOpacity={0.92}
@@ -399,7 +388,6 @@ export default function FavoritesScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
-      </SwipeableCard>
     );
   };
 
@@ -444,7 +432,6 @@ export default function FavoritesScreen({ navigation }) {
           <ScrollView
             contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + SIZES.spacing_md }]}
             showsVerticalScrollIndicator={false}
-            onScrollBeginDrag={() => setOpenSwipeId(null)}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -507,7 +494,7 @@ export default function FavoritesScreen({ navigation }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [
     headerHeight, refreshing, favourites, error, showCollections, collections, activeCity,
-    activeCollection, listOpacity, visibleFavourites, columns, openSwipeId, brokenImages,
+    activeCollection, listOpacity, visibleFavourites, columns, brokenImages,
     activeFilter,
   ]);
 

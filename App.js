@@ -19,10 +19,12 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
 import { getStoredUser } from './src/services';
+import { preloadPublic, preloadSignedIn, waitForHomePreload } from './src/services/homePreload';
+import { HOME_STATIC_IMAGES } from './src/screens/ExploreScreen';
 import { WelcomeScreen, LoginScreen, SignUpScreen, WriteJournalScreen } from './src/screens';
 import { MainTabs } from './src/navigation';
 import { BottomBarProvider } from './src/context/BottomBarContext';
-import { COLORS } from './src/constants';
+import { COLORS, SIZES } from './src/constants';
 
 /** Branded loading screen — shown while fonts and Firebase auth state load. */
 function LoadingScreen() {
@@ -79,6 +81,15 @@ function DotsIndicator({ delay }) {
 
 const Stack = createNativeStackNavigator();
 
+// Logo screen timing: shown at least MIN so it never just flashes, and while
+// the home page preloads, but never longer than MAX (slow network).
+const SPLASH_MIN_MS = 1200;
+const SPLASH_MAX_MS = 4000;
+const launchedAt = Date.now();
+
+// Start loading the public parts of the home page right away.
+preloadPublic(HOME_STATIC_IMAGES);
+
 /**
  * Links that open the app: an invite opens the Join trip screen.
  *  - wayraa://join/<inviteId>            (installed app)
@@ -117,6 +128,7 @@ export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState('Welcome');
   const [storedUser, setStoredUser] = useState(null);
+  const [preloadDone, setPreloadDone] = useState(false);
 
   useEffect(() => {
     // Listen for Firebase auth state
@@ -127,6 +139,8 @@ export default function App() {
         if (user) {
           setStoredUser(user);
           setInitialRoute('Main');
+          // Your trips and favourites for the home page, while the logo shows.
+          preloadSignedIn(firebaseUser.photoURL || user.photoUrl);
         }
       }
       setIsAuthReady(true);
@@ -135,7 +149,20 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  if (!fontsLoaded || !isAuthReady) {
+  // Once signed-in state is known, keep the logo up until the home page's
+  // data and photos are in (within the min / max times above).
+  useEffect(() => {
+    if (!isAuthReady) return undefined;
+    let cancelled = false;
+    const elapsed = Date.now() - launchedAt;
+    Promise.all([
+      waitForHomePreload(Math.max(0, SPLASH_MAX_MS - elapsed)),
+      new Promise((resolve) => setTimeout(resolve, Math.max(0, SPLASH_MIN_MS - elapsed))),
+    ]).then(() => { if (!cancelled) setPreloadDone(true); });
+    return () => { cancelled = true; };
+  }, [isAuthReady]);
+
+  if (!fontsLoaded || !isAuthReady || !preloadDone) {
     return (
       <SafeAreaProvider>
         <LoadingScreen />
@@ -189,27 +216,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  // Same size and type as the Welcome screen's splash, so the logo looks
+  // the same whether or not you're signed in.
   loadingContent: {
     alignItems: 'center',
-    marginTop: 100, // push content down from dead center
   },
   loadingLogo: {
-    width: 120,
-    height: 120,
-    marginBottom: 20,
+    width: 280,
+    height: 280,
+    marginBottom: SIZES.spacing_base,
   },
   loadingBrand: {
-    fontSize: 36,
-    fontFamily: 'PlayfairDisplay_700Bold',
-    color: COLORS.textPrimary,
+    fontSize: 44,
+    fontFamily: 'PlayfairDisplay_800ExtraBold',
+    color: COLORS.primary,
     letterSpacing: 1,
+    marginBottom: 4,
   },
   loadingTagline: {
-    fontSize: 14,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    marginTop: 6,
-    letterSpacing: 1.2,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.accent,
+    letterSpacing: 0.5,
   },
   dotsRow: {
     position: 'absolute',

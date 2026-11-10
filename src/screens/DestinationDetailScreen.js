@@ -8,16 +8,18 @@ import {
   Image,
   FlatList,
   ScrollView,
-  ActivityIndicator,
   Alert,
   Animated,
+  Easing,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
+import RatingRow from '../components/RatingRow';
 import { FilterChips, GridSkeleton } from '../components';
+import FilterSheet from '../components/FilterSheet';
+import PickToggle from '../components/PickToggle';
 import { useBottomBar } from '../context/BottomBarContext';
 import {
   getPlaceDetails,
@@ -29,64 +31,11 @@ import {
   getTripById,
   addPlaceToTrip,
   removeTripPlace,
+  placeCoords,
   AuthRequiredError,
 } from '../services';
 import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
 
-/**
- * Add / added toggle shown on a card while picking places for a trip.
- * Added state is a green gradient badge with a white ring and tick that pops in.
- */
-function PickToggle({ picked, pending, onPress, label }) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const prevPicked = useRef(picked);
-
-  useEffect(() => {
-    if (picked && !prevPicked.current) {
-      scale.setValue(0.6);
-      Animated.spring(scale, { toValue: 1, friction: 4, tension: 120, useNativeDriver: true }).start();
-    }
-    prevPicked.current = picked;
-  }, [picked, scale]);
-
-  return (
-    <TouchableOpacity
-      style={styles.pickToggle}
-      onPress={onPress}
-      disabled={pending}
-      activeOpacity={0.8}
-      accessibilityRole="button"
-      accessibilityState={{ selected: picked }}
-      accessibilityLabel={label}
-      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-    >
-      <Animated.View style={[styles.pickToggleInner, { transform: [{ scale }] }]}>
-        {picked ? (
-          <LinearGradient
-            colors={['#2a9157', '#126b37']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[styles.pickBadge, styles.pickBadgeAdded]}
-          >
-            {pending ? (
-              <ActivityIndicator size="small" color={COLORS.white} />
-            ) : (
-              <Ionicons name="checkmark-outline" size={18} color={COLORS.white} />
-            )}
-          </LinearGradient>
-        ) : (
-          <View style={[styles.pickBadge, styles.pickBadgeIdle]}>
-            {pending ? (
-              <ActivityIndicator size="small" color={COLORS.textPrimary} />
-            ) : (
-              <Ionicons name="add" size={18} color={COLORS.textPrimary} />
-            )}
-          </View>
-        )}
-      </Animated.View>
-    </TouchableOpacity>
-  );
-}
 
 /**
  * Category tabs. `apiCategory` maps the UI label to the backend category
@@ -104,6 +53,16 @@ const CATEGORY_FILTERS = {
   stays:      ['All', 'Hotels', 'Resorts', 'Boutique', 'Hostels', 'Villas'],
   food:       ['All', 'Fine Dining', 'Cafes', 'Street Food', 'Bars', 'Rooftop'],
   activities: ['All', 'Temples', 'Museums', 'Beaches', 'Adventure', 'Nightlife'],
+};
+
+// Icons for the filter sheet's option cards (Ionicons).
+const FILTER_ICONS = {
+  Hotels: 'business-outline', Resorts: 'umbrella-outline', Boutique: 'diamond-outline',
+  Hostels: 'bed-outline', Villas: 'home-outline',
+  'Fine Dining': 'wine-outline', Cafes: 'cafe-outline', 'Street Food': 'fast-food-outline',
+  Bars: 'beer-outline', Rooftop: 'partly-sunny-outline',
+  Temples: 'flower-outline', Museums: 'library-outline', Beaches: 'water-outline',
+  Adventure: 'trail-sign-outline', Nightlife: 'moon-outline',
 };
 
 /**
@@ -124,7 +83,8 @@ export default function DestinationDetailScreen({ navigation, route }) {
   // full height is measured (onLayout) so the list can start below it.
   const heroTop = insets.top + SIZES.spacing_sm;
   const [headerHeight, setHeaderHeight] = useState(0);
-  const contentTop = headerHeight;
+  // A little breathing room between the header's bottom edge and the first cards.
+  const contentTop = headerHeight + SIZES.spacing_base;
 
   const [details, setDetails] = useState(null);
   const [activeCategory, setActiveCategory] = useState('stays');
@@ -146,6 +106,77 @@ export default function DestinationDetailScreen({ navigation, route }) {
     ? (!!loadingCategory[activeCategory] && !resultsByCategory[activeCategory])
     : loadingFilter;
   const hasError = !!errorCategory[activeCategory];
+
+  // ── "See all" and "Search in <destination>" (not while picking for a trip) ──
+  const destinationName = name || details?.name || 'this place';
+  const categoryMeta = CATEGORIES.find((c) => c.key === activeCategory) || CATEGORIES[0];
+  const openSearch = () => navigation.navigate('DestinationPlaces', {
+    placeId,
+    destinationName,
+    mode: 'search',
+    // For live suggestions limited to this destination.
+    coords: placeCoords(details),
+    // While adding to a trip, search adds to the same stop (with its ticks).
+    pickForTrip: pickForTrip
+      ? { ...pickForTrip, saved: Array.from(pickedMap.entries()) }
+      : undefined,
+  });
+  const openSeeAll = () => navigation.navigate('DestinationPlaces', {
+    placeId,
+    destinationName,
+    mode: 'browse',
+    categoryKey: activeCategory,
+    apiCategory: categoryMeta.apiCategory,
+    categoryLabel: activeChip === 'All' ? categoryMeta.label : activeChip,
+    filters: CATEGORY_FILTERS[activeCategory] || ['All'],
+    filter: activeChip,
+  });
+
+  // ── Header collapses on scroll ──
+  // Scrolling down folds the subtitle and the search bar away and shrinks the
+  // title; a 🔍 icon in the title row keeps search one tap away. Near the top
+  // it opens again. (Thresholds differ so it doesn't flicker at the edge.)
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  // Filters bottom sheet (replaces the row of filter chips).
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const collapseAnim = useRef(new Animated.Value(0)).current; // 0 open, 1 collapsed
+  useEffect(() => {
+    Animated.timing(collapseAnim, {
+      toValue: headerCollapsed ? 1 : 0,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false, // animating heights and font size
+    }).start();
+  }, [headerCollapsed, collapseAnim]);
+  const onListScroll = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    if (y > 40 && !headerCollapsed) setHeaderCollapsed(true);
+    else if (y < 15 && headerCollapsed) setHeaderCollapsed(false);
+  };
+  // Filters button (opens the sheet). Orange tint + dot while a filter is on.
+  const renderFiltersButton = (size = 44) => (
+    <TouchableOpacity
+      style={[
+        styles.filtersButton,
+        { width: size, height: size, borderRadius: size / 2 },
+        activeChip !== 'All' && styles.filtersButtonOn,
+      ]}
+      onPress={() => setFiltersOpen(true)}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={activeChip === 'All' ? 'Filters' : `Filter: ${activeChip}. Change filters`}
+      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+    >
+      <Ionicons name="options-outline" size={18} color={activeChip !== 'All' ? COLORS.accentDeep : COLORS.textPrimary} />
+      {activeChip !== 'All' && <View style={styles.filtersDot} />}
+    </TouchableOpacity>
+  );
+
+  const fold = (max) => ({
+    maxHeight: collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [max, 0] }),
+    opacity: collapseAnim.interpolate({ inputRange: [0, 0.6], outputRange: [1, 0], extrapolate: 'clamp' }),
+    overflow: 'hidden',
+  });
 
   // Load the header photo/details once.
   useEffect(() => {
@@ -206,7 +237,8 @@ export default function DestinationDetailScreen({ navigation, route }) {
   const { setCollapsed, setCta, reset } = useBottomBar();
 
   const handleCreateTrip = useCallback(() => {
-    const location = details?.geometry?.location;
+    // The backend sends { latitude, longitude }; placeCoords reads either shape.
+    const location = placeCoords(details);
     navigation.navigate('CreateTrip', {
       placeId,
       name: name || details?.name,
@@ -219,7 +251,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
   // While focused, the shared tab bar stays collapsed (Home circle) with a
   // permanent "Create a trip" button beside it — not only after scrolling.
-  // Cleared when leaving. The picking CTA ("Added (N)") is kept in sync by a
+  // Cleared when leaving. The picking CTA ("Add (N)") is kept in sync by a
   // separate effect below so a count change doesn't reset the bar.
   useFocusEffect(
     useCallback(() => {
@@ -302,15 +334,15 @@ export default function DestinationDetailScreen({ navigation, route }) {
     }
   }, [pickTripId, pickDestId, pickedMap, pickPending, activeCategory, loadPicked]);
 
-  // "Added (N)": N is every place saved to this destination across the
+  // "Add (N)": N is every place saved to this destination across the
   // Stays, Food and Activities tabs, including ones added earlier.
   const pickedCount = pickedMap.size;
   useEffect(() => {
     if (!pickForTrip || !isFocused) return;
-    // While picking, the bar stays collapsed (Home circle + "Added (N)") at all times.
+    // While picking, the bar stays collapsed (Home circle + "Add (N)") at all times.
     setCollapsed(true);
     setCta({
-      label: pickedCount > 0 ? `Added (${pickedCount})` : 'Done',
+      label: pickedCount > 0 ? `Add (${pickedCount})` : 'Done',
       icon: 'checkmark-circle',
       onPress: () => navigation.goBack(),
     });
@@ -445,53 +477,17 @@ export default function DestinationDetailScreen({ navigation, route }) {
             />
           </TouchableOpacity>
         )}
-
-        {item.rating > 0 && (
-          <View style={styles.ratingPill}>
-            <Ionicons name="star" size={11} color="#FFC107" />
-            <Text style={styles.ratingText}>{item.rating}</Text>
-          </View>
-        )}
       </View>
       <View style={styles.cardContent}>
         <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
+        <RatingRow rating={item.rating} reviews={item.userRatingsTotal} style={styles.cardRating} />
         {!!item.vicinity && (
           <Text style={styles.cardVicinity} numberOfLines={2}>{item.vicinity}</Text>
-        )}
-        {item.userRatingsTotal > 0 && (
-          <Text style={styles.cardReviews}>{item.userRatingsTotal.toLocaleString()} reviews</Text>
         )}
       </View>
     </TouchableOpacity>
     );
   };
-
-  // Sub-filter chips (All / Hotels / Resorts / ...). Pinned in the fixed
-  // header so they stay sticky while the results list scrolls underneath.
-  const renderSubFilterChips = () => (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.chipsRow}
-      style={styles.chipsScrollInline}
-    >
-      {(CATEGORY_FILTERS[activeCategory] || []).map((chip) => {
-        const isActive = activeChip === chip;
-        return (
-          <TouchableOpacity
-            key={chip}
-            style={[styles.subChip, isActive && styles.subChipActive]}
-            onPress={() => handleChipSelect(chip)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.subChipText, isActive && styles.subChipTextActive]}>
-              {chip}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
-  );
 
   const renderListState = () => {
     if (isLoading) {
@@ -519,7 +515,10 @@ export default function DestinationDetailScreen({ navigation, route }) {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    // No top safe-area padding: the fixed header clears the notch itself
+    // (heroTop), and the list is offset by the header's measured height.
+    // Padding the top here too pushed the cards down a second time.
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" />
 
       {/* BACK LAYER: results scroll the full height of the screen. Top padding
@@ -538,8 +537,22 @@ export default function DestinationDetailScreen({ navigation, route }) {
             : [styles.listContent, { paddingTop: contentTop }]
         }
         ListEmptyComponent={renderListState}
+        ListFooterComponent={pickForTrip || activeResults.length === 0 ? null : (
+          <TouchableOpacity
+            style={styles.seeAll}
+            onPress={openSeeAll}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            <Text style={styles.seeAllText} numberOfLines={1}>
+              See all {(activeChip === 'All' ? categoryMeta.label : activeChip).toLowerCase()} in {destinationName}
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.accentDeep} />
+          </TouchableOpacity>
+        )}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
+        onScroll={onListScroll}
       />
 
       {/* FRONT LAYER: solid white header panel — title + location + centered
@@ -547,7 +560,12 @@ export default function DestinationDetailScreen({ navigation, route }) {
       <View
         style={styles.headerPanel}
         pointerEvents="box-none"
-        onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+        // Keep the tallest (open) height: the list's top padding stays put
+        // while the header shrinks over it, so the cards don't jump.
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          setHeaderHeight((prev) => (h > prev ? h : prev));
+        }}
       >
        {/* Inner clip layer: rounded corners + overflow:hidden so the full-width
            scroll rows clip at the corners. Kept separate from the outer panel
@@ -569,33 +587,95 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
           {/* Create a trip here (also in the bottom bar). Hidden while picking
               places for an existing trip. */}
+          {/* Collapsed, the "+" gives way to Filters ("Create a trip" stays in the
+              bottom bar). */}
           {!pickForTrip && (
-            <TouchableOpacity
-              style={styles.createTripButton}
-              onPress={handleCreateTrip}
-              accessibilityRole="button"
-              accessibilityLabel={`Create a trip to ${name || details?.name || 'this place'}`}
-              activeOpacity={0.85}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            <Animated.View
+              style={[styles.titleRight, { opacity: collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}
+              pointerEvents={headerCollapsed ? 'none' : 'auto'}
             >
-              <Ionicons name="add" size={24} color={COLORS.white} />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.createTripButton}
+                onPress={handleCreateTrip}
+                accessibilityRole="button"
+                accessibilityLabel={`Create a trip to ${name || details?.name || 'this place'}`}
+                accessibilityElementsHidden={headerCollapsed}
+                importantForAccessibility={headerCollapsed ? 'no-hide-descendants' : 'auto'}
+                activeOpacity={0.85}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="add" size={24} color={COLORS.white} />
+              </TouchableOpacity>
+            </Animated.View>
           )}
+          <Animated.View
+            style={[styles.titleRight, { opacity: collapseAnim }]}
+            pointerEvents={headerCollapsed ? 'auto' : 'none'}
+            accessibilityElementsHidden={!headerCollapsed}
+            importantForAccessibility={headerCollapsed ? 'auto' : 'no-hide-descendants'}
+          >
+            {renderFiltersButton(38)}
+          </Animated.View>
 
-          <View style={styles.headerTitleCenter}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
+          {/* Search icon: appears once the search bar folds away. */}
+          <Animated.View
+            style={[styles.searchIconWrap, { opacity: collapseAnim }]}
+            pointerEvents={headerCollapsed ? 'auto' : 'none'}
+          >
+            <TouchableOpacity
+              style={styles.searchIconButton}
+              onPress={openSearch}
+              accessibilityRole="button"
+              accessibilityLabel={`Search in ${destinationName}`}
+              accessibilityElementsHidden={!headerCollapsed}
+              importantForAccessibility={headerCollapsed ? 'auto' : 'no-hide-descendants'}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
+            >
+              <Ionicons name="search" size={20} color={COLORS.textPrimary} />
+            </TouchableOpacity>
+          </Animated.View>
+
+          <View style={[styles.headerTitleCenter, styles.headerTitleCenterWide]}>
+            <Animated.Text
+              style={[
+                styles.headerTitle,
+                { fontSize: collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.xxl, SIZES.lg] }) },
+              ]}
+              numberOfLines={1}
+            >
               {name || details?.name || 'Destination'}
-            </Text>
+            </Animated.Text>
             {!!(pickForTrip || secondary || details?.formattedAddress) && (
-              <Text style={styles.headerSubtitle} numberOfLines={1}>
-                {pickForTrip ? `Adding to ${pickForTrip.tripName}` : (secondary || details?.formattedAddress)}
-              </Text>
+              <Animated.View style={fold(24)}>
+                <Text style={styles.headerSubtitle} numberOfLines={1}>
+                  {pickForTrip ? `Adding to ${pickForTrip.tripName}` : (secondary || details?.formattedAddress)}
+                </Text>
+              </Animated.View>
             )}
           </View>
         </View>
 
+        {/* Search inside this destination — part of the fixed header, so it
+            stays put while the results scroll. While adding to a trip, it
+            searches spots to add to the same stop. */}
+        <Animated.View style={fold(56)} pointerEvents={headerCollapsed ? 'none' : 'auto'}>
+          <View style={styles.searchRow}>
+            <TouchableOpacity
+              style={styles.searchPill}
+              onPress={openSearch}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`Search in ${destinationName}`}
+            >
+              <Ionicons name="search" size={18} color={COLORS.textMuted} />
+              <Text style={styles.searchPillText} numberOfLines={1}>Search in {destinationName}</Text>
+            </TouchableOpacity>
+            {renderFiltersButton(44)}
+          </View>
+        </Animated.View>
+
         {/* Category tabs — ALWAYS visible (primary navigation) */}
-        <View style={styles.filterRow}>
+        <View style={[styles.filterRow, styles.filterRowAfterSearch]}>
           <FilterChips
             filters={CATEGORIES}
             activeKey={activeCategory}
@@ -605,14 +685,21 @@ export default function DestinationDetailScreen({ navigation, route }) {
         </View>
 
         {/* Sub-filter chips — pinned here so they stay sticky on scroll. */}
-        <View style={styles.stickyChipsRow}>
-          {renderSubFilterChips()}
-        </View>
        </View>
       </View>
 
       {/* The persistent AppTabBar (rendered by the Tab.Navigator) shows the
           collapsing tab bar + Create-a-trip CTA — driven via BottomBarContext. */}
+      <FilterSheet
+        visible={filtersOpen}
+        title={`${categoryMeta.label} filters`}
+        subtitle={`in ${destinationName}`}
+        options={(CATEGORY_FILTERS[activeCategory] || []).filter((f) => f !== 'All')
+          .map((f) => ({ label: f, icon: FILTER_ICONS[f] || 'pricetag-outline' }))}
+        selected={activeChip}
+        onApply={(choice) => { if (choice !== activeChip) handleChipSelect(choice); }}
+        onClose={() => setFiltersOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -658,9 +745,30 @@ const styles = StyleSheet.create({
     minHeight: 38,
   },
   // Back button absolutely positioned so the title stays truly centered.
-  createTripButton: {
+  // Room for the "+" and the search icon on the right of the title.
+  headerTitleCenterWide: {
+    paddingHorizontal: 90,
+  },
+  searchIconWrap: {
+    position: 'absolute',
+    right: 38 + SIZES.spacing_sm,
+    zIndex: 1,
+  },
+  searchIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBackground,
+  },
+  // Right end of the title row: "+" (open) or Filters (collapsed / picking).
+  titleRight: {
     position: 'absolute',
     right: 0,
+    zIndex: 1,
+  },
+  createTripButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
@@ -720,6 +828,49 @@ const styles = StyleSheet.create({
   listEmpty: {
     flexGrow: 1,
   },
+  // Search bar + Filters button.
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    marginTop: SIZES.spacing_md,
+  },
+  searchPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    height: 44,
+    paddingHorizontal: SIZES.spacing_base,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.cardBackground,
+    borderWidth: 1,
+    borderColor: COLORS.borderLight,
+  },
+  searchPillText: {
+    flex: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+  },
+  seeAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    height: 48,
+    marginTop: SIZES.spacing_xs,
+    borderRadius: SIZES.radius_full,
+    borderWidth: 1.5,
+    borderColor: '#ffd9c2',
+    backgroundColor: '#fff8f3',
+  },
+  seeAllText: {
+    flexShrink: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
   column: {
     gap: SIZES.spacing_base,
   },
@@ -752,34 +903,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   // Add-to-trip toggle (add / added).
-  pickToggle: {
-    position: 'absolute',
-    top: SIZES.spacing_sm,
-    right: SIZES.spacing_sm,
-  },
-  pickToggleInner: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  pickBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pickBadgeIdle: {
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
-  },
-  pickBadgeAdded: {
-    shadowColor: '#126b37',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 5,
-  },
   heartButton: {
     position: 'absolute',
     top: SIZES.spacing_sm,
@@ -791,23 +914,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  ratingPill: {
-    position: 'absolute',
-    bottom: SIZES.spacing_sm,
-    left: SIZES.spacing_sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: SIZES.spacing_sm,
-    paddingVertical: 3,
-    borderRadius: SIZES.radius_full,
-    gap: 3,
-  },
-  ratingText: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
-  },
   cardContent: {
     padding: SIZES.spacing_md,
   },
@@ -816,17 +922,14 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
   },
+  cardRating: {
+    marginTop: 4,
+  },
   cardVicinity: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
     marginTop: 2,
-  },
-  cardReviews: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textMuted,
-    marginTop: SIZES.spacing_xs,
   },
 
   // States
@@ -862,52 +965,30 @@ const styles = StyleSheet.create({
     color: COLORS.white,
   },
 
-  // Sticky sub-filter chips row — pinned in the fixed header. Negative margin
-  // lets the horizontal scroll row span the full header width (cancels the
-  // header's horizontal padding), matching the category tabs above it.
-  // Sticky sub-filter chips row — pinned in the fixed header. A thin divider
-  // above it separates this secondary filter row from the primary category
-  // tabs. Negative margin lets the scroll row span the full header width.
-  stickyChipsRow: {
-    marginTop: SIZES.spacing_md,
-    marginHorizontal: -SIZES.spacing_lg,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.borderLight,
-    paddingTop: SIZES.spacing_md,
-  },
-  // Sub-filter chips row
-  chipsScrollInline: {
-    flexGrow: 0,
-  },
-  chipsRow: {
-    paddingHorizontal: SIZES.spacing_lg,
-    gap: SIZES.spacing_sm,
-    flexDirection: 'row',
+  filtersButton: {
+    justifyContent: 'center',
     alignItems: 'center',
-  },
-  // Secondary filter chip — loose, separate OUTLINED chips. White fill with a
-  // light border contrasts against the solid grey segmented track above, so
-  // the two rows read as different control types (outlined chips vs. a filled
-  // segmented bar). Active state uses navy, distinct from the orange primary.
-  subChip: {
-    paddingHorizontal: SIZES.spacing_base,
-    paddingVertical: SIZES.spacing_sm,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
   },
-  subChipActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+  filtersButtonOn: {
+    borderColor: COLORS.accent,
+    backgroundColor: '#fff8f3',
   },
-  subChipText: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
+  filtersDot: {
+    position: 'absolute',
+    top: 8,
+    right: 9,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.accent,
+    borderWidth: 1.5,
+    borderColor: COLORS.white,
   },
-  subChipTextActive: {
-    color: COLORS.white,
-    fontFamily: 'Poppins_600SemiBold',
+  // With the search bar above, the pills sit a little closer.
+  filterRowAfterSearch: {
+    marginTop: SIZES.spacing_md,
   },
 });

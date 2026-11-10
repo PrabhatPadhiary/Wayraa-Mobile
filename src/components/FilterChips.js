@@ -150,12 +150,14 @@ export default function FilterChips({
             return (
               <TouchableOpacity
                 key={filter.key}
-                style={[styles.segmentItem, styles.segmentItemFull]}
+                style={[styles.segmentItem, styles.segmentItemFull, compact && styles.segmentItemFullCompact]}
                 onLayout={handleLayout(filter.key)}
                 onPress={() => onChange(filter.key)}
                 activeOpacity={0.8}
               >
-                {!!filter.icon && (
+                {/* With 4+ tabs only the selected one shows its icon, so long
+                    labels like "Activities" aren't squeezed. */}
+                {!!filter.icon && (!compact || isActive) && (
                   <Ionicons
                     name={filter.icon}
                     size={15}
@@ -166,6 +168,7 @@ export default function FilterChips({
                   style={[
                     styles.segmentLabel,
                     styles.segmentLabelFull,
+                    compact && styles.segmentLabelFullCompact,
                     isActive && styles.segmentLabelActive,
                   ]}
                   numberOfLines={1}
@@ -376,6 +379,17 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 4,
     gap: 4,
+  },
+  // 4+ tabs: each tab sizes to its label (then shares the spare room), so
+  // a long label gets the space it needs.
+  segmentItemFullCompact: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 'auto',
+    paddingHorizontal: 10,
+  },
+  segmentLabelFullCompact: {
+    fontSize: 13,
   },
   // Tighter segment for rows with more than 3 tabs.
   segmentItemCompact: {

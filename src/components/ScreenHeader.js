@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, SIZES } from '../constants';
+import { LinearGradient } from 'expo-linear-gradient';
+import { COLORS, SIZES, HEADER_TINT } from '../constants';
 
 /**
  * ScreenHeader - the shared floating header panel used across the main tabs
@@ -28,6 +29,7 @@ import { COLORS, SIZES } from '../constants';
  * - style:      extra style applied to the outer panel (optional)
  * - right:      optional small control (e.g. an icon button, ~40px) pinned to
  *               the right of the title row. The title stays centered.
+ * - left:       same, pinned to the left of the title row.
  */
 export default function ScreenHeader({
   title,
@@ -38,6 +40,7 @@ export default function ScreenHeader({
   children,
   style,
   right,
+  left,
 }) {
   const insets = useSafeAreaInsets();
 
@@ -63,6 +66,13 @@ export default function ScreenHeader({
       ]}
       onLayout={onLayout}
     >
+      {/* Soft blue wash, same as Home's header. */}
+      <LinearGradient
+        colors={HEADER_TINT}
+        locations={[0, 0.55, 1]}
+        style={styles.tint}
+        pointerEvents="none"
+      />
       <Animated.View
         style={{
           // Snap the opacity over a short window so the text reads as a clean
@@ -90,6 +100,12 @@ export default function ScreenHeader({
           ) : null}
         </View>
       </Animated.View>
+
+      {left ? (
+        <View style={[styles.left, { top: insets.top + SIZES.spacing_base + 1 }]}>
+          {left}
+        </View>
+      ) : null}
 
       {right ? (
         // Aligned with the title line (28px font, ~42px tall).
@@ -131,6 +147,11 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
   },
+  tint: {
+    ...StyleSheet.absoluteFill,
+    borderBottomLeftRadius: SIZES.radius_xl,
+    borderBottomRightRadius: SIZES.radius_xl,
+  },
   floating: {
     position: 'absolute',
     top: 0,
@@ -160,6 +181,11 @@ const styles = StyleSheet.create({
   right: {
     position: 'absolute',
     right: SIZES.spacing_lg,
+    zIndex: 1,
+  },
+  left: {
+    position: 'absolute',
+    left: SIZES.spacing_lg,
     zIndex: 1,
   },
   childrenWrap: {

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,14 +16,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import MaskedView from '@react-native-masked-view/masked-view';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
-import { SignInPrompt, TripDetailSkeleton, FilterChips, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet } from '../components';
+import { SignInPrompt, TripDetailSkeleton, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
-import { TripHeroBackdrop, TripHeroOverlay } from '../components/TripHero';
+import TripHero from '../components/TripHero';
 import { showTripActionMenu, confirmDeleteTrip } from '../utils/tripActions';
 import { useBottomBar } from '../context/BottomBarContext';
 import useAuth from '../hooks/useAuth';
@@ -37,6 +33,7 @@ import {
   removeTripPlace,
   removeTripDestination,
   updateDestinationDates,
+  setPrimaryDestination,
   AuthRequiredError,
 } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
@@ -44,6 +41,8 @@ import { formatDateRange, dayCount, daysUntil, formatDay } from '../utils/tripDa
 import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinDayLabel, compareByTime } from '../utils/itinerary';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
+// Scroll offset where the compact top bar is fully in (same as the place page).
+const HEADER_SHOW_AT = 60;
 const SHEET_BG = '#f3f5f7';
 /** Trip sections, shown in the bottom bar beside the Home circle. */
 // Feather line icons: one even stroke weight, so they stay crisp and calm
@@ -57,8 +56,6 @@ const TRIP_TABS = [
 // Progressive hero blur: one blur layer, masked by a vertical gradient so it
 // goes smoothly from sharp (top) to fully blurred (bottom, at the sheet edge).
 // A single masked layer avoids the visible steps that stacked bands produce.
-const HERO_BLUR_INTENSITY = 40;
-const HEADER_CONTENT_HEIGHT = 56;
 
 /** Sections for saved places, in display order. */
 /** Place type filters on the overview. `noun` is used in empty-state copy. */
@@ -68,10 +65,10 @@ const PLACE_FILTERS = [
   { key: 'food', label: 'Food', icon: 'restaurant-outline', noun: 'restaurants' },
   { key: 'activities', label: 'Activities', icon: 'walk-outline', noun: 'activities' },
 ];
-// Width of a saved-place photo card in the horizontal row.
-const PLACE_CARD_WIDTH = 180;
-// Remembers the Saved spots layout (cards / list) across trips and launches.
-const SPOTS_VIEW_KEY = 'wayraa_saved_spots_view';
+// Saved spots in the list layout: past this many, the list scrolls inside
+// its card, tall enough for about this many rows (62 px photo rows + gaps).
+const SPOTS_LIST_PREVIEW = 5;
+const SPOTS_LIST_MAX_HEIGHT = SPOTS_LIST_PREVIEW * 76 + (SPOTS_LIST_PREVIEW - 1) * SIZES.spacing_sm + 20;
 
 /** Map the many category spellings the app/backend use onto a section key. */
 function sectionKeyFor(category) {
@@ -236,14 +233,28 @@ export default function TripDetailScreen({ navigation, route }) {
   const [trip, setTrip] = useState(null);
   // Vertical scroll offset, drives the frosted header bar's fade-in.
   const scrollY = useRef(new Animated.Value(0)).current;
-  // Horizontal offset of the hero photo carousel (multi-stop trips).
-  const heroPageX = useRef(new Animated.Value(0)).current;
   // Dark status bar text once the frosted (light) header covers the photo.
   const [darkStatusBar, setDarkStatusBar] = useState(false);
   const darkStatusBarRef = useRef(false);
 
   // ── Section tabs in the bottom bar ─────────────────────────────────────
   const [activeTab, setActiveTab] = useState('overview');
+  // Itinerary drag and drop: a layer above the page (drag card, drop bar,
+  // undo toast) and the page frozen while dragging.
+  const [tabOverlay, setTabOverlay] = useState(null);
+  const [tabScrollLocked, setTabScrollLocked] = useState(false);
+  // The tab page's scroll, so a drag near the screen edge can move the page
+  // (programmatic scrolling still works while the user's scrolling is locked).
+  const tabScrollRef = useRef(null);
+  const tabScrollPos = useRef({ y: 0, max: 0, viewH: 0 });
+  const scrollTabPageBy = useCallback((dy) => {
+    const p = tabScrollPos.current;
+    const next = Math.max(0, Math.min(p.max, p.y + dy));
+    if (next === p.y) return false;
+    p.y = next;
+    tabScrollRef.current?.scrollTo({ y: next, animated: false });
+    return true;
+  }, []);
   const isFocused = useIsFocused();
   const { setTabs, clearTabs } = useBottomBar();
   const tabsOwner = useRef(`trip-${tripId}-${Math.random().toString(36).slice(2)}`).current;
@@ -284,17 +295,6 @@ export default function TripDetailScreen({ navigation, route }) {
   const [addDestId, setAddDestId] = useState('');
   // Active tab of the saved-places switcher.
   const [placeTab, setPlaceTab] = useState('all');
-  // Saved spots layout: 'cards' (horizontal photo cards) or 'list' (rows).
-  const [spotsView, setSpotsView] = useState('cards');
-  useEffect(() => {
-    AsyncStorage.getItem(SPOTS_VIEW_KEY)
-      .then((v) => { if (v === 'cards' || v === 'list') setSpotsView(v); })
-      .catch(() => {});
-  }, []);
-  const changeSpotsView = (view) => {
-    setSpotsView(view);
-    AsyncStorage.setItem(SPOTS_VIEW_KEY, view).catch(() => {});
-  };
   // Destination sheet: null (closed) | { mode: 'add' } | { mode: 'edit', dest }
   const [destSheet, setDestSheet] = useState(null);
   // Destination id currently being removed (shows a spinner on its row).
@@ -386,9 +386,17 @@ export default function TripDetailScreen({ navigation, route }) {
     loadTrip();
   };
 
+  // Memoised: tabs (e.g. the itinerary) depend on this list staying the same
+  // object between renders.
+  const sortedDestinations = useMemo(
+    () => [...(trip?.destinations || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    [trip?.destinations]
+  );
   const destinations = trip?.destinations || [];
-  const sortedDestinations = [...destinations].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const primaryDestination = sortedDestinations[0];
+  // The primary destination (name on cards, cover photo) is chosen separately
+  // from the route order; older trips without one use the first stop.
+  const primaryDestination = sortedDestinations.find((d) => d.id === trip?.primaryDestinationId)
+    || sortedDestinations[0];
   // Viewers can look but not change anything. If the server didn't say (older
   // backend), assume editable: the server rejects viewers' edits anyway.
   const canEdit = (trip?.myRole || '').toLowerCase() !== 'viewer';
@@ -425,12 +433,15 @@ export default function TripDetailScreen({ navigation, route }) {
   // The trip's traveller count can exceed the joined members (people who
   // haven't signed up), so draw one circle per traveller, not per member.
   const travellerCount = Math.max(members.length, trip?.travelersCount || 1);
-  // Hero photos: one per stop, in trip order. Each comes straight from the
-  // stop's place id (the backend keeps it fresh), falling back to its stored
-  // photo (and the trip cover for the first stop). TripHero shows a gradient
-  // for any stop whose photo is missing or fails to load.
-  const heroPhotos = sortedDestinations.length
-    ? sortedDestinations.map((d, i) => ({
+  // Hero photos: one per stop, the primary destination first, then the rest in
+  // route order. Each comes straight from the stop's place id (the backend keeps
+  // it fresh), falling back to its stored photo (and the trip cover for the
+  // primary). TripHero shows a gradient for any stop whose photo is missing.
+  const heroStops = primaryDestination
+    ? [primaryDestination, ...sortedDestinations.filter((d) => d.id !== primaryDestination.id)]
+    : sortedDestinations;
+  const heroPhotos = heroStops.length
+    ? heroStops.map((d, i) => ({
       key: String(d.id),
       name: d.name,
       uri: placePhotoUrl(d.googlePlaceId, 1200)
@@ -483,6 +494,8 @@ export default function TripDetailScreen({ navigation, route }) {
     }];
   };
 
+  // Stops are kept in date order by the backend (the primary destination
+  // never changes when they move), so a reload shows the new order.
   const handleAddDestination = async ({ destination, startDate, endDate }) => {
     const nextOrder = sortedDestinations.reduce((max, d) => Math.max(max, d.order ?? 0), -1) + 1;
     const created = await addTripDestination(trip.id, {
@@ -587,16 +600,27 @@ export default function TripDetailScreen({ navigation, route }) {
     );
   };
 
+  const makePrimary = async (dest) => {
+    try {
+      await setPrimaryDestination(trip.id, dest.id);
+      await loadTrip();
+    } catch (e) {
+      Alert.alert('Could not change it', e?.message || 'Please try again.');
+    }
+  };
+
   const openDestinationMenu = (dest, isPrimary) => {
-    const buttons = [
-      { text: 'Edit dates', onPress: () => setDestSheet({ mode: 'edit', dest }) },
-    ];
-    // The first stop is the trip's main destination and stays (same as the website).
+    const buttons = [];
+    if (!isPrimary) {
+      buttons.push({ text: 'Make primary destination', onPress: () => makePrimary(dest) });
+    }
+    buttons.push({ text: 'Edit dates', onPress: () => setDestSheet({ mode: 'edit', dest }) });
+    // The primary destination stays; make another stop primary to remove it.
     if (!isPrimary) {
       buttons.push({ text: 'Remove', style: 'destructive', onPress: () => confirmRemoveDestination(dest) });
     }
     buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(dest.name, undefined, buttons);
+    Alert.alert(dest.name, isPrimary ? 'Primary destination' : undefined, buttons);
   };
 
   const openPlace = (place) => {
@@ -637,6 +661,23 @@ export default function TripDetailScreen({ navigation, route }) {
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
       <Ionicons name="chevron-back" size={22} color={COLORS.white} />
+    </TouchableOpacity>
+  );
+
+  // Round button on the overview photo (same look as the place page).
+  const heroRoundButton = (icon, onPress, label, busy = false) => (
+    <TouchableOpacity
+      style={styles.roundButton}
+      onPress={onPress}
+      disabled={busy}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+    >
+      {busy
+        ? <ActivityIndicator size="small" color={COLORS.white} />
+        : <Ionicons name={icon} size={20} color={COLORS.white} />}
     </TouchableOpacity>
   );
 
@@ -730,47 +771,21 @@ export default function TripDetailScreen({ navigation, route }) {
 
   if (!trip) return renderState(null);
 
-  const headerHeight = insets.top + HEADER_CONTENT_HEIGHT;
-  // Fully visible just as the sheet's top edge reaches the bottom of the bar.
-  const fadeEnd = HERO_HEIGHT - headerHeight - 12;
+  // Compact bar (same as the place page): takes over as soon as the photo
+  // starts moving up, about when the round hero buttons reach the status bar.
   const headerOpacity = scrollY.interpolate({
-    inputRange: [fadeEnd - 60, fadeEnd],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-  // The header title rises into place as the hero title fades out below it.
-  const headerTitleShift = scrollY.interpolate({
-    inputRange: [fadeEnd - 60, fadeEnd],
-    outputRange: [10, 0],
-    extrapolate: 'clamp',
-  });
-  // The sheet's rounded top corners square off as it meets the header.
-  const sheetCornerFill = scrollY.interpolate({
-    inputRange: [fadeEnd - 30, fadeEnd + 12],
+    inputRange: [HEADER_SHOW_AT - 40, HEADER_SHOW_AT],
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
   // Flip the status bar to dark text once the light header is mostly in.
   const onOverviewScroll = (e) => {
-    const dark = e.nativeEvent.contentOffset.y > fadeEnd - 30;
+    const dark = e.nativeEvent.contentOffset.y > HEADER_SHOW_AT - 20;
     if (dark !== darkStatusBarRef.current) {
       darkStatusBarRef.current = dark;
       setDarkStatusBar(dark);
     }
   };
-
-  // Blur fades in over the first stretch of scrolling...
-  const heroBlurOpacity = scrollY.interpolate({
-    inputRange: [0, HERO_HEIGHT * 0.45],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-  // ...and its bottom stays on the sheet's top edge as the sheet rises.
-  const heroBlurShift = scrollY.interpolate({
-    inputRange: [0, HERO_HEIGHT],
-    outputRange: [0, -HERO_HEIGHT],
-    extrapolate: 'clamp',
-  });
 
   const badge = statusStyle(trip.status);
   const dateRange = formatDateRange(trip.startDate, trip.endDate);
@@ -825,14 +840,53 @@ export default function TripDetailScreen({ navigation, route }) {
     );
   };
 
-  // ── Itinerary / Budget / Checklist: plain header like My Trips, no photo ──
+  // ── Itinerary: the day's map fills the screen; the plan sits in a bottom
+  // sheet you drag between peek, half and full, so the map is always there. ──
+  if (activeTab === 'itinerary') {
+    return (
+      <View style={[styles.container, { backgroundColor: SHEET_BG }]}>
+        <StatusBar barStyle="dark-content" />
+        <ItineraryTab
+          key={`itinerary-${tabRefreshKey}`}
+          trip={trip}
+          sortedDests={sortedDestinations}
+          canEdit={canEdit}
+          onSetTripDates={handleSetTripDates}
+          renderOverlay={setTabOverlay}
+          sheet
+          heroControls={(
+            <View style={[styles.heroControls, { top: insets.top + SIZES.spacing_sm }]} pointerEvents="box-none">
+              {heroRoundButton('chevron-back', () => selectTab('overview'), 'Back to overview')}
+              {isOwner && heroRoundButton('ellipsis-horizontal', openTripMenu, 'Trip options', deletingTrip)}
+            </View>
+          )}
+        />
+        {tabOverlay}
+        {editSheet}
+      </View>
+    );
+  }
+
+  // ── Budget / Checklist: plain header like My Trips, no photo ──
   if (activeTab !== 'overview') {
     const tabMeta = TRIP_TABS.find((t) => t.key === activeTab);
     return (
       <View style={[styles.container, { backgroundColor: SHEET_BG }]}>
         <StatusBar barStyle="dark-content" />
         <ScrollView
+          ref={tabScrollRef}
           showsVerticalScrollIndicator={false}
+          scrollEnabled={!tabScrollLocked}
+          scrollEventThrottle={16}
+          onScroll={(e) => { tabScrollPos.current.y = e.nativeEvent.contentOffset.y; }}
+          onLayout={(e) => {
+            const p = tabScrollPos.current;
+            p.viewH = e.nativeEvent.layout.height;
+          }}
+          onContentSizeChange={(_, h) => {
+            const p = tabScrollPos.current;
+            p.max = Math.max(0, h - p.viewH);
+          }}
           contentContainerStyle={[styles.tabScroll, { paddingTop: tabHeaderHeight + SIZES.spacing_md }]}
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -857,14 +911,6 @@ export default function TripDetailScreen({ navigation, route }) {
                 />
               )}
 
-              {activeTab === 'itinerary' && (
-                <ItineraryTab
-                  trip={trip}
-                  sortedDests={sortedDestinations}
-                  canEdit={canEdit}
-                  onSetTripDates={handleSetTripDates}
-                />
-              )}
           </View>
         </ScrollView>
 
@@ -894,44 +940,6 @@ export default function TripDetailScreen({ navigation, route }) {
     <View style={styles.container}>
       <StatusBar barStyle={darkStatusBar ? 'dark-content' : 'light-content'} animated />
 
-      {/* Hero stays fixed behind the scrolling sheet (parallax, stretch, carousel). */}
-      <View style={styles.hero}>
-        <TripHeroBackdrop
-          photos={heroPhotos}
-          scrollY={scrollY}
-          pageX={heroPageX}
-          height={HERO_HEIGHT}
-        />
-
-        {/* Progressive blur: strongest at the bottom, riding up with the sheet's
-            top edge and fading in as you scroll. */}
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.heroBlur,
-            { opacity: heroBlurOpacity, transform: [{ translateY: heroBlurShift }] },
-          ]}
-        >
-          <MaskedView
-            style={StyleSheet.absoluteFill}
-            maskElement={
-              <LinearGradient
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,1)']}
-                locations={[0, 0.55, 1]}
-                style={StyleSheet.absoluteFill}
-              />
-            }
-          >
-            <BlurView intensity={HERO_BLUR_INTENSITY} tint="light" style={StyleSheet.absoluteFill} />
-            {/* Soft tint toward the sheet color, so the photo eases into it. */}
-            <LinearGradient
-              colors={['rgba(243,245,247,0)', 'rgba(243,245,247,0.6)']}
-              style={styles.heroBlurFade}
-            />
-          </MaskedView>
-        </Animated.View>
-      </View>
-
       <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
@@ -944,24 +952,23 @@ export default function TripDetailScreen({ navigation, route }) {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.white} />
         }
       >
-        {/* Spacer over the fixed hero: holds the title, countdown and the photo
-            swiper, and scrolls with the page so the sheet slides over the hero. */}
-        <TripHeroOverlay
+        {/* Hero: stop photos (swipe), title and countdown; scrolls with the page. */}
+        <TripHero
           title={trip.name}
           countdown={countdown}
           photos={heroPhotos}
-          scrollY={scrollY}
-          pageX={heroPageX}
           height={HERO_HEIGHT}
           bottomInset={SIZES.spacing_lg}
-          handoffAt={fadeEnd}
-        />
+        >
+          {/* Round buttons on the photo, like the place page. */}
+          <View style={[styles.heroControls, { top: insets.top + SIZES.spacing_sm }]} pointerEvents="box-none">
+            {heroRoundButton('chevron-back', () => navigation.goBack(), 'Go back')}
+            {isOwner && heroRoundButton('ellipsis-horizontal', openTripMenu, 'Trip options', deletingTrip)}
+          </View>
+        </TripHero>
 
         {/* Sheet overlapping the hero */}
         <View style={styles.sheet}>
-          {/* Fill the rounded corners as the sheet meets the header. */}
-          <Animated.View pointerEvents="none" style={[styles.sheetCorner, { left: 0, opacity: sheetCornerFill }]} />
-          <Animated.View pointerEvents="none" style={[styles.sheetCorner, { right: 0, opacity: sheetCornerFill }]} />
           <View style={styles.grabber} />
 
           {activeTab === 'overview' && (
@@ -1025,7 +1032,9 @@ export default function TripDetailScreen({ navigation, route }) {
                         { zIndex: 10 - i, backgroundColor: m ? avatarColorFor(m.name) : COLORS.borderLight },
                       ]}
                     >
-                      {m ? (
+                      {m?.photoUrl ? (
+                        <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                      ) : m ? (
                         <Text style={styles.avatarTextSmall}>{initialsFor(m.name)}</Text>
                       ) : (
                         <Ionicons name="person" size={13} color={COLORS.textMuted} />
@@ -1084,7 +1093,7 @@ export default function TripDetailScreen({ navigation, route }) {
               const count = (d.places || []).length;
               const multi = sortedDestinations.length > 1;
               const active = multi && addTarget?.id === d.id;
-              const isPrimary = i === 0;
+              const isPrimary = d.id === primaryDestination?.id;
               return (
                 <TouchableOpacity
                   key={d.id}
@@ -1106,7 +1115,14 @@ export default function TripDetailScreen({ navigation, route }) {
                   </View>
                   <View style={[styles.timelineBody, active && styles.timelineBodyActive]}>
                     <View style={styles.timelineText}>
-                      <Text style={styles.timelineName} numberOfLines={1}>{d.name}</Text>
+                      <View style={styles.timelineNameRow}>
+                        <Text style={styles.timelineName} numberOfLines={1}>{d.name}</Text>
+                        {isPrimary && multi && (
+                          <View style={styles.primaryBadge}>
+                            <Text style={styles.primaryBadgeText}>Primary</Text>
+                          </View>
+                        )}
+                      </View>
                       <Text style={styles.timelineMeta} numberOfLines={1}>
                         {range || 'Dates not set'} · {count} {count === 1 ? 'place' : 'places'}
                       </Text>
@@ -1132,74 +1148,58 @@ export default function TripDetailScreen({ navigation, route }) {
 
           </View>
 
-          {/* Saved spots: the main section. Search to add, then browse by type,
-              as photo cards or a list. */}
+          {/* Saved spots: a simple header with one Add button (Explore, which
+              has its own search), light type filters, and the list. */}
           <View style={styles.card}>
             <View style={styles.sectionHeaderRow}>
-              <View style={styles.placesTitleRow}>
-                <SectionTitle icon="bookmark" tint="#fff1e8" color={COLORS.accent} title="Saved spots" />
-                <Text style={styles.sectionCount}>{allPlaces.length}</Text>
-              </View>
-              <View style={styles.placesHeaderRight}>
-                {/* Multi-stop: which stop's spots are shown (picked in Destinations). */}
-                {multiStop && !!addTarget && (
-                  <View style={styles.placesStop}>
-                    <Ionicons name="location" size={12} color={COLORS.primaryLight} />
-                    <Text style={styles.placesStopText} numberOfLines={1}>{addTarget.name}</Text>
-                  </View>
+              <View style={styles.flexShrink}>
+                <View style={styles.placesTitleRow}>
+                  <SectionTitle icon="bookmark" tint="#fff1e8" color={COLORS.accent} title="Saved spots" />
+                  <Text style={styles.sectionCount}>{allPlaces.length}</Text>
+                </View>
+                {!!addTarget && (
+                  <Text style={styles.spotsWhere} numberOfLines={1}>In {addTarget.name}</Text>
                 )}
-                <View style={styles.viewToggle} accessibilityRole="radiogroup" accessibilityLabel="Layout">
-                  {[
-                    { key: 'cards', icon: 'albums-outline', label: 'Cards' },
-                    { key: 'list', icon: 'list-outline', label: 'List' },
-                  ].map((opt) => {
-                    const on = spotsView === opt.key;
-                    return (
-                      <TouchableOpacity
-                        key={opt.key}
-                        style={[styles.viewToggleButton, on && styles.viewToggleButtonOn]}
-                        onPress={() => changeSpotsView(opt.key)}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: on }}
-                        accessibilityLabel={`${opt.label} view`}
-                        hitSlop={{ top: 6, bottom: 6 }}
-                      >
-                        <Ionicons name={opt.icon} size={15} color={on ? COLORS.primary : COLORS.textMuted} />
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
               </View>
+              {canEdit && !!addTarget?.googlePlaceId && (
+                <TouchableOpacity
+                  style={styles.addStopButton}
+                  onPress={openAddPlaces}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add spots in ${addTarget.name}`}
+                >
+                  <Ionicons name="add" size={16} color={COLORS.primary} />
+                  <Text style={styles.addStopText}>Add</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
-            {canEdit && !!addTarget?.googlePlaceId && (
-              <TouchableOpacity
-                style={styles.searchBar}
-                onPress={openAddPlaces}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel={`Search spots to add in ${addTarget.name}`}
-              >
-                <Ionicons name="search" size={18} color={COLORS.textMuted} />
-                <Text style={styles.searchText} numberOfLines={1}>
-                  Search spots in {addTarget.name}…
-                </Text>
-                <View style={styles.searchAdd}>
-                  <Ionicons name="add" size={18} color={COLORS.white} />
-                </View>
-              </TouchableOpacity>
+            {/* Type filters: plain text chips with counts. */}
+            {allPlaces.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spotFilters}>
+                {PLACE_FILTERS.map((f) => {
+                  const on = f.key === placeTab;
+                  const n = f.key === 'all'
+                    ? shownPlaces.length
+                    : shownPlaces.filter((p) => sectionKeyFor(p.category) === f.key).length;
+                  return (
+                    <TouchableOpacity
+                      key={f.key}
+                      style={[styles.spotFilter, on && styles.spotFilterOn]}
+                      onPress={() => setPlaceTab(f.key)}
+                      activeOpacity={0.8}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`${f.label}, ${n}`}
+                    >
+                      <Text style={[styles.spotFilterText, on && styles.spotFilterTextOn]}>{f.label}</Text>
+                      <Text style={[styles.spotFilterCount, on && styles.spotFilterCountOn]}>{n}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             )}
-
-            <View style={styles.placeFilters}>
-              <FilterChips
-                filters={PLACE_FILTERS}
-                activeKey={placeTab}
-                onChange={setPlaceTab}
-                variant="pills"
-                compact
-                fullWidth
-              />
-            </View>
 
             <View style={styles.placeList} key={`${placeTab}-${addTarget?.id || ''}`}>
               {tabPlaces.length === 0 ? (
@@ -1208,7 +1208,7 @@ export default function TripDetailScreen({ navigation, route }) {
                   <Text style={styles.emptyTitle}>No {activeSection.noun} yet</Text>
                   <Text style={styles.emptySubtitle}>
                     {canEdit
-                      ? `Search above to add ${activeSection.noun} to this trip.`
+                      ? `Tap Add to find ${activeSection.noun} for this trip.`
                       : 'Nothing has been saved here yet.'}
                   </Text>
                   {canEdit && !!addTarget?.googlePlaceId && (
@@ -1217,8 +1217,15 @@ export default function TripDetailScreen({ navigation, route }) {
                     </TouchableOpacity>
                   )}
                 </View>
-              ) : spotsView === 'list' ? (
-                <View style={styles.placeRows}>
+              ) : (
+                // Past 5 spots the list scrolls inside the card (about 5 rows show).
+                <ScrollView
+                  style={tabPlaces.length > SPOTS_LIST_PREVIEW ? { maxHeight: SPOTS_LIST_MAX_HEIGHT } : null}
+                  contentContainerStyle={styles.placeRows}
+                  nestedScrollEnabled
+                  scrollEnabled={tabPlaces.length > SPOTS_LIST_PREVIEW}
+                  showsVerticalScrollIndicator={tabPlaces.length > SPOTS_LIST_PREVIEW}
+                >
                   {tabPlaces.map((place, index) => {
                     const { locationLine, section, thumb } = spotInfo(place);
                     return (
@@ -1260,59 +1267,6 @@ export default function TripDetailScreen({ navigation, route }) {
                             )}
                           </View>
                           {renderRemoveSpot(place, styles.removePlaceButton, 17)}
-                        </TouchableOpacity>
-                      </FadeInCard>
-                    );
-                  })}
-                </View>
-              ) : (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.placeCardsScroll}
-                  contentContainerStyle={styles.placeCards}
-                  decelerationRate="fast"
-                  snapToInterval={PLACE_CARD_WIDTH + SIZES.spacing_md}
-                  snapToAlignment="start"
-                >
-                  {tabPlaces.map((place, index) => {
-                    const { locationLine, section, thumb } = spotInfo(place);
-                    return (
-                      <FadeInCard key={place.id} index={index}>
-                        <TouchableOpacity
-                          style={styles.placeCard}
-                          onPress={() => openPlace(place)}
-                          activeOpacity={0.9}
-                          accessibilityRole="button"
-                          accessibilityLabel={spotLabel(place, locationLine)}
-                        >
-                          {thumb ? (
-                            <Image
-                              source={{ uri: thumb }}
-                              style={styles.placeCardImage}
-                              contentFit="cover"
-                              cachePolicy="memory-disk"
-                              transition={200}
-                              onError={() => setBrokenPlaceImages((prev) => ({ ...prev, [place.id]: true }))}
-                            />
-                          ) : (
-                            <View style={[styles.placeCardImage, styles.placeImagePlaceholder]}>
-                              <Ionicons name={section?.icon || 'bookmark-outline'} size={26} color={COLORS.textMuted} />
-                            </View>
-                          )}
-                          {place.rating > 0 && (
-                            <View style={styles.placeCardRating}>
-                              <Ionicons name="star" size={11} color="#f59e0b" />
-                              <Text style={styles.ratingPillText}>{place.rating}</Text>
-                            </View>
-                          )}
-                          {renderRemoveSpot(place, styles.placeCardRemove, 15)}
-                          <View style={styles.placeCardBody}>
-                            <Text style={styles.placeCardName} numberOfLines={1}>{place.placeName}</Text>
-                            <Text style={styles.placeCardArea} numberOfLines={1}>
-                              {locationLine || section?.label || ' '}
-                            </Text>
-                          </View>
                         </TouchableOpacity>
                       </FadeInCard>
                     );
@@ -1449,23 +1403,30 @@ export default function TripDetailScreen({ navigation, route }) {
         </View>
       </Animated.ScrollView>
 
-      {/* Frosted header bar: fades in once the sheet reaches the top, so the back button sits on it. */}
+      {/* Compact bar that fades in once the photo scrolls away (same as the place page). */}
       <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.headerBar,
-          { height: headerHeight, opacity: headerOpacity },
-        ]}
+        style={[styles.stickyHeader, { opacity: headerOpacity, paddingTop: insets.top }]}
+        pointerEvents={darkStatusBar ? 'auto' : 'none'}
       >
-        <BlurView intensity={70} tint="light" style={StyleSheet.absoluteFill} />
-        <View style={[styles.headerBarContent, { paddingTop: insets.top }]}>
-          <Animated.Text
-            style={[styles.headerBarTitle, { transform: [{ translateY: headerTitleShift }] }]}
-            numberOfLines={1}
+        <TouchableOpacity style={styles.stickyButton} onPress={() => navigation.goBack()} accessibilityLabel="Go back">
+          <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.stickyTitle} numberOfLines={1}>{trip.name}</Text>
+        {isOwner ? (
+          <TouchableOpacity
+            style={styles.stickyButton}
+            onPress={openTripMenu}
+            disabled={deletingTrip}
+            accessibilityLabel="Trip options"
+            accessibilityHint="Edit or delete this trip"
           >
-            {trip.name}
-          </Animated.Text>
-        </View>
+            {deletingTrip
+              ? <ActivityIndicator size="small" color={COLORS.textPrimary} />
+              : <Ionicons name="ellipsis-horizontal" size={20} color={COLORS.textPrimary} />}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.stickyButtonSpacer} />
+        )}
       </Animated.View>
 
       <DestinationSheet
@@ -1473,12 +1434,11 @@ export default function TripDetailScreen({ navigation, route }) {
         editing={destSheet?.mode === 'edit' ? destSheet.dest : null}
         existingPlaceIds={sortedDestinations.map((d) => d.googlePlaceId)}
         suggestedStart={sortedDestinations[sortedDestinations.length - 1]?.endDate || null}
+        otherStops={sortedDestinations.filter((d) => d.id !== destSheet?.dest?.id)}
         onClose={() => setDestSheet(null)}
         onSubmit={destSheet?.mode === 'edit' ? handleEditDates : handleAddDestination}
       />
 
-      {backButton}
-      {renderMenuButton(false)}
       {editSheet}
       <TravellersSheet
         visible={travellersOpen}
@@ -1519,51 +1479,56 @@ const styles = StyleSheet.create({
     paddingRight: 2,
   },
 
-  // Frosted header bar
-  headerBar: {
+  // Compact bar (same as the place page)
+  stickyHeader: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 5,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.55)',
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingBottom: SIZES.spacing_sm,
+    backgroundColor: COLORS.white,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(4,50,71,0.15)',
+    borderBottomColor: COLORS.border,
   },
-  headerBarContent: {
-    flex: 1,
+  stickyButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
-    // Leaves room for the back button on the left, mirrored on the right.
-    paddingHorizontal: SIZES.spacing_lg + 38 + SIZES.spacing_sm,
-  },
-  headerBarTitle: {
-    textAlign: 'center',
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.primary,
-  },
-
-  // Hero
-  hero: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: HERO_HEIGHT,
-    // Not clipped: the photo stretches below this box when pulled down.
+    alignItems: 'center',
     backgroundColor: COLORS.cardBackground,
   },
-  heroBlur: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    // Bottom edge sits where the sheet's top edge starts.
-    bottom: SIZES.spacing_lg,
-    height: '60%',
+  stickyButtonSpacer: {
+    width: 40,
+    height: 40,
   },
-  heroBlurFade: {
-    ...StyleSheet.absoluteFill,
+  stickyTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  // Round buttons on the photo (same as the place page)
+  heroControls: {
+    position: 'absolute',
+    left: SIZES.spacing_base,
+    right: SIZES.spacing_base,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  roundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
 
   // Sheet that overlaps the bottom of the hero
@@ -1578,14 +1543,6 @@ const styles = StyleSheet.create({
     // Clears the floating tab bar; padding (not scroll padding) keeps the grey canvas to the bottom.
     paddingBottom: 150,
     flexGrow: 1,
-  },
-  // Squares off a top corner of the sheet (faded in near the header).
-  sheetCorner: {
-    position: 'absolute',
-    top: 0,
-    width: SIZES.radius_xl,
-    height: SIZES.radius_xl,
-    backgroundColor: SHEET_BG,
   },
   // ── Overview: summary ──
   summaryCard: {
@@ -1709,57 +1666,58 @@ const styles = StyleSheet.create({
     color: COLORS.accentDeep,
     backgroundColor: '#fff1e8',
   },
-  searchBar: {
+  flex: {
+    flex: 1,
+  },
+  flexShrink: {
+    flexShrink: 1,
+  },
+  spotsWhere: {
+    marginTop: 2,
+    marginLeft: 38,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  spotFilters: {
+    gap: 6,
+    paddingTop: SIZES.spacing_md,
+    paddingBottom: SIZES.spacing_sm,
+  },
+  spotFilter: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_sm,
-    paddingLeft: SIZES.spacing_base,
-    paddingRight: 6,
-    height: 50,
+    gap: 5,
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: 5,
     borderRadius: SIZES.radius_full,
     backgroundColor: COLORS.cardBackground,
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
-  searchText: {
-    flex: 1,
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_400Regular',
+  spotFilterOn: {
+    backgroundColor: COLORS.primary,
+  },
+  spotFilterText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  spotFilterTextOn: {
+    color: COLORS.white,
+    fontFamily: 'Poppins_600SemiBold',
+  },
+  spotFilterCount: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textMuted,
   },
-  searchAdd: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.accent,
-  },
-  placeFilters: {
-    marginTop: SIZES.spacing_md,
+  spotFilterCountOn: {
+    color: 'rgba(255,255,255,0.75)',
   },
   placesTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SIZES.spacing_sm,
     flexShrink: 1,
-  },
-  placesStop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 1,
-    maxWidth: 120,
-    paddingHorizontal: SIZES.spacing_sm,
-    paddingVertical: 3,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: '#e6f4fb',
-  },
-  placesStopText: {
-    flexShrink: 1,
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.primary,
   },
   // ── Overview: destinations (stop timeline) ──
   addStopButton: {
@@ -1830,7 +1788,24 @@ const styles = StyleSheet.create({
   timelineText: {
     flex: 1,
   },
+  timelineNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  primaryBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: '#fff1e8',
+  },
+  primaryBadgeText: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
   timelineName: {
+    flexShrink: 1,
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
@@ -1847,37 +1822,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.cardBackground,
-  },
-  placesHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_sm,
-    flexShrink: 1,
-    justifyContent: 'flex-end',
-  },
-  // Cards / list switch in the Saved spots header.
-  viewToggle: {
-    flexDirection: 'row',
-    padding: 2,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: COLORS.cardBackground,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-  },
-  viewToggleButton: {
-    width: 30,
-    height: 26,
-    borderRadius: 13,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  viewToggleButtonOn: {
-    backgroundColor: COLORS.white,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
   },
   // ── Saved spots: list layout ──
   placeRows: {
@@ -1932,63 +1876,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff0f0',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  placeCardsScroll: {
-    marginHorizontal: -SIZES.spacing_base,
-  },
-  placeCards: {
-    gap: SIZES.spacing_md,
-    paddingHorizontal: SIZES.spacing_base,
-    paddingBottom: 2,
-  },
-  placeCard: {
-    width: PLACE_CARD_WIDTH,
-    borderRadius: SIZES.radius_lg,
-    overflow: 'hidden',
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: '#e9edf1',
-  },
-  placeCardImage: {
-    width: '100%',
-    height: 120,
-  },
-  placeCardRating: {
-    position: 'absolute',
-    top: SIZES.spacing_sm,
-    left: SIZES.spacing_sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(255,255,255,0.94)',
-  },
-  placeCardRemove: {
-    position: 'absolute',
-    top: SIZES.spacing_sm,
-    right: SIZES.spacing_sm,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.94)',
-  },
-  placeCardBody: {
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: SIZES.spacing_sm,
-  },
-  placeCardName: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  placeCardArea: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
   },
 
   // ── Overview: budget / itinerary tiles ──

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Wayraa-Mobile",
+    "name": "Wayraa",
     "slug": "Wayraa-Mobile",
     "version": "1.0.0",
     "scheme": "wayraa",
@@ -18,7 +18,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "com.wayraa.mobile"
+      "package": "com.wayraa.mobile",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"

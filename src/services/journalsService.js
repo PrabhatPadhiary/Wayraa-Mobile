@@ -179,3 +179,18 @@ export async function deleteJournal(id) {
   if (!response.ok && response.status !== 404) throw new Error(await errorText(response, 'Couldn\'t delete the story'));
   return true;
 }
+
+/**
+ * Public stories that tag a place: "Stories from Wayraa travellers" on its page.
+ * Backend: GET /api/Journals/by-place/{googlePlaceId}
+ */
+export async function getJournalsForPlace(googlePlaceId, limit = 10) {
+  if (!googlePlaceId) return [];
+  const response = await fetch(
+    `${API_URL}/Journals/by-place/${encodeURIComponent(googlePlaceId)}?limit=${limit}`,
+    { headers: await headers() }
+  );
+  if (!response.ok) throw new Error(`Couldn't load stories (${response.status})`);
+  const data = await response.json();
+  return (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+}

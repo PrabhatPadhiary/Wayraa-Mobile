@@ -102,7 +102,9 @@ export default function JournalPreviewSheet({ journal, onClose, onToggleLike, on
 
           <View style={styles.authorRow}>
             <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
-              <Text style={styles.avatarText}>{initialsFor(author)}</Text>
+              {j.author?.photoUrl
+                ? <Image source={{ uri: j.author?.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
             </View>
             <View style={styles.flex}>
               <Text style={styles.authorName} numberOfLines={1}>{author}</Text>

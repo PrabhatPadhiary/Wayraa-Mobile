@@ -14,3 +14,4 @@ export { default as JoinTripScreen } from './JoinTripScreen';
 export { default as ProfileScreen } from './ProfileScreen';
 export { default as JournalDetailScreen } from './JournalDetailScreen';
 export { default as WriteJournalScreen } from './WriteJournalScreen';
+export { default as DestinationPlacesScreen } from './DestinationPlacesScreen';

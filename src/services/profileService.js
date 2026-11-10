@@ -1,10 +1,99 @@
+import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File } from 'expo-file-system';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { updateProfile, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import { API_URL, auth } from '../config';
 import { getAuthToken, getStoredUser } from './authService';
 import { AuthRequiredError } from './errors';
 
 const USER_STORAGE_KEY = 'wayraa_user';
+const PHOTO_SIZE = 600; // px, square crop from the picker
+const PHOTO_QUALITY = 0.85;
+
+// ── Your profile photo, shared by every screen ─────────────────────────────
+// undefined = not known yet (screens fall back to the Firebase photo),
+// null = no photo (initials), string = photo URL.
+let myPhoto;
+const photoListeners = new Set();
+
+export function setMyPhoto(url) {
+  if (url === myPhoto) return;
+  myPhoto = url;
+  photoListeners.forEach((l) => l(url));
+}
+
+/**
+ * Your current profile photo URL (or null), updating live when it changes.
+ * `fallback` is used until the app knows the saved photo (e.g. the Firebase
+ * or Google photo).
+ */
+export function useMyPhoto(fallback) {
+  const [photo, setPhoto] = useState(myPhoto);
+  useEffect(() => {
+    photoListeners.add(setPhoto);
+    setPhoto(myPhoto);
+    return () => { photoListeners.delete(setPhoto); };
+  }, []);
+  return photo === undefined ? (fallback || null) : photo;
+}
+
+async function syncPhotoElsewhere(url) {
+  setMyPhoto(url);
+  try {
+    if (auth.currentUser) await updateProfile(auth.currentUser, { photoURL: url });
+  } catch { /* ignore */ }
+  try {
+    const stored = (await getStoredUser()) || {};
+    await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ ...stored, photoUrl: url }));
+  } catch { /* ignore */ }
+}
+
+/**
+ * Upload a new profile photo from a picked image (already square-cropped by
+ * the picker). Resized to 600 px JPEG first.
+ * Backend: POST /api/users/me/photo (multipart "file")
+ * @returns {Promise<string>} the new photo URL
+ */
+export async function uploadProfilePhoto(asset) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const ctx = ImageManipulator.manipulate(asset.uri);
+  if (!asset.width || asset.width > PHOTO_SIZE) ctx.resize({ width: PHOTO_SIZE });
+  const image = await ctx.renderAsync();
+  const saved = await image.saveAsync({ compress: PHOTO_QUALITY, format: SaveFormat.JPEG });
+
+  const form = new FormData();
+  form.append('file', new File(saved.uri), 'profile.jpg');
+  const response = await fetch(`${API_URL}/users/me/photo`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) {
+    let message = '';
+    try { message = (await response.text()).replace(/^"|"$/g, ''); } catch { /* ignore */ }
+    throw new Error(message || `Couldn't upload your photo (${response.status})`);
+  }
+  const { photoUrl } = await response.json();
+  await syncPhotoElsewhere(photoUrl);
+  return photoUrl;
+}
+
+/** Remove the profile photo (back to initials). Backend: DELETE /api/users/me/photo */
+export async function removeProfilePhoto() {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+  const response = await fetch(`${API_URL}/users/me/photo`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) throw new Error(`Couldn't remove your photo (${response.status})`);
+  await syncPhotoElsewhere(null);
+}
 
 /**
  * The signed-in user's profile and travel stats.
@@ -22,7 +111,10 @@ export async function getMyProfile() {
   });
   if (response.status === 401) throw new AuthRequiredError();
   if (!response.ok) throw new Error(`Failed to load your profile (${response.status})`);
-  return response.json();
+  const me = await response.json();
+  // The saved photo wins over the Firebase/Google one once we know it.
+  if (me.photoUrl !== undefined) setMyPhoto(me.photoUrl || null);
+  return me;
 }
 
 /**

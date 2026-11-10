@@ -16,10 +16,37 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { JOURNAL_VIBES, getMyTrips } from '../services';
+import {
+  JOURNAL_VIBES,
+  getMyTrips,
+  getTripById,
+  getPlaceDetails,
+  journalCategoryFor,
+  searchRadiusFor,
+  placeCoords,
+  searchAnyPlace,
+  reverseGeocode,
+} from '../services';
+import PlaceSearchField from '../components/PlaceSearchField';
 import { startStoryUpload, isStoryUploading } from '../services/storyUpload';
 
 const MAX_PHOTOS = 10;
+const MAX_PLACES = 20;
+const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
+
+/** A trip's saved-place category ("stays", "food", ...) as a journal place category. */
+function categoryFromTrip(category) {
+  const c = (category || '').toLowerCase();
+  if (c.startsWith('stay')) return 'stay';
+  if (c === 'food' || c.startsWith('restaurant')) return 'food';
+  return 'attraction';
+}
+
+/** "Karnataka, India" -> "India": the country is the last part of an address line. */
+function countryOf(secondary) {
+  const parts = (secondary || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
 
 /**
  * Share a trip story — one screen:
@@ -29,23 +56,50 @@ const MAX_PHOTOS = 10;
  *    the cover (highlighted, nothing moves), ✕ to remove, "+" to add more.
  *    The cover is uploaded first, since the feed uses the first photo. Photos are optional (stories without one show a
  *    destination gradient in the feed).
- *  - Title + story (the "caption"), where it was (or fill it all from one of
- *    your trips), vibes, an optional pro tip and budget, and who can see it
- *    (Everyone / Only me).
+ *  - Title + story (the "caption").
+ *  - Destination: a Google search for a city or region ("Bengaluru"), or one
+ *    of your Wayraa trips (fills dates, travellers and the trip's saved places).
+ *  - Places you went: tag the spots you visited ("Guerrilla Diner"), searched
+ *    only inside the destination once one is set. They show as "Places
+ *    mentioned" on the story and open each place's page.
+ *  - Vibes, an optional pro tip and budget, and who can see it.
  *
  * Sharing hands the post to the background uploader (services/storyUpload)
  * and goes straight back to the Community feed, which shows a progress card
  * until it's live — like Instagram. Opens over the tabs, sliding up.
  */
-export default function WriteJournalScreen({ navigation }) {
+/** A place page's category (stays / food / activities) as a journal category. */
+function categoryFromPlacePage(category) {
+  const c = (category || '').toLowerCase();
+  if (c.startsWith('stay')) return 'stay';
+  if (c === 'food' || c.startsWith('restaurant')) return 'food';
+  if (c) return 'attraction';
+  return 'other';
+}
+
+/** City from an address line: "…, Bengaluru, Karnataka 560008, India" -> "Bengaluru". */
+function cityFromAddress(address) {
+  const parts = (address || '').split(',').map((x) => x.replace(/\d+/g, '').trim()).filter(Boolean);
+  if (parts.length >= 3) return parts[parts.length - 3];
+  return parts[0] || '';
+}
+
+export default function WriteJournalScreen({ navigation, route }) {
+  const prefillPlace = route?.params?.prefillPlace || null;
   const insets = useSafeAreaInsets();
   const [photos, setPhotos] = useState([]); // picker assets, in picked order
   const [coverIndex, setCoverIndex] = useState(0);
 
   const [title, setTitle] = useState('');
   const [story, setStory] = useState('');
-  const [destination, setDestination] = useState('');
+  const [destination, setDestination] = useState(''); // city text saved on the story
+  // The chosen destination as shown: { kind: 'region'|'trip', name, secondary }.
+  const [where, setWhere] = useState(null);
+  // Where to search for "Places you went": { name, lat, lng, radius } or null.
+  const [area, setArea] = useState(null);
   const [trip, setTrip] = useState(null); // picked trip (fills dates etc.)
+  // Tagged places: { placeName, googlePlaceId, category, fromTrip? }.
+  const [places, setPlaces] = useState([]);
   const [myTrips, setMyTrips] = useState([]);
   const [vibes, setVibes] = useState([]);
   const [tips, setTips] = useState('');
@@ -58,6 +112,36 @@ export default function WriteJournalScreen({ navigation }) {
   useEffect(() => {
     getMyTrips().then((t) => setMyTrips(Array.isArray(t) ? t : [])).catch(() => {});
   }, []);
+
+  // Opened from a place's "Share a story": tag the place, and set its city as
+  // the destination (the phone's geocoder, else the address), matched to
+  // Google's city so the place search is limited to it like a normal pick.
+  useEffect(() => {
+    if (!prefillPlace?.placeId) return;
+    let cancelled = false;
+    addPlaces([{
+      placeName: prefillPlace.name,
+      googlePlaceId: prefillPlace.placeId,
+      category: categoryFromPlacePage(prefillPlace.category),
+    }]);
+    (async () => {
+      const c = prefillPlace.coords;
+      const city = (c && await reverseGeocode(c.lat, c.lng)) || cityFromAddress(prefillPlace.address);
+      if (!city || cancelled) return;
+      const near = c ? { lat: c.lat, lng: c.lng, radius: 50000 } : null;
+      const matches = await searchAnyPlace(city, { regionsOnly: true, near });
+      if (cancelled) return;
+      if (matches[0]) {
+        pickWhere(matches[0]);
+      } else {
+        // No match: still show the city, searching around the place itself.
+        setWhere({ kind: 'region', name: city, secondary: '' });
+        setDestination(city);
+        if (c) setArea({ name: city, lat: c.lat, lng: c.lng, radius: 50000 });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line
 
   async function pickPhotos() {
     const room = MAX_PHOTOS - photos.length;
@@ -88,14 +172,72 @@ export default function WriteJournalScreen({ navigation }) {
     setCoverIndex((c) => (index === c ? 0 : index < c ? c - 1 : c));
   };
 
-  const pickTrip = (t) => {
+  // Add places to the tagged list, skipping ones already there.
+  const addPlaces = (list) => setPlaces((prev) => {
+    const seen = new Set(prev.map((p) => p.googlePlaceId || p.placeName));
+    const fresh = list.filter((p) => !seen.has(p.googlePlaceId || p.placeName));
+    return [...prev, ...fresh].slice(0, MAX_PLACES);
+  });
+  const removePlace = (key) => setPlaces((prev) => prev.filter((p) => (p.googlePlaceId || p.placeName) !== key));
+
+  const clearWhere = () => {
+    if (trip) setPlaces((prev) => prev.filter((p) => !p.fromTrip));
+    setWhere(null);
+    setTrip(null);
+    setArea(null);
+    setDestination('');
+  };
+
+  // A destination from the search: a city or region. Its coordinates then
+  // keep the "Places you went" search inside it.
+  const pickWhere = async (r) => {
+    if (trip) setPlaces((prev) => prev.filter((p) => !p.fromTrip));
+    setTrip(null);
+    const country = countryOf(r.secondary);
+    setWhere({ kind: 'region', name: r.name, secondary: r.secondary });
+    setDestination(country && country !== r.name ? `${r.name}, ${country}` : r.name);
+    setArea(null);
+    const radius = searchRadiusFor(r.types);
+    if (!radius) return; // a whole country: search places anywhere
+    const coords = placeCoords(await getPlaceDetails(r.placeId));
+    if (coords) setArea({ name: r.name, ...coords, radius });
+  };
+
+  // One of your trips: fills where, dates, travellers and the trip's saved places.
+  const pickTrip = async (t) => {
     if (trip?.id === t.id) {
-      setTrip(null);
+      clearWhere();
       return;
     }
+    setPlaces((prev) => prev.filter((p) => !p.fromTrip));
+    setArea(null);
     setTrip(t);
+    setWhere({ kind: 'trip', name: t.primaryDestination || t.name, secondary: `From your trip · ${t.name}` });
     setDestination(t.primaryDestination || t.name || '');
     if (!title.trim()) setTitle(t.name || '');
+    try {
+      const full = await getTripById(t.id);
+      const stops = [...(full?.destinations || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const first = stops[0];
+      if (first && Number.isFinite(first.latitude) && Number.isFinite(first.longitude)) {
+        // Multi-stop trips search wider so places at every stop can be found.
+        setArea({
+          name: t.primaryDestination || first.name,
+          lat: first.latitude,
+          lng: first.longitude,
+          radius: stops.length > 1 ? 400000 : 50000,
+        });
+      }
+      const saved = stops.flatMap((d) => d.places || []).map((p) => ({
+        placeName: p.placeName,
+        googlePlaceId: p.placeId,
+        category: categoryFromTrip(p.category),
+        fromTrip: true,
+      }));
+      addPlaces(saved);
+    } catch {
+      // The trip still sets where and when; places can be added by hand.
+    }
   };
 
   const toggleVibe = (v) => {
@@ -140,6 +282,7 @@ export default function WriteJournalScreen({ navigation }) {
       proTips: tips.trim() || null,
       vibes,
       visibility,
+      places: places.map((p) => ({ placeName: p.placeName, category: p.category, googlePlaceId: p.googlePlaceId || null })),
     }, [photos[coverIndex], ...photos.filter((_, i) => i !== coverIndex)].filter(Boolean));
     // Back to the feed at once; it shows the upload's progress.
     navigation.navigate('Main', { screen: 'Community', params: { screen: 'CommunityHome' } });
@@ -243,22 +386,33 @@ export default function WriteJournalScreen({ navigation }) {
             />
           </View>
 
-          {/* Where */}
-          <Text style={styles.label}>Where was it?</Text>
-          <View style={styles.inputRow}>
-            <Feather name="map-pin" size={17} color={COLORS.accent} />
-            <TextInput
-              style={styles.rowInput}
-              value={destination}
-              onChangeText={(t) => { setDestination(t); if (trip) setTrip(null); }}
-              placeholder="e.g. Kyoto, Japan"
-              placeholderTextColor={COLORS.textMuted}
-              accessibilityLabel="Destination"
+          {/* Destination */}
+          <Text style={styles.label}>Destination</Text>
+          <Text style={styles.hint}>The city or region you visited</Text>
+          {where ? (
+            <View style={styles.whereCard}>
+              <View style={styles.whereIcon}>
+                <Feather name={where.kind === 'trip' ? 'briefcase' : 'map-pin'} size={16} color={COLORS.accentDeep} />
+              </View>
+              <View style={styles.whereText}>
+                <Text style={styles.whereName} numberOfLines={1}>{where.name}</Text>
+                {!!where.secondary && <Text style={styles.whereSub} numberOfLines={1}>{where.secondary}</Text>}
+              </View>
+              <TouchableOpacity onPress={clearWhere} hitSlop={10} accessibilityLabel="Change destination">
+                <Feather name="x" size={18} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <PlaceSearchField
+              icon="map-pin"
+              placeholder="Search a city or region"
+              regionsOnly
+              onSelect={pickWhere}
             />
-          </View>
+          )}
           {myTrips.length > 0 && (
             <>
-              <Text style={styles.subLabel}>Or pick one of your trips (fills dates and travellers)</Text>
+              <Text style={styles.subLabel}>Or pick one of your trips (fills dates, travellers and places)</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll} contentContainerStyle={styles.chips}>
                 {myTrips.map((t) => {
                   const on = trip?.id === t.id;
@@ -277,6 +431,39 @@ export default function WriteJournalScreen({ navigation }) {
                 })}
               </ScrollView>
             </>
+          )}
+
+          {/* Places you went */}
+          <Text style={styles.label}>Places you went <Text style={styles.optional}>(optional)</Text></Text>
+          <Text style={styles.hint}>
+            {area ? `Cafés, stays and sights in ${area.name}` : 'Cafés, stays and sights. Pick a destination first to search inside it.'}
+          </Text>
+          {places.length > 0 && (
+            <View style={styles.placeChips}>
+              {places.map((p) => {
+                const key = p.googlePlaceId || p.placeName;
+                return (
+                  <View key={key} style={styles.placeChip}>
+                    <Feather name={PLACE_ICONS[p.category] || 'map-pin'} size={13} color={COLORS.accentDeep} />
+                    <Text style={styles.placeChipText} numberOfLines={1}>{p.placeName}</Text>
+                    <TouchableOpacity onPress={() => removePlace(key)} hitSlop={8} accessibilityLabel={`Remove ${p.placeName}`}>
+                      <Feather name="x" size={14} color={COLORS.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+          {places.length < MAX_PLACES && (
+            <PlaceSearchField
+              // New area -> fresh field (clears any half-typed search).
+              key={area ? `${area.lat},${area.lng}` : 'anywhere'}
+              icon="plus"
+              placeholder={area ? `Search places in ${area.name}` : 'Add a café, stay or sight'}
+              near={area}
+              clearOnSelect
+              onSelect={(r) => addPlaces([{ placeName: r.name, googlePlaceId: r.placeId, category: journalCategoryFor(r.types) }])}
+            />
           )}
 
           {/* Vibes */}
@@ -424,6 +611,31 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md, fontFamily: 'Poppins_600SemiBold', color: COLORS.textPrimary,
   },
   optional: { fontFamily: 'Poppins_400Regular', color: COLORS.textMuted },
+  hint: {
+    marginTop: -4,
+    marginBottom: SIZES.spacing_sm,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  whereCard: {
+    flexDirection: 'row', alignItems: 'center', gap: SIZES.spacing_md, minHeight: 56,
+    paddingHorizontal: SIZES.spacing_md, borderRadius: SIZES.radius_md,
+    borderWidth: 1, borderColor: '#ffd9c2', backgroundColor: '#fffaf6',
+  },
+  whereIcon: {
+    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', backgroundColor: '#ffe8d9',
+  },
+  whereText: { flex: 1, minWidth: 0 },
+  whereName: { fontSize: SIZES.md, fontFamily: 'Poppins_600SemiBold', color: COLORS.textPrimary },
+  whereSub: { fontSize: SIZES.sm, fontFamily: 'Poppins_400Regular', color: COLORS.textSecondary },
+  placeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: SIZES.spacing_sm, marginBottom: SIZES.spacing_sm },
+  placeChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%',
+    paddingLeft: SIZES.spacing_md, paddingRight: SIZES.spacing_sm, paddingVertical: 7,
+    borderRadius: SIZES.radius_full, backgroundColor: '#fff1e8',
+  },
+  placeChipText: { flexShrink: 1, fontSize: SIZES.sm, fontFamily: 'Poppins_500Medium', color: COLORS.textPrimary },
   subLabel: { marginTop: SIZES.spacing_sm, fontSize: SIZES.sm, fontFamily: 'Poppins_400Regular', color: COLORS.textSecondary },
   inputRow: {
     flexDirection: 'row', alignItems: 'center', gap: SIZES.spacing_sm, height: 48,

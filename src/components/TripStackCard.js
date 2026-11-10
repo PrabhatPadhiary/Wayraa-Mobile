@@ -161,7 +161,9 @@ export default function TripStackCard({
                         i > 0 && styles.avatarOverlap,
                       ]}
                     >
-                      <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>
+                      {m.photoUrl
+                        ? <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                        : <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>}
                     </View>
                   ))}
                   {extraMembers > 0 && (

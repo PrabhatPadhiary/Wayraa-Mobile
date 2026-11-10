@@ -8,7 +8,19 @@ export {
   getStoredUser,
   getAuthToken,
 } from './authService';
-export { searchPlaces, getPlaceDetails, getPlacesByCategory, getPlacesByFilter, getPlacesByTheme } from './placesService';
+export {
+  searchPlaces,
+  searchAnyPlace,
+  isRegionResult,
+  journalCategoryFor,
+  searchRadiusFor,
+  placeCoords,
+  searchInDestination,
+  getPlaceDetails,
+  getPlacesByCategory,
+  getPlacesByFilter,
+  getPlacesByTheme,
+} from './placesService';
 export { getCurrentLocation, getLocationPermission, getNearbyPlaces, reverseGeocode } from './locationService';
 export {
   getMyTrips,
@@ -19,6 +31,7 @@ export {
   addTripDestination,
   removeTripDestination,
   updateDestinationDates,
+  setPrimaryDestination,
   updateTrip,
   deleteTrip,
 } from './tripsService';
@@ -29,6 +42,7 @@ export {
   updateItineraryItem,
   deleteItineraryItem,
   deleteItineraryOutsideRange,
+  arrangeItinerary,
 } from './itineraryService';
 export {
   getExpenses,
@@ -56,7 +70,7 @@ export {
   changeMemberRole,
   removeMember,
 } from './invitationsService';
-export { getMyProfile, updateMyName, signInMethods, sendPasswordReset, deleteMyAccount } from './profileService';
+export { getMyProfile, updateMyName, signInMethods, sendPasswordReset, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto } from './profileService';
 export {
   JOURNAL_VIBES,
   vibeLabel,
@@ -69,4 +83,5 @@ export {
   updateJournal,
   uploadJournalPhoto,
   deleteJournal,
+  getJournalsForPlace,
 } from './journalsService';

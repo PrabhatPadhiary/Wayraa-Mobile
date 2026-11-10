@@ -7,7 +7,8 @@ import { AuthRequiredError, ForbiddenError } from './errors';
  * Everyone on the trip can read; owners and editors can change items.
  *
  * Item shape: { id, tripId, destinationId, tripPlaceId, title, category,
- *   scheduledDate, startTime, endTime, notes, createdAt }
+ *   scheduledDate, startTime, endTime, notes, slot, sortOrder, createdAt }
+ * `slot`: morning | afternoon | evening | anytime (null on older items).
  * `category`: stay | food | activity | transport | custom.
  * `startTime` / `endTime`: "HH:mm" strings, or null/"" for "anytime".
  */
@@ -60,6 +61,8 @@ export async function createItineraryItem(tripId, item) {
       startTime: item.startTime || null,
       endTime: item.endTime || null,
       notes: item.notes || null,
+      slot: item.slot || null,
+      sortOrder: item.sortOrder ?? 0,
     }),
   });
   if (!response.ok) throw await toError(response, 'Could not add that to the plan.');
@@ -78,6 +81,22 @@ export async function updateItineraryItem(tripId, itemId, changes) {
   });
   if (!response.ok) throw await toError(response, 'Could not save that change.');
   return response.json();
+}
+
+/**
+ * Save a drag-and-drop in one request.
+ * @param {Array<{ id, scheduledDate, slot, sortOrder, clearTime? }>} changes
+ * @returns {Promise<object[]>} the updated items
+ */
+export async function arrangeItinerary(tripId, changes) {
+  const response = await fetch(`${base(tripId)}/arrange`, {
+    method: 'PUT',
+    headers: await authHeaders(true),
+    body: JSON.stringify(changes),
+  });
+  if (!response.ok) throw await toError(response, 'Could not save the new order.');
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
 }
 
 /** Resolves to true when it's gone (including if it was already gone). */

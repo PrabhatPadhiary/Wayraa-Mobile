@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
+import { tripTiming } from '../components/TripListRow';
 import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
 import { getMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
@@ -206,29 +207,54 @@ export default function MyTripsScreen({ navigation }) {
     progressViewOffset: headerHeight,
   };
 
-  // Round button at the top-right of the header (always on screen), shown
-  // whenever the fan can't hold every trip: switches between cards and list.
+  // List view: trips grouped (Happening now, Upcoming, Drafts, Past), each
+  // group keeping the list's sort order.
+  const listSections = (() => {
+    const groups = [
+      { key: 'now', label: 'Happening now', color: '#22c55e', match: (t) => tripTiming(t).progress != null || tripTiming(t).label === 'Starts today' },
+      { key: 'upcoming', label: 'Upcoming', color: COLORS.accent, match: (t) => /^(In |Tomorrow)/.test(tripTiming(t).label) },
+      { key: 'draft', label: 'No dates yet', color: COLORS.primaryLight, match: (t) => tripTiming(t).label === 'No dates yet' },
+      { key: 'past', label: 'Past trips', color: '#94a3b8', match: () => true },
+    ];
+    const used = new Set();
+    const out = [];
+    groups.forEach((g) => {
+      const trips = visibleTrips.filter((t) => !used.has(t) && g.match(t));
+      trips.forEach((t) => used.add(t));
+      if (!trips.length) return;
+      out.push({ isHeader: true, key: g.key, label: g.label, color: g.color, count: trips.length });
+      out.push(...trips);
+    });
+    return out;
+  })();
+
+  // Cards / list switch at the top-right of the header, shown whenever the
+  // fan can't hold every trip. Two icons side by side, the current view
+  // highlighted (no count badge, so it doesn't read as a menu with alerts).
   const viewToggle = hiddenCount > 0 ? (
-    <TouchableOpacity
-      style={styles.viewToggle}
-      activeOpacity={0.8}
-      onPress={() => toggleShowAll(!listMode)}
-      accessibilityRole="button"
-      accessibilityLabel={listMode ? 'Show trips as cards' : `See all ${visibleTrips.length} trips as a list`}
-      hitSlop={6}
-    >
-      <Ionicons
-        name={listMode ? 'albums-outline' : 'list-outline'}
-        size={20}
-        color={COLORS.accentDeep}
-      />
-      {!listMode && (
-        // Count badge: how many trips the list holds.
-        <View style={styles.viewToggleBadge}>
-          <Text style={styles.viewToggleBadgeText}>{visibleTrips.length}</Text>
-        </View>
-      )}
-    </TouchableOpacity>
+    <View style={styles.viewToggle} accessibilityRole="tablist">
+      {[
+        { key: 'cards', icon: 'albums', on: !listMode, label: 'Show trips as cards' },
+        { key: 'list', icon: 'list', on: listMode, label: `Show all ${visibleTrips.length} trips as a list` },
+      ].map((o) => (
+        <TouchableOpacity
+          key={o.key}
+          style={[styles.viewToggleOption, o.on && styles.viewToggleOptionOn]}
+          activeOpacity={0.8}
+          onPress={() => { if (!o.on) toggleShowAll(o.key === 'list'); }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: o.on }}
+          accessibilityLabel={o.label}
+          hitSlop={4}
+        >
+          <Ionicons
+            name={o.on ? o.icon : `${o.icon}-outline`}
+            size={17}
+            color={o.on ? COLORS.accentDeep : COLORS.textMuted}
+          />
+        </TouchableOpacity>
+      ))}
+    </View>
   ) : null;
   const renderEmpty = () => {
     if (loading) return null;
@@ -311,9 +337,17 @@ export default function MyTripsScreen({ navigation }) {
           ) : (
             listMode ? (
               <FlatList
-                data={visibleTrips}
-                keyExtractor={(t, i) => String(t.id ?? i)}
-                renderItem={({ item }) => renderTrip(item, { compact: true })}
+                data={listSections}
+                keyExtractor={(t, i) => (t.isHeader ? `h-${t.key}` : String(t.id ?? i))}
+                renderItem={({ item }) => (item.isHeader ? (
+                  <View style={styles.sectionHead}>
+                    <View style={[styles.sectionDot, { backgroundColor: item.color }]} />
+                    <Text style={styles.sectionTitle}>{item.label}</Text>
+                    <View style={styles.sectionCount}>
+                      <Text style={styles.sectionCountText}>{item.count}</Text>
+                    </View>
+                  </View>
+                ) : renderTrip(item, { compact: true }))}
                 ItemSeparatorComponent={() => <View style={styles.rowGap} />}
                 contentContainerStyle={[styles.listContent, { paddingTop: headerHeight + SIZES.spacing_sm }]}
                 showsVerticalScrollIndicator={false}
@@ -345,21 +379,21 @@ export default function MyTripsScreen({ navigation }) {
             : 'Your journeys, all in one place'
         }
         collapsed={false}
-        right={loading ? null : (
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              style={styles.joinButton}
-              activeOpacity={0.8}
-              onPress={() => navigation.navigate('JoinTrip')}
-              accessibilityRole="button"
-              accessibilityLabel="Join a trip with an invite link"
-              hitSlop={6}
-            >
-              <Ionicons name="person-add-outline" size={19} color={COLORS.accentDeep} />
-            </TouchableOpacity>
-            {viewToggle}
-          </View>
+        // Join on the left, the cards / list switch on the right, so the
+        // centred title has room on both sides.
+        left={loading ? null : (
+          <TouchableOpacity
+            style={styles.joinButton}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('JoinTrip')}
+            accessibilityRole="button"
+            accessibilityLabel="Join a trip with an invite link"
+            hitSlop={6}
+          >
+            <Ionicons name="person-add-outline" size={19} color={COLORS.accentDeep} />
+          </TouchableOpacity>
         )}
+        right={loading ? null : viewToggle}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
         {!loading && trips.length > 0 && (
@@ -409,6 +443,33 @@ const styles = StyleSheet.create({
   listEmpty: {
     flexGrow: 1,
   },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: SIZES.spacing_sm,
+    paddingHorizontal: 4,
+  },
+  sectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  sectionTitle: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+  },
+  sectionCount: {
+    paddingHorizontal: 7,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.sand,
+  },
+  sectionCountText: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textSecondary,
+  },
   rowGap: {
     height: SIZES.spacing_md,
   },
@@ -430,33 +491,27 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.sand,
   },
   viewToggle: {
-    width: 40,
+    flexDirection: 'row',
     height: 40,
+    padding: 3,
+    gap: 2,
     borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
     backgroundColor: COLORS.sand,
   },
-  viewToggleBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 4,
-    borderRadius: 9,
+  viewToggleOption: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center',
-    // Deeper orange keeps the small white number readable (theme note).
-    backgroundColor: COLORS.accentDeep,
-    borderWidth: 1.5,
-    borderColor: COLORS.white,
   },
-  viewToggleBadgeText: {
-    fontSize: SIZES.xs,
-    lineHeight: 13,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
+  viewToggleOptionOn: {
+    backgroundColor: COLORS.white,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
+    elevation: 2,
   },
 
   // Trip card

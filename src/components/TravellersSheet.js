@@ -12,6 +12,7 @@ import {
   Share,
   Alert,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
@@ -265,7 +266,9 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
               return (
                 <View key={m.userId} style={styles.memberRow}>
                   <View style={[styles.avatar, { backgroundColor: avatarColorFor(m.name) }]}>
-                    <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>
+                    {m.photoUrl
+                      ? <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                      : <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>}
                   </View>
                   <View style={styles.memberText}>
                     <Text style={styles.memberName} numberOfLines={1}>
