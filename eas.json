@@ -15,12 +15,14 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://wanderlust-backend-8qn5.onrender.com/api"
-      }
+      },
+      "environment": "preview"
     },
     "production": {
       "env": {
         "EXPO_PUBLIC_API_URL": "https://wanderlust-backend-8qn5.onrender.com/api"
-      }
+      },
+      "environment": "production"
     }
   },
   "submit": {
