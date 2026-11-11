@@ -19,7 +19,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.wayraa.mobile",
-      "versionCode": 2,
+      "versionCode": 3,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
@@ -55,6 +55,14 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#FFFBF8"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "# WorkManager's Room database: R8 stripped the generated class and the app crashed at launch\n-keep class * extends androidx.room.RoomDatabase { <init>(); }\n-keep class androidx.work.impl.** { *; }\n-keep class androidx.room.** { *; }\n-dontwarn androidx.room.paging.**"
+          }
         }
       ]
     ],
