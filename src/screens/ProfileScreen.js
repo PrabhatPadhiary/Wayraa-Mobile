@@ -7,7 +7,6 @@ import {
   ScrollView,
   StatusBar,
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   TextInput,
@@ -41,6 +40,8 @@ import {
 import { pickNextTrip, formatDateRange, daysUntil } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import appConfig from '../../app.json';
+import { showAlert } from '../components/AppDialog';
+import { LoaderOverlay } from '../components/WayraaLoader';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
@@ -143,7 +144,7 @@ export default function ProfileScreen({ navigation }) {
   const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Photos access needed', 'Allow access to your photos in Settings to choose a profile photo.');
+      showAlert('Photos access needed', 'Allow access to your photos in Settings to choose a profile photo.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -158,7 +159,7 @@ export default function ProfileScreen({ navigation }) {
       await uploadProfilePhoto(result.assets[0]);
       setPhotoFailed(false);
     } catch (e) {
-      Alert.alert('Couldn\'t update your photo', e?.message || 'Please try again.');
+      showAlert('Couldn\'t update your photo', e?.message || 'Please try again.');
     } finally {
       setPhotoBusy(false);
     }
@@ -169,7 +170,7 @@ export default function ProfileScreen({ navigation }) {
     try {
       await removeProfilePhoto();
     } catch (e) {
-      Alert.alert('Couldn\'t remove your photo', e?.message || 'Please try again.');
+      showAlert('Couldn\'t remove your photo', e?.message || 'Please try again.');
     } finally {
       setPhotoBusy(false);
     }
@@ -181,7 +182,7 @@ export default function ProfileScreen({ navigation }) {
       pickPhoto();
       return;
     }
-    Alert.alert('Profile photo', undefined, [
+    showAlert('Profile photo', undefined, [
       { text: 'Choose a new photo', onPress: pickPhoto },
       { text: 'Remove photo', style: 'destructive', onPress: removePhoto },
       { text: 'Cancel', style: 'cancel' },
@@ -214,7 +215,7 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const resetPassword = () => {
-    Alert.alert(
+    showAlert(
       'Change password',
       `We'll email a link to ${email} to set a new password.`,
       [
@@ -224,9 +225,9 @@ export default function ProfileScreen({ navigation }) {
           onPress: async () => {
             try {
               const to = await sendPasswordReset();
-              Alert.alert('Check your email', `A reset link is on its way to ${to}.`);
+              showAlert('Check your email', `A reset link is on its way to ${to}.`);
             } catch (e) {
-              Alert.alert('Could not send the link', e?.message || 'Please try again later.');
+              showAlert('Could not send the link', e?.message || 'Please try again later.');
             }
           },
         },
@@ -235,7 +236,7 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const logOut = () => {
-    Alert.alert('Log out?', 'You can sign back in any time.', [
+    showAlert('Log out?', 'You can sign back in any time.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Log out',
@@ -269,7 +270,7 @@ export default function ProfileScreen({ navigation }) {
       await deleteMyAccount();
       setDeleteOpen(false);
       resetToWelcome();
-      Alert.alert('Account deleted', 'Your account and data have been removed. Safe travels!');
+      showAlert('Account deleted', 'Your account and data have been removed. Safe travels!');
     } catch (e) {
       setDeleteError(e?.message || 'Could not delete your account. Please try again.');
       setDeleting(false);
@@ -482,6 +483,16 @@ export default function ProfileScreen({ navigation }) {
               icon="heart"
               label="Favourites"
               onPress={() => navigation.navigate('Favorites', { screen: 'FavoritesHome' })}
+            />
+            <Row
+              icon="book-open"
+              label="Your stories"
+              onPress={() => navigation.navigate('MyStories')}
+            />
+            <Row
+              icon="slash"
+              label="Blocked people"
+              onPress={() => navigation.navigate('BlockedPeople')}
               last
             />
           </View>
@@ -599,6 +610,8 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
+      <LoaderOverlay visible={loggingOut} message="Logging out…" />
     </View>
   );
 }

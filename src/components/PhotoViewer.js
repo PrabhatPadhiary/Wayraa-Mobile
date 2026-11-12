@@ -70,6 +70,11 @@ export default function PhotoViewer({ visible, photos = [], initialIndex = 0, on
           showsHorizontalScrollIndicator={false}
           initialScrollIndex={Math.min(initialIndex, Math.max(0, photos.length - 1))}
           getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+          // Load the photo on screen and its neighbours only (each photo is a
+          // paid Google request); the rest load as you swipe.
+          initialNumToRender={1}
+          maxToRenderPerBatch={1}
+          windowSize={3}
           onMomentumScrollEnd={(e) => setIndex(Math.round(e.nativeEvent.contentOffset.x / width))}
         />
 

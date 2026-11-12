@@ -7,7 +7,6 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
@@ -19,6 +18,7 @@ import {
   AuthRequiredError,
 } from '../services';
 import { formatDay } from '../utils/tripDates';
+import { showAlert } from './AppDialog';
 
 /** Backend categories, with the website's colors. */
 export const CHECKLIST_CATEGORIES = [
@@ -98,7 +98,7 @@ export default function ChecklistTab({ tripId, canEdit }) {
       setItems((prev) => [...prev, created]);
       if (itemTitle === title) setTitle('');
     } catch (e) {
-      Alert.alert('Could not add item', errorMessage(e));
+      showAlert('Could not add item', errorMessage(e));
     } finally {
       setAdding(false);
     }
@@ -114,14 +114,14 @@ export default function ChecklistTab({ tripId, canEdit }) {
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...updated } : i)));
     } catch (e) {
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, isCompleted: item.isCompleted } : i)));
-      Alert.alert('Could not update item', errorMessage(e));
+      showAlert('Could not update item', errorMessage(e));
     } finally {
       markPending(item.id, false);
     }
   };
 
   const confirmDelete = (item) => {
-    Alert.alert('Delete item?', `"${item.title}" will be removed from the checklist.`, [
+    showAlert('Delete item?', `"${item.title}" will be removed from the checklist.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -132,7 +132,7 @@ export default function ChecklistTab({ tripId, canEdit }) {
             await deleteChecklistItem(tripId, item.id);
             setItems((prev) => prev.filter((i) => i.id !== item.id));
           } catch (e) {
-            Alert.alert('Could not delete item', errorMessage(e));
+            showAlert('Could not delete item', errorMessage(e));
           } finally {
             markPending(item.id, false);
           }

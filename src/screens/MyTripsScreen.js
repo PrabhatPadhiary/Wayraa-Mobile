@@ -7,7 +7,6 @@ import {
   Platform,
   StatusBar,
   Animated,
-  Alert,
   FlatList,
   RefreshControl,
 } from 'react-native';
@@ -22,6 +21,8 @@ import { getMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError }
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { sortTripsForList } from '../utils/tripDates';
 import useAuth from '../hooks/useAuth';
+import { showAlert } from '../components/AppDialog';
+import UnfinishedTripCard from '../components/UnfinishedTripCard';
 
 /**
  * Filter tabs. `match` maps a filter to the backend status values it includes.
@@ -65,6 +66,9 @@ export default function MyTripsScreen({ navigation }) {
   // true = compact list of every trip instead of the photo fan.
   const [showAll, setShowAll] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
+  // "Finish planning" card under the header: its height pushes the list down.
+  const [draftHeight, setDraftHeight] = useState(0);
+  const topInset = headerHeight + (draftHeight ? draftHeight + SIZES.spacing_md : 0);
   const listOpacity = useRef(new Animated.Value(1)).current;
 
   // Change filter with a quick cross-fade of the list content.
@@ -147,16 +151,19 @@ export default function MyTripsScreen({ navigation }) {
     try {
       setEditingTrip(await getTripById(item.id));
     } catch (e) {
-      Alert.alert('Could not open trip', e?.message || 'Please try again.');
+      showAlert('Could not open trip', e?.message || 'Please try again.');
     }
   };
 
   const removeTrip = (item) => confirmDeleteTrip(item.name, async () => {
     try {
       await deleteTrip(item.id);
-      setTrips((prev) => prev.filter((t) => t.id !== item.id));
+      const left = trips.filter((t) => t.id !== item.id);
+      setTrips(left);
+      // That was the only trip: back to Home.
+      if (left.length === 0) navigation.getParent()?.navigate('Explore');
     } catch (e) {
-      Alert.alert('Could not delete trip', e?.message || 'Please try again.');
+      showAlert('Could not delete trip', e?.message || 'Please try again.');
     }
   });
 
@@ -309,7 +316,7 @@ export default function MyTripsScreen({ navigation }) {
         <SignInPrompt
           icon="map-outline"
           title="Plan your next adventure"
-          subtitle="Sign in to create trips and keep your journeys organized."
+          subtitle="Sign in to create trips and keep your journeys organised."
           onSignIn={() => navigation.navigate('Welcome')}
         />
       </SafeAreaView>
@@ -323,15 +330,22 @@ export default function MyTripsScreen({ navigation }) {
     <SafeAreaView style={styles.screen} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
+      {/* A trip you started creating but didn't finish. */}
+      {!needsAuth && headerHeight > 0 && (
+        <View style={[styles.unfinishedWrap, { top: headerHeight + SIZES.spacing_sm }]} pointerEvents="box-none">
+          <UnfinishedTripCard navigation={navigation} onHeight={setDraftHeight} />
+        </View>
+      )}
+
       {loading ? (
         // Offset below the floating header, like the real list.
-        <View style={{ paddingTop: headerHeight + SIZES.spacing_sm }}>
+        <View style={{ paddingTop: topInset + SIZES.spacing_sm }}>
           <TripListSkeleton />
         </View>
       ) : (
         <Animated.View style={[styles.listWrap, { opacity: listOpacity }]}>
           {visibleTrips.length === 0 ? (
-            <View style={[styles.listEmpty, { paddingTop: headerHeight }]}>
+            <View style={[styles.listEmpty, { paddingTop: topInset }]}>
               {renderEmpty()}
             </View>
           ) : (
@@ -349,7 +363,7 @@ export default function MyTripsScreen({ navigation }) {
                   </View>
                 ) : renderTrip(item, { compact: true }))}
                 ItemSeparatorComponent={() => <View style={styles.rowGap} />}
-                contentContainerStyle={[styles.listContent, { paddingTop: headerHeight + SIZES.spacing_sm }]}
+                contentContainerStyle={[styles.listContent, { paddingTop: topInset + SIZES.spacing_sm }]}
                 showsVerticalScrollIndicator={false}
                 onScrollBeginDrag={() => setOpenSwipeId(null)}
                 refreshControl={<RefreshControl {...refreshControlProps} />}
@@ -360,7 +374,7 @@ export default function MyTripsScreen({ navigation }) {
                 key={`${activeFilter}-${fanTrips.length}`}
                 trips={fanTrips}
                 renderCard={(trip) => renderTrip(trip)}
-                topInset={headerHeight + SIZES.spacing_sm}
+                topInset={topInset + SIZES.spacing_sm}
                 bottomInset={120}
                 onScrollBeginDrag={() => setOpenSwipeId(null)}
                 refreshControlProps={refreshControlProps}
@@ -372,7 +386,7 @@ export default function MyTripsScreen({ navigation }) {
 
       {/* Shared floating header panel. List scrolls beneath. */}
       <ScreenHeader
-        title="My Trips"
+        title="My trips"
         subtitle={
           trips.length > 0
             ? `${trips.length} ${trips.length === 1 ? 'adventure' : 'adventures'} planned`
@@ -422,6 +436,12 @@ export default function MyTripsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  unfinishedWrap: {
+    position: 'absolute',
+    left: SIZES.spacing_base,
+    right: SIZES.spacing_base,
+    zIndex: 2,
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.white,

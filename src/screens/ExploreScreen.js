@@ -16,8 +16,8 @@ import {
   Easing,
   ActivityIndicator,
   AppState,
-  Alert,
   Linking,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -44,8 +44,6 @@ import {
   getMyTrips,
   getFavourites,
   useMyPhoto,
-  searchAnyPlace,
-  isRegionResult,
 } from '../services';
 import { NEARBY_CARD_HEIGHT } from '../components/NearbyPlaceCard';
 import { peekPreloaded, takePreloaded } from '../services/homePreload';
@@ -55,12 +53,17 @@ import { pickActiveTrips, daysUntil, dayCount } from '../utils/tripDates';
 import { LinearGradient } from 'expo-linear-gradient';
 import { initialsFor } from '../components/TripStackCard';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
+import { useBottomBar } from '../context/BottomBarContext';
+import UnfinishedTripCard from '../components/UnfinishedTripCard';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.7;
 const CARD_HEIGHT = 320;
 
 const RECENT_SEARCHES_KEY = 'wayraa_recent_searches';
+// Scroll this far in one direction before the tab bar hides / returns.
+const SCROLL_SLOP = 12;
 
 
 const CATEGORIES = [
@@ -168,6 +171,10 @@ export default function ExploreScreen({ route, navigation }) {
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [recentSearches, setRecentSearches] = useState([]);
   const [searchResults, setSearchResults] = useState([]);
+  // The query the current results are for (null while a search is running),
+  // so "No results" only shows once a search has actually come back empty.
+  const [searchedFor, setSearchedFor] = useState(null);
+  const searchSeq = useRef(0);
   // Rows start filled when the startup preload already has them.
   const [nearbyPlaces, setNearbyPlaces] = useState(() => peekPreloaded('nearby')?.places || []);
   const [nearbyLoading, setNearbyLoading] = useState(false);
@@ -232,19 +239,45 @@ export default function ExploreScreen({ route, navigation }) {
     }).start();
   }, [headerCollapsed, headerAnim]);
 
+  // Tab bar: slides away while you scroll down, back as soon as you scroll
+  // up (or near the top). Small jitters under SCROLL_SLOP are ignored.
+  const { setHidden: setTabBarHidden } = useBottomBar();
+  const tabBarHiddenRef = useRef(false);
+  const lastScrollY = useRef(0);
+  const setTabBarHiddenOnce = useCallback((hide) => {
+    if (tabBarHiddenRef.current === hide) return;
+    tabBarHiddenRef.current = hide;
+    setTabBarHidden(hide);
+  }, [setTabBarHidden]);
+
+  // Always bring it back when leaving Home.
+  useFocusEffect(useCallback(() => () => setTabBarHiddenOnce(false), [setTabBarHiddenOnce]));
+
   const handleContentScroll = (e) => {
-    const y = e.nativeEvent.contentOffset.y;
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const y = contentOffset.y;
     // Collapse on scroll down; expand a bit before reaching the top so the
     // header is fully open before the content reaches its natural start position.
     if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
     else if (y <= 55 && headerCollapsed) setHeaderCollapsed(false);
+
+    // Ignore the bounce past the bottom edge (it reads as scrolling up).
+    const maxY = contentSize.height - layoutMeasurement.height;
+    if (y > maxY) return;
+    const dy = y - lastScrollY.current;
+    if (y < 80) {
+      setTabBarHiddenOnce(false);
+      lastScrollY.current = y;
+    } else if (Math.abs(dy) > SCROLL_SLOP) {
+      setTabBarHiddenOnce(dy > 0);
+      lastScrollY.current = y;
+    }
   };
 
   // Detected nearby location label (reverse-geocoded), shown as a chip.
   const [nearbyLabel, setNearbyLabel] = useState(() => peekPreloaded('nearby')?.label || null);
-  // Where "Near you" was looked up, so "Show all" can find that city.
+  // Where "Near you" was looked up (passed on to its See all list).
   const [nearbyCoords, setNearbyCoords] = useState(() => peekPreloaded('nearby')?.loc || null);
-  const [openingNearbyAll, setOpeningNearbyAll] = useState(false);
 
   // Use a location fix for both the "Near you" chip and the nearby places.
   const applyLocation = useCallback(async (loc) => {
@@ -569,14 +602,6 @@ export default function ExploreScreen({ route, navigation }) {
     await applyLocation(location);
   };
 
-  const saveSearch = async (item) => {
-    if (!item?.name) return;
-    const entry = { name: item.name, placeId: item.placeId, secondary: item.secondary || '' };
-    const updated = [entry, ...recentSearches.filter(s => s.placeId !== item.placeId)].slice(0, 8);
-    setRecentSearches(updated);
-    await AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
-  };
-
   const clearRecentSearches = async () => {
     setRecentSearches([]);
     await AsyncStorage.removeItem(RECENT_SEARCHES_KEY);
@@ -587,30 +612,47 @@ export default function ExploreScreen({ route, navigation }) {
   };
 
   const closeSearch = () => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchSeq.current += 1; // ignore a search still on its way
     setIsSearchActive(false);
     setSearchQuery('');
     setSearchResults([]);
+    setSearchedFor(null);
+  };
+
+  // Search now; only the latest search's results are kept.
+  const runSearch = async (query) => {
+    const seq = ++searchSeq.current;
+    setSearchedFor(null);
+    const results = await searchPlaces(query);
+    if (seq !== searchSeq.current) return;
+    setSearchResults(results);
+    setSearchedFor(query);
   };
 
   const handleSearch = (text) => {
     setSearchQuery(text);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     if (text.trim().length > 1) {
       // Debounced real-time search via Google Places
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      searchTimeoutRef.current = setTimeout(async () => {
-        const results = await searchPlaces(text.trim());
-        setSearchResults(results);
-      }, 300);
+      setSearchedFor(null);
+      searchTimeoutRef.current = setTimeout(() => runSearch(text.trim()), 300);
     } else {
+      searchSeq.current += 1;
       setSearchResults([]);
+      setSearchedFor(null);
     }
   };
 
+  // The keyboard's Search button: stay on the search screen. Search right
+  // away (no waiting for the typing pause) and put the keyboard away, so the
+  // results, or "No results", are in view.
   const handleSearchSubmit = () => {
-    if (searchQuery.trim()) {
-      saveSearch({ name: searchQuery.trim(), placeId: null, secondary: '' });
-      closeSearch();
-    }
+    const query = searchQuery.trim();
+    Keyboard.dismiss();
+    if (query.length < 2) return;
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (searchedFor !== query) runSearch(query);
   };
 
   // Persist a tapped place into recent searches (fire-and-forget). Its photo
@@ -633,31 +675,13 @@ export default function ExploreScreen({ route, navigation }) {
     });
   };
 
-  // "Show all" on Near You: open your city's page (things to do, food,
-  // stays, search), found from the detected city name near your location.
-  const openNearbyAll = async () => {
-    if (openingNearbyAll) return;
-    if (!nearbyLabel) {
-      Alert.alert('Couldn\'t find your city', 'Search for it at the top instead.');
-      return;
-    }
-    setOpeningNearbyAll(true);
-    try {
-      const near = nearbyCoords ? { ...nearbyCoords, radius: 50000 } : null;
-      const results = await searchAnyPlace(nearbyLabel, { regionsOnly: true, near });
-      const match = results.find(isRegionResult) || results[0];
-      if (!match?.placeId) {
-        Alert.alert('Couldn\'t open ' + nearbyLabel, 'Search for it at the top instead.');
-        return;
-      }
-      openDestination({
-        placeId: match.placeId,
-        name: match.name || nearbyLabel,
-        secondary: match.secondary || '',
-      });
-    } finally {
-      setOpeningNearbyAll(false);
-    }
+  // "See all" on Near You: the full list of places around you.
+  const openNearbyAll = () => {
+    navigation.navigate('NearbyPlaces', {
+      coords: nearbyCoords,
+      label: nearbyLabel,
+      places: nearbyPlaces,
+    });
   };
 
   const handleResultTap = (item) => {
@@ -732,7 +756,7 @@ export default function ExploreScreen({ route, navigation }) {
   };
 
   const renderJournalCard = ({ item }) => {
-    const coverPhoto = item.photos && item.photos.length > 0 ? item.photos[0].url : null;
+    const coverPhoto = cloudinarySized(item.photos?.[0]?.url || null, IMAGE_WIDTH.COVER);
     return (
       <TouchableOpacity
         style={styles.journalCard}
@@ -867,10 +891,19 @@ export default function ExploreScreen({ route, navigation }) {
                 </>
               )}
 
-              {/* No Results */}
-              {searchQuery.length > 1 && searchResults.length === 0 && (
+              {/* Searching… / No results (only after a search came back empty) */}
+              {searchQuery.trim().length > 1 && searchResults.length === 0 && searchedFor === null && (
                 <View style={styles.noResults}>
-                  <Text style={styles.noResultsText}>No destinations found for "{searchQuery}"</Text>
+                  <ActivityIndicator size="small" color={COLORS.accent} />
+                </View>
+              )}
+              {searchQuery.trim().length > 1 && searchResults.length === 0 && searchedFor === searchQuery.trim() && (
+                <View style={styles.noResults}>
+                  <Ionicons name="search-outline" size={36} color={COLORS.textMuted} />
+                  <Text style={styles.noResultsTitle}>No results found</Text>
+                  <Text style={styles.noResultsText}>
+                    Nothing matches "{searchQuery.trim()}". Check the spelling or try a city, region or country.
+                  </Text>
                 </View>
               )}
             </ScrollView>
@@ -885,9 +918,12 @@ export default function ExploreScreen({ route, navigation }) {
         onScroll={handleContentScroll}
         scrollEventThrottle={16}
       >
+        {/* A trip you started creating but didn't finish: first thing on Home. */}
+        {isAuthenticated && <UnfinishedTripCard navigation={navigation} style={styles.unfinishedTrip} />}
+
         {/* Popular Destinations */}
         <View style={[styles.section, styles.sectionFirst]}>
-          <Text style={styles.sectionTitle}>Popular Destinations</Text>
+          <Text style={styles.sectionTitle}>Popular destinations</Text>
           <FlatList
             data={POPULAR_DESTINATIONS}
             renderItem={renderPlaceCard}
@@ -924,7 +960,7 @@ export default function ExploreScreen({ route, navigation }) {
                       onPress={openNearbyAll}
                       activeOpacity={0.9}
                       accessibilityRole="button"
-                      accessibilityLabel={`See all places${nearbyLabel ? ` in ${nearbyLabel}` : ' near you'}`}
+                      accessibilityLabel="See all places near you"
                     >
                       <View style={styles.showAllMosaic}>
                         {mosaic.map((uri, i) => (
@@ -937,13 +973,11 @@ export default function ExploreScreen({ route, navigation }) {
                       />
                       <View style={styles.showAllBody}>
                         <View style={styles.showAllArrow}>
-                          {openingNearbyAll
-                            ? <ActivityIndicator size="small" color={COLORS.primary} />
-                            : <Ionicons name="arrow-forward" size={20} color={COLORS.primary} />}
+                          <Ionicons name="arrow-forward" size={20} color={COLORS.primary} />
                         </View>
                         <Text style={styles.showAllText}>See all</Text>
                         <Text style={styles.showAllSub} numberOfLines={2}>
-                          {nearbyLabel ? `Things to do in ${nearbyLabel}` : 'More places near you'}
+                          {nearbyLabel ? `Places around ${nearbyLabel}` : 'More places near you'}
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -1014,13 +1048,13 @@ export default function ExploreScreen({ route, navigation }) {
             loading by the time the user scrolls to it. */}
         {isAuthenticated && !tripsLoaded && activeTrips.length === 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Trips</Text>
+            <Text style={styles.sectionTitle}>Your trips</Text>
             <NextTripCardSkeleton />
           </View>
         )}
         {activeTrips.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Trips</Text>
+            <Text style={styles.sectionTitle}>Your trips</Text>
             <NextTripCarousel
               trips={activeTrips}
               getImageUri={(trip) =>
@@ -1036,7 +1070,7 @@ export default function ExploreScreen({ route, navigation }) {
         {recentSearches.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionHeaderTitle}>Recently Explored</Text>
+              <Text style={styles.sectionHeaderTitle}>Recently explored</Text>
               <TouchableOpacity
                 onPress={clearRecentSearches}
                 accessibilityRole="button"
@@ -1078,7 +1112,7 @@ export default function ExploreScreen({ route, navigation }) {
         {isAuthenticated && !favsLoaded && favourites.length === 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionHeaderTitle}>From Your Favourites</Text>
+              <Text style={styles.sectionHeaderTitle}>From your favourites</Text>
             </View>
             <TileRowSkeleton label="Loading your favourites" />
           </View>
@@ -1086,7 +1120,7 @@ export default function ExploreScreen({ route, navigation }) {
         {favourites.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionHeaderTitle}>From Your Favourites</Text>
+              <Text style={styles.sectionHeaderTitle}>From your favourites</Text>
               <TouchableOpacity
                 onPress={() => navigation.getParent()?.navigate('Favorites')}
                 accessibilityRole="button"
@@ -1118,7 +1152,7 @@ export default function ExploreScreen({ route, navigation }) {
         {/* From the Community */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionHeaderTitle}>From the Community</Text>
+            <Text style={styles.sectionHeaderTitle}>From the community</Text>
             <TouchableOpacity
               onPress={() => navigation.navigate('Community', { screen: 'CommunityHome' })}
               accessibilityRole="button"
@@ -1528,15 +1562,28 @@ const styles = StyleSheet.create({
   },
   noResults: {
     paddingVertical: SIZES.spacing_xl,
+    paddingHorizontal: SIZES.spacing_lg,
     alignItems: 'center',
+    gap: SIZES.spacing_xs,
+  },
+  noResultsTitle: {
+    marginTop: SIZES.spacing_sm,
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
   },
   noResultsText: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textMuted,
+    textAlign: 'center',
   },
 
   // Sections
+  unfinishedTrip: {
+    marginHorizontal: SIZES.spacing_lg,
+    marginTop: SIZES.spacing_md,
+  },
   section: {
     marginTop: SIZES.spacing_lg,
   },

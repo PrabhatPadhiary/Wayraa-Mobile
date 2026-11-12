@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
   Animated,
   Easing,
 } from 'react-native';
@@ -27,7 +26,9 @@ import {
 } from '../services/storyUpload';
 import { COLORS, SIZES } from '../constants';
 import { ScreenHeader, FilterChips, Skeleton, JournalCard } from '../components';
-import { getJournalFeed, toggleJournalLike, vibeLabel, AuthRequiredError } from '../services';
+import { getJournalFeed, peekJournalFeed, toggleJournalLike, vibeLabel, AuthRequiredError, getStoredUser } from '../services';
+import { openStoryMenu, isMyStory } from '../utils/storyActions';
+import { showAlert } from '../components/AppDialog';
 
 const SORTS = [
   { key: 'recent', label: 'Recent' },
@@ -49,8 +50,9 @@ function byPopularity(a, b) {
  * the card; tapping a card opens the full story.
  */
 export default function CommunityScreen({ navigation }) {
-  const [journals, setJournals] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Open with the feed Home already loaded (if any), then refresh quietly.
+  const [journals, setJournals] = useState(() => peekJournalFeed() || []);
+  const [loading, setLoading] = useState(() => !peekJournalFeed());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [sort, setSort] = useState('recent');
@@ -77,6 +79,25 @@ export default function CommunityScreen({ navigation }) {
   const likeBusy = useRef(new Set());
   // Long-press preview: id of the journal shown in the bottom sheet.
   const [previewId, setPreviewId] = useState(null);
+
+  // Who you are, to tell your own stories apart (their ⋯ has edit / delete).
+  const [myUserId, setMyUserId] = useState(null);
+  useEffect(() => {
+    getStoredUser().then((u) => setMyUserId(u?.id || null)).catch(() => {});
+  }, []);
+  const openMenu = (item) => openStoryMenu({
+    journal: item,
+    isMine: isMyStory(item, myUserId),
+    signedIn: !!myUserId,
+    navigation,
+    onRemoved: () => setJournals((prev) => prev.filter((x) => x.id !== item.id)),
+    onBlocked: (userId) => setJournals((prev) => prev.filter((x) => x.author?.id !== userId)),
+    // Hidden stories leave the feed (it only shows public ones).
+    onChanged: (j) => setJournals((prev) => (j.visibility === 'private'
+      ? prev.filter((x) => x.id !== j.id)
+      : prev.map((x) => (x.id === j.id ? { ...x, ...j } : x)))),
+    onDeleted: () => setJournals((prev) => prev.filter((x) => x.id !== item.id)),
+  });
   const listRef = useRef(null);
   const { isAuthenticated } = useAuth();
 
@@ -84,7 +105,7 @@ export default function CommunityScreen({ navigation }) {
   // Open the story composer (signed-in only).
   const startStory = () => {
     if (!isAuthenticated) {
-      Alert.alert('Sign in to share', 'Create an account or sign in to post your trip stories.', [
+      showAlert('Sign in to share', 'Create an account or sign in to post your trip stories.', [
         { text: 'Not now', style: 'cancel' },
         { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
       ]);
@@ -161,7 +182,7 @@ export default function CommunityScreen({ navigation }) {
     } catch (e) {
       setJournals((prev) => prev.map(flip)); // undo
       if (e instanceof AuthRequiredError) {
-        Alert.alert('Sign in to like stories', 'Create an account or sign in to like and comment.', [
+        showAlert('Sign in to like stories', 'Create an account or sign in to like and comment.', [
           { text: 'Not now', style: 'cancel' },
           { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
         ]);
@@ -300,6 +321,7 @@ export default function CommunityScreen({ navigation }) {
             onToggleLike={() => handleLike(item)}
             onDoubleTapLike={() => { if (!item.isLiked) handleLike(item); }}
             onLongPress={() => setPreviewId(item.id)}
+            onMore={() => openMenu(item)}
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.gap} />}

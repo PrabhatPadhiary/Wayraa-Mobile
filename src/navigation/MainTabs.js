@@ -11,12 +11,14 @@ import {
   DestinationDetailScreen,
   CategoryResultsScreen,
   PlaceDetailScreen,
-  CreateTripScreen,
   TripDetailScreen,
   JoinTripScreen,
   ProfileScreen,
   JournalDetailScreen,
   DestinationPlacesScreen,
+  NearbyPlacesScreen,
+  MyStoriesScreen,
+  BlockedPeopleScreen,
 } from '../screens';
 
 const Tab = createBottomTabNavigator();
@@ -38,12 +40,17 @@ function ExploreStack({ route }) {
       {/* All places / search inside a destination. */}
       <Stack.Screen name="DestinationPlaces" component={DestinationPlacesScreen} />
       <Stack.Screen name="CategoryResults" component={CategoryResultsScreen} />
+      {/* Home's "Near you" → See all. */}
+      <Stack.Screen name="NearbyPlaces" component={NearbyPlacesScreen} />
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
-      <Stack.Screen name="CreateTrip" component={CreateTripScreen} />
       {/* Opened from the avatar on Home. */}
       <Stack.Screen name="Profile" component={ProfileScreen} />
+      {/* Your stories (from Profile): everything you've shared, hidden ones too. */}
+      <Stack.Screen name="MyStories" component={MyStoriesScreen} />
+      {/* Blocked people (from Profile): unblock. */}
+      <Stack.Screen name="BlockedPeople" component={BlockedPeopleScreen} />
     </Stack.Navigator>
   );
 }

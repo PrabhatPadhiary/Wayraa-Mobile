@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
+import RatingRow from './RatingRow';
 
 // Brand-toned gradients (navy, blue, orange, teal, sand) used when a place has
 // no photo (or it fails to load), so a missing image still looks intentional.
@@ -30,10 +31,11 @@ export function fallbackGradientFor(name) {
  * @param {string} title
  * @param {string} [subtitle]
  * @param {string|null} [imageUri]  falls back to a gradient + initial
- * @param {number|null} [rating]    shows a star pill when > 0
+ * @param {number|null} [rating]    shows a rating pill when > 0
+ * @param {number} [reviews]        review count for the pill
  * @param {() => void} onPress
  */
-export default function PlaceTile({ title, subtitle, imageUri, rating, onPress }) {
+export default function PlaceTile({ title, subtitle, imageUri, rating, reviews, onPress }) {
   const [failed, setFailed] = useState(false);
 
   // A new image (e.g. a fresher photo arriving) gets another chance to load.
@@ -74,8 +76,7 @@ export default function PlaceTile({ title, subtitle, imageUri, rating, onPress }
 
       {rating > 0 && (
         <View style={styles.ratingPill}>
-          <Ionicons name="star" size={11} color="#FFC107" />
-          <Text style={styles.ratingText}>{rating}</Text>
+          <RatingRow rating={rating} reviews={reviews} tone="light" size={SIZES.xs + 1} />
         </View>
       )}
 

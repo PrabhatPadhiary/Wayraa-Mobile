@@ -5,10 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   StatusBar,
-  Image,
   FlatList,
   ScrollView,
-  Alert,
   Animated,
   Easing,
 } from 'react-native';
@@ -16,7 +14,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import RatingRow from '../components/RatingRow';
+import PlaceGridCard, { CardCornerButton } from '../components/PlaceGridCard';
 import { FilterChips, GridSkeleton } from '../components';
 import FilterSheet from '../components/FilterSheet';
 import PickToggle from '../components/PickToggle';
@@ -34,7 +32,8 @@ import {
   placeCoords,
   AuthRequiredError,
 } from '../services';
-import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
+import { showAlert } from '../components/AppDialog';
 
 
 /**
@@ -120,8 +119,15 @@ export default function DestinationDetailScreen({ navigation, route }) {
     pickForTrip: pickForTrip
       ? { ...pickForTrip, saved: Array.from(pickedMap.entries()) }
       : undefined,
+    createTrip: pickForTrip ? undefined : createTripParams(),
   });
   const openSeeAll = () => navigation.navigate('DestinationPlaces', {
+    createTrip: pickForTrip ? undefined : createTripParams(),
+    // While adding to a trip, See all adds to the same stop (with its ticks
+    // and the "Done · N added" button).
+    pickForTrip: pickForTrip
+      ? { ...pickForTrip, saved: Array.from(pickedMap.entries()) }
+      : undefined,
     placeId,
     destinationName,
     mode: 'browse',
@@ -234,19 +240,26 @@ export default function DestinationDetailScreen({ navigation, route }) {
   }, [activeCategory, placeId]);
 
   // Drive the shared persistent tab bar (collapse + CTA) via context.
-  const { setCollapsed, setCta, reset } = useBottomBar();
+  const { claimBar, releaseBar } = useBottomBar();
+  const barOwner = route?.key;
 
-  const handleCreateTrip = useCallback(() => {
+  // Starting a trip to this place (also passed on to "See all" / search, which
+  // keep the same "Create a trip" button in the bottom bar).
+  const createTripParams = () => {
     // The backend sends { latitude, longitude }; placeCoords reads either shape.
     const location = placeCoords(details);
-    navigation.navigate('CreateTrip', {
+    return {
       placeId,
       name: name || details?.name,
       secondary: secondary || details?.formattedAddress,
       photoUrl: details?.photoUrl,
       lat: location?.lat,
       lng: location?.lng,
-    });
+    };
+  };
+  const handleCreateTrip = useCallback(() => {
+    navigation.navigate('CreateTrip', createTripParams());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigation, placeId, name, secondary, details]);
 
   // While focused, the shared tab bar stays collapsed (Home circle) with a
@@ -256,11 +269,12 @@ export default function DestinationDetailScreen({ navigation, route }) {
   useFocusEffect(
     useCallback(() => {
       if (!pickForTrip) {
-        setCollapsed(true);
-        setCta({ label: 'Create a trip', icon: 'add-circle-outline', onPress: handleCreateTrip });
+        claimBar(barOwner, { cta: { label: 'Create a trip', icon: 'add-circle-outline', onPress: handleCreateTrip } });
       }
-      return () => reset();
-    }, [setCta, setCollapsed, reset, handleCreateTrip, pickForTrip])
+      // Only clears the bar if this page still owns it (not if "See all" or
+      // search has already set it up).
+      return () => releaseBar(barOwner);
+    }, [claimBar, releaseBar, barOwner, handleCreateTrip, pickForTrip])
   );
 
   // ── Trip picking (only when opened with `pickForTrip`) ─────────────────────
@@ -324,7 +338,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
       const message = e instanceof AuthRequiredError
         ? 'Sign in to edit your trips.'
         : (e?.message || 'Something went wrong. Please try again.');
-      Alert.alert('Could not update trip', message);
+      showAlert('Could not update trip', message);
     } finally {
       setPickPending((prev) => {
         const next = new Set(prev);
@@ -337,16 +351,19 @@ export default function DestinationDetailScreen({ navigation, route }) {
   // "Add (N)": N is every place saved to this destination across the
   // Stays, Food and Activities tabs, including ones added earlier.
   const pickedCount = pickedMap.size;
+  // "Done · 3 added": this visit's changes only (not everything on the stop).
+  const doneLabel = pickDoneLabel(pickedMap, pickForTrip?.initial);
   useEffect(() => {
     if (!pickForTrip || !isFocused) return;
-    // While picking, the bar stays collapsed (Home circle + "Add (N)") at all times.
-    setCollapsed(true);
-    setCta({
-      label: pickedCount > 0 ? `Add (${pickedCount})` : 'Done',
-      icon: 'checkmark-circle',
-      onPress: () => navigation.goBack(),
+    // While picking, the bar stays collapsed (Home circle + "Done · N added") at all times.
+    claimBar(barOwner, {
+      cta: {
+        label: doneLabel,
+        icon: 'checkmark-circle',
+        onPress: () => navigation.goBack(),
+      },
     });
-  }, [pickForTrip, isFocused, pickedCount, setCta, setCollapsed, navigation]);
+  }, [pickForTrip, isFocused, doneLabel, claimBar, barOwner, navigation]);
 
 
   // Favourites: set of placeIds currently favourited, plus a per-place pending
@@ -431,29 +448,22 @@ export default function DestinationDetailScreen({ navigation, route }) {
     const isPicked = pickedMap.has(item.placeId);
     const isPickPending = pickPending.has(item.placeId);
     return (
-    <TouchableOpacity
-      style={styles.card}
-      activeOpacity={0.92}
-      onPress={() => navigation.navigate('PlaceDetail', {
-        placeId: item.placeId,
-        name: item.name,
-        vicinity: item.vicinity,
-        photoUrl: item.photoUrl,
-        rating: item.rating,
-        category: activeCategory,
-        pickForTrip,
-      })}
-    >
-      <View style={styles.cardImageWrap}>
-        {item.photoUrl ? (
-          <Image source={{ uri: item.photoUrl }} style={styles.cardImage} />
-        ) : (
-          <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
-            <Ionicons name="image-outline" size={26} color={COLORS.textMuted} />
-          </View>
-        )}
-
-        {pickForTrip ? (
+      <PlaceGridCard
+        name={item.name}
+        photoUrl={item.photoUrl}
+        rating={item.rating}
+        reviews={item.userRatingsTotal}
+        subtitle={item.vicinity}
+        onPress={() => navigation.navigate('PlaceDetail', {
+          placeId: item.placeId,
+          name: item.name,
+          vicinity: item.vicinity,
+          photoUrl: item.photoUrl,
+          rating: item.rating,
+          category: activeCategory,
+          pickForTrip,
+        })}
+        corner={pickForTrip ? (
           /* Picking for a trip: add / saved toggle */
           <PickToggle
             picked={isPicked}
@@ -462,30 +472,14 @@ export default function DestinationDetailScreen({ navigation, route }) {
             label={isPicked ? `Remove ${item.name} from ${pickForTrip.tripName}` : `Add ${item.name} to ${pickForTrip.tripName}`}
           />
         ) : (
-          /* Favourite heart */
-          <TouchableOpacity
-            style={styles.heartButton}
+          <CardCornerButton
+            icon={isFaved ? 'heart' : 'heart-outline'}
+            color={isFaved ? COLORS.accent : COLORS.textPrimary}
             onPress={() => toggleFavourite(item)}
-            activeOpacity={0.8}
             accessibilityLabel={isFaved ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <Ionicons
-              name={isFaved ? 'heart' : 'heart-outline'}
-              size={18}
-              color={isFaved ? COLORS.accent : COLORS.textPrimary}
-            />
-          </TouchableOpacity>
+          />
         )}
-      </View>
-      <View style={styles.cardContent}>
-        <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
-        <RatingRow rating={item.rating} reviews={item.userRatingsTotal} style={styles.cardRating} />
-        {!!item.vicinity && (
-          <Text style={styles.cardVicinity} numberOfLines={2}>{item.vicinity}</Text>
-        )}
-      </View>
-    </TouchableOpacity>
+      />
     );
   };
 
@@ -585,31 +579,26 @@ export default function DestinationDetailScreen({ navigation, route }) {
             <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
           </TouchableOpacity>
 
-          {/* Create a trip here (also in the bottom bar). Hidden while picking
-              places for an existing trip. */}
-          {/* Collapsed, the "+" gives way to Filters ("Create a trip" stays in the
-              bottom bar). */}
+          {/* Create a trip here: always at the top right (also in the bottom
+              bar). Hidden while picking places for an existing trip. */}
           {!pickForTrip && (
-            <Animated.View
-              style={[styles.titleRight, { opacity: collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}
-              pointerEvents={headerCollapsed ? 'none' : 'auto'}
-            >
+            <View style={styles.titleRight}>
               <TouchableOpacity
                 style={styles.createTripButton}
                 onPress={handleCreateTrip}
                 accessibilityRole="button"
                 accessibilityLabel={`Create a trip to ${name || details?.name || 'this place'}`}
-                accessibilityElementsHidden={headerCollapsed}
-                importantForAccessibility={headerCollapsed ? 'no-hide-descendants' : 'auto'}
                 activeOpacity={0.85}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Ionicons name="add" size={24} color={COLORS.white} />
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           )}
+          {/* Collapsed: Filters appears beside the "+" (or in its place while
+              picking). */}
           <Animated.View
-            style={[styles.titleRight, { opacity: collapseAnim }]}
+            style={[pickForTrip ? styles.titleRight : styles.titleRightSecond, { opacity: collapseAnim }]}
             pointerEvents={headerCollapsed ? 'auto' : 'none'}
             accessibilityElementsHidden={!headerCollapsed}
             importantForAccessibility={headerCollapsed ? 'auto' : 'no-hide-descendants'}
@@ -617,7 +606,8 @@ export default function DestinationDetailScreen({ navigation, route }) {
             {renderFiltersButton(38)}
           </Animated.View>
 
-          {/* Search icon: appears once the search bar folds away. */}
+          {/* Search icon: appears once the search bar folds away, beside the
+              back button (two buttons each side keeps the title centred). */}
           <Animated.View
             style={[styles.searchIconWrap, { opacity: collapseAnim }]}
             pointerEvents={headerCollapsed ? 'auto' : 'none'}
@@ -751,7 +741,7 @@ const styles = StyleSheet.create({
   },
   searchIconWrap: {
     position: 'absolute',
-    right: 38 + SIZES.spacing_sm,
+    left: 38 + SIZES.spacing_sm,
     zIndex: 1,
   },
   searchIconButton: {
@@ -762,10 +752,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: COLORS.cardBackground,
   },
-  // Right end of the title row: "+" (open) or Filters (collapsed / picking).
+  // Right end of the title row: "+" (always), Filters beside it when collapsed.
   titleRight: {
     position: 'absolute',
     right: 0,
+    zIndex: 1,
+  },
+  titleRightSecond: {
+    position: 'absolute',
+    right: 38 + SIZES.spacing_sm,
     zIndex: 1,
   },
   createTripButton: {
@@ -875,62 +870,6 @@ const styles = StyleSheet.create({
     gap: SIZES.spacing_base,
   },
 
-  // Result card
-  card: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    marginBottom: SIZES.spacing_base,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-    overflow: 'hidden',
-  },
-  cardImageWrap: {
-    position: 'relative',
-  },
-  cardImage: {
-    width: '100%',
-    height: 120,
-  },
-  cardImagePlaceholder: {
-    backgroundColor: COLORS.cardBackground,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  // Add-to-trip toggle (add / added).
-  heartButton: {
-    position: 'absolute',
-    top: SIZES.spacing_sm,
-    right: SIZES.spacing_sm,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardContent: {
-    padding: SIZES.spacing_md,
-  },
-  cardName: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  cardRating: {
-    marginTop: 4,
-  },
-  cardVicinity: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
 
   // States
   stateContainer: {

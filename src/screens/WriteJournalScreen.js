@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,10 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
-  Alert,
   StatusBar,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -26,9 +26,16 @@ import {
   placeCoords,
   searchAnyPlace,
   reverseGeocode,
+  getJournal,
+  updateJournal,
+  uploadJournalPhoto,
+  deleteJournalPhoto,
+  reorderJournalPhotos,
 } from '../services';
 import PlaceSearchField from '../components/PlaceSearchField';
-import { startStoryUpload, isStoryUploading } from '../services/storyUpload';
+import { startStoryUpload, isStoryUploading, prepareForUpload } from '../services/storyUpload';
+import { showAlert } from '../components/AppDialog';
+import WayraaLoader, { LoaderOverlay } from '../components/WayraaLoader';
 
 const MAX_PHOTOS = 10;
 const MAX_PLACES = 20;
@@ -67,6 +74,11 @@ function countryOf(secondary) {
  * Sharing hands the post to the background uploader (services/storyUpload)
  * and goes straight back to the Community feed, which shows a progress card
  * until it's live — like Instagram. Opens over the tabs, sliding up.
+ *
+ * Editing (route param editJournalId): the same screen filled in from the
+ * story. "Save" updates it in place, here: text, places, vibes and who can
+ * see it in one go; removed photos are deleted, new ones uploaded, and the
+ * photo order (cover first) set to match.
  */
 /** A place page's category (stays / food / activities) as a journal category. */
 function categoryFromPlacePage(category) {
@@ -86,8 +98,12 @@ function cityFromAddress(address) {
 
 export default function WriteJournalScreen({ navigation, route }) {
   const prefillPlace = route?.params?.prefillPlace || null;
+  const editId = route?.params?.editJournalId || null;
+  const isEdit = !!editId;
   const insets = useSafeAreaInsets();
-  const [photos, setPhotos] = useState([]); // picker assets, in picked order
+  // Picker assets, in picked order. When editing, the story's own photos come
+  // first as { uri, existingId }.
+  const [photos, setPhotos] = useState([]);
   const [coverIndex, setCoverIndex] = useState(0);
 
   const [title, setTitle] = useState('');
@@ -107,6 +123,63 @@ export default function WriteJournalScreen({ navigation, route }) {
   const [visibility, setVisibility] = useState('public');
 
   const [error, setError] = useState('');
+
+  // Editing: the story as loaded, its trip (kept unless you pick another or
+  // clear it) and what the form looked like, to know if anything changed.
+  const [original, setOriginal] = useState(null);
+  const [keptTrip, setKeptTrip] = useState(null);
+  const [editLoading, setEditLoading] = useState(isEdit);
+  const [saving, setSaving] = useState(false);
+  const startSnapshot = useRef(null);
+
+  // Editing: fill the form from the story.
+  useEffect(() => {
+    if (!editId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const j = await getJournal(editId);
+        if (cancelled) return;
+        setOriginal(j);
+        setPhotos((j.photos || []).map((p) => ({ uri: p.url, existingId: p.id })));
+        setCoverIndex(0);
+        setTitle(j.title || '');
+        setStory(j.body || '');
+        setDestination(j.destination || '');
+        if (j.destination) {
+          setWhere({ kind: j.tripId ? 'trip' : 'region', name: j.destination, secondary: j.tripId ? 'From your trip' : '' });
+        }
+        if (j.tripId) setKeptTrip({ id: j.tripId });
+        setPlaces((j.places || []).map((p) => ({
+          placeName: p.placeName,
+          googlePlaceId: p.googlePlaceId,
+          category: p.category || 'other',
+        })));
+        setVibes(j.vibes || []);
+        setTips(j.proTips || '');
+        setBudget(j.budget ? String(j.budget) : '');
+        setVisibility(j.visibility || 'public');
+        // Keep "Places you went" searching around the destination.
+        if (j.destination) {
+          const matches = await searchAnyPlace(j.destination, { regionsOnly: true });
+          const m = matches[0];
+          const radius = m && searchRadiusFor(m.types);
+          if (m && radius && !cancelled) {
+            const coords = placeCoords(await getPlaceDetails(m.placeId));
+            if (coords && !cancelled) setArea({ name: m.name, ...coords, radius });
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          showAlert('Couldn\'t open this story', e?.message || 'Please try again.');
+          navigation.goBack();
+        }
+      } finally {
+        if (!cancelled) setEditLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editId]); // eslint-disable-line
 
   // Your trips, for one-tap "where was it".
   useEffect(() => {
@@ -146,12 +219,12 @@ export default function WriteJournalScreen({ navigation, route }) {
   async function pickPhotos() {
     const room = MAX_PHOTOS - photos.length;
     if (room <= 0) {
-      Alert.alert('That\'s the limit', `A story can have up to ${MAX_PHOTOS} photos.`);
+      showAlert('That\'s the limit', `A story can have up to ${MAX_PHOTOS} photos.`);
       return;
     }
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Photos access needed', 'Allow access to your photos in Settings to add them to your story.');
+      showAlert('Photos access needed', 'Allow access to your photos in Settings to add them to your story.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -184,6 +257,7 @@ export default function WriteJournalScreen({ navigation, route }) {
     if (trip) setPlaces((prev) => prev.filter((p) => !p.fromTrip));
     setWhere(null);
     setTrip(null);
+    setKeptTrip(null);
     setArea(null);
     setDestination('');
   };
@@ -193,6 +267,7 @@ export default function WriteJournalScreen({ navigation, route }) {
   const pickWhere = async (r) => {
     if (trip) setPlaces((prev) => prev.filter((p) => !p.fromTrip));
     setTrip(null);
+    setKeptTrip(null);
     const country = countryOf(r.secondary);
     setWhere({ kind: 'region', name: r.name, secondary: r.secondary });
     setDestination(country && country !== r.name ? `${r.name}, ${country}` : r.name);
@@ -211,6 +286,7 @@ export default function WriteJournalScreen({ navigation, route }) {
     }
     setPlaces((prev) => prev.filter((p) => !p.fromTrip));
     setArea(null);
+    setKeptTrip(null);
     setTrip(t);
     setWhere({ kind: 'trip', name: t.primaryDestination || t.name, secondary: `From your trip · ${t.name}` });
     setDestination(t.primaryDestination || t.name || '');
@@ -244,27 +320,110 @@ export default function WriteJournalScreen({ navigation, route }) {
     setVibes((prev) => (prev.includes(v) ? prev.filter((x) => x !== v) : [...prev, v]));
   };
 
+  // What the form holds, to tell whether an edit changed anything.
+  const snapshot = () => JSON.stringify([
+    photos.map((p) => p.existingId || p.uri), coverIndex, title, story, destination,
+    trip?.id || keptTrip?.id || null, places.map((p) => p.googlePlaceId || p.placeName),
+    vibes, tips, budget, visibility,
+  ]);
+  useEffect(() => {
+    if (isEdit && !editLoading && startSnapshot.current === null) startSnapshot.current = snapshot();
+  }); // eslint-disable-line
+
   const close = () => {
-    const dirty = photos.length || title.trim() || story.trim();
+    const dirty = isEdit
+      ? startSnapshot.current !== null && snapshot() !== startSnapshot.current
+      : photos.length || title.trim() || story.trim();
     if (!dirty) {
       navigation.goBack();
       return;
     }
-    Alert.alert('Discard this story?', 'Your photos and text won\'t be saved.', [
-      { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => navigation.goBack() },
-    ]);
+    showAlert(
+      isEdit ? 'Discard your changes?' : 'Discard this story?',
+      isEdit ? 'The story stays as it was.' : 'Your photos and text won\'t be saved.',
+      [
+        { text: 'Keep editing', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => navigation.goBack() },
+      ],
+    );
   };
 
   const missing = !title.trim() ? 'a title' : !story.trim() ? 'your story' : !destination.trim() ? 'where it was' : null;
 
+  // Editing: save the changes to the story, then back to it.
+  const saveEdit = async () => {
+    if (missing) {
+      setError(`Add ${missing} to save.`);
+      return;
+    }
+    if (saving || !original) return;
+    setSaving(true);
+    setError('');
+    try {
+      const amount = parseFloat(budget.replace(/[^\d.]/g, ''));
+      const hasBudget = Number.isFinite(amount) && amount > 0;
+      const changes = {
+        title: title.trim(),
+        body: story.trim(),
+        destination: destination.trim(),
+        proTips: tips.trim(), // '' clears it
+        vibes,
+        visibility,
+        places: places.map((p) => ({ placeName: p.placeName, category: p.category, googlePlaceId: p.googlePlaceId || null })),
+        ...(hasBudget ? { budget: amount, currency: original.currency || trip?.currency || '₹' } : {}),
+      };
+      if (trip) {
+        Object.assign(changes, {
+          tripId: trip.id,
+          startDate: trip.startDate || undefined,
+          endDate: trip.endDate || undefined,
+          travelersCount: trip.travelersCount || undefined,
+        });
+      } else if (!keptTrip && original.tripId) {
+        changes.tripId = '00000000-0000-0000-0000-000000000000'; // no longer linked to a trip
+      }
+      await updateJournal(original.id, changes);
+
+      // Photos: delete the ones taken out, upload the new ones, then put them
+      // in order with the cover first.
+      const kept = new Set(photos.filter((p) => p.existingId).map((p) => p.existingId));
+      for (const p of original.photos || []) {
+        if (!kept.has(p.id)) await deleteJournalPhoto(original.id, p.id);
+      }
+      const ordered = [photos[coverIndex], ...photos.filter((_, i) => i !== coverIndex)].filter(Boolean);
+      const ids = [];
+      for (let i = 0; i < ordered.length; i += 1) {
+        const p = ordered[i];
+        if (p.existingId) {
+          ids.push(p.existingId);
+        } else {
+          const uploaded = await uploadJournalPhoto(original.id, await prepareForUpload(p), i);
+          const id = Array.isArray(uploaded) ? uploaded[0]?.id : uploaded?.id;
+          if (id) ids.push(id);
+        }
+      }
+      const before = (original.photos || []).map((p) => p.id).filter((id) => kept.has(id));
+      if (ids.length && JSON.stringify(ids) !== JSON.stringify(before)) {
+        await reorderJournalPhotos(original.id, ids);
+      }
+      navigation.goBack();
+    } catch (e) {
+      setSaving(false);
+      showAlert('Couldn\'t save your changes', e?.message || 'Please try again.');
+    }
+  };
+
   const share = () => {
+    if (isEdit) {
+      saveEdit();
+      return;
+    }
     if (missing) {
       setError(`Add ${missing} to share.`);
       return;
     }
     if (isStoryUploading()) {
-      Alert.alert('Still posting', 'Your last story is still uploading. Try again once it\'s posted.');
+      showAlert('Still posting', 'Your last story is still uploading. Try again once it\'s posted.');
       return;
     }
     const amount = parseFloat(budget.replace(/[^\d.]/g, ''));
@@ -295,9 +454,17 @@ export default function WriteJournalScreen({ navigation, route }) {
         <TouchableOpacity onPress={close} hitSlop={10} accessibilityLabel="Close">
           <Feather name="x" size={24} color={COLORS.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.topTitle}>New story</Text>
-        <TouchableOpacity onPress={share} hitSlop={10} accessibilityRole="button" accessibilityLabel="Share">
-          <Text style={styles.shareText}>Share</Text>
+        <Text style={styles.topTitle}>{isEdit ? 'Edit story' : 'New story'}</Text>
+        <TouchableOpacity
+          onPress={share}
+          hitSlop={10}
+          disabled={saving || editLoading}
+          accessibilityRole="button"
+          accessibilityLabel={isEdit ? 'Save changes' : 'Share'}
+        >
+          {saving
+            ? <ActivityIndicator size="small" color={COLORS.accent} />
+            : <Text style={[styles.shareText, editLoading && { opacity: 0.4 }]}>{isEdit ? 'Save' : 'Share'}</Text>}
         </TouchableOpacity>
       </View>
 
@@ -546,16 +713,34 @@ export default function WriteJournalScreen({ navigation, route }) {
             activeOpacity={0.9}
             accessibilityRole="button"
           >
-            <Text style={styles.shareButtonText}>Share story</Text>
+            {saving
+              ? <ActivityIndicator color={COLORS.white} />
+              : <Text style={styles.shareButtonText}>{isEdit ? 'Save changes' : 'Share story'}</Text>}
           </TouchableOpacity>
-          {!!missing && <Text style={styles.missing}>Add {missing} to share</Text>}
+          {!!missing && <Text style={styles.missing}>Add {missing} to {isEdit ? 'save' : 'share'}</Text>}
         </ScrollView>
       </KeyboardAvoidingView>
+      {/* Saving an edited story: the animated logo over the form. */}
+      <LoaderOverlay visible={saving} message="Saving your story…" />
+      {editLoading && (
+        <View style={[styles.editLoading, { top: insets.top + 56 }]}>
+          <WayraaLoader size={88} />
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  editLoading: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    paddingTop: 80,
+    backgroundColor: COLORS.white,
+  },
   flex: { flex: 1 },
   light: { flex: 1, backgroundColor: COLORS.white },
 

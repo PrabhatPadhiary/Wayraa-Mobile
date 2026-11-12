@@ -7,6 +7,7 @@ import { COLORS, SIZES } from '../constants';
 import { dayCount, daysUntil } from '../utils/tripDates';
 import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 export const TRIP_ROW_HEIGHT = 100;
 const THUMB = 78;
@@ -140,7 +141,7 @@ export default function TripListRow({
                   style={[styles.avatar, { backgroundColor: avatarColorFor(m.name), zIndex: MAX_AVATARS - i }, i > 0 && styles.avatarOverlap]}
                 >
                   {m.photoUrl
-                    ? <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                    ? <Image source={{ uri: cloudinarySized(m.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
                     : <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>}
                 </View>
               ))}

@@ -20,11 +20,11 @@ import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import { updateTrip, updateDestinationDates, AuthRequiredError } from '../services';
 import DateRangeCalendar from './DateRangeCalendar';
 import { DateRangeField, DateRangeSummary } from './DateRangeSheet';
+import TravellerStepper from './TravellerStepper';
 import { formatDateRange } from '../utils/tripDates';
 
 const WINDOW_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = WINDOW_HEIGHT * 0.9;
-const MAX_TRAVELERS = 20;
 
 /**
  * Bottom sheet to edit a trip's name, description, travellers and dates
@@ -219,27 +219,7 @@ export default function EditTripSheet({ visible, trip, onClose, onSaved }) {
                 )}
 
                 <Text style={styles.label}>Travellers</Text>
-                <View style={styles.stepper}>
-                  <TouchableOpacity
-                    style={[styles.stepButton, travelers <= 1 && styles.stepDisabled]}
-                    onPress={() => setTravelers((n) => Math.max(1, n - 1))}
-                    disabled={travelers <= 1}
-                    accessibilityLabel="Fewer travellers"
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="remove" size={20} color={COLORS.textPrimary} />
-                  </TouchableOpacity>
-                  <Text style={styles.stepValue}>{travelers}</Text>
-                  <TouchableOpacity
-                    style={[styles.stepButton, travelers >= MAX_TRAVELERS && styles.stepDisabled]}
-                    onPress={() => setTravelers((n) => Math.min(MAX_TRAVELERS, n + 1))}
-                    disabled={travelers >= MAX_TRAVELERS}
-                    accessibilityLabel="More travellers"
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="add" size={20} color={COLORS.textPrimary} />
-                  </TouchableOpacity>
-                </View>
+                <TravellerStepper value={travelers} onChange={setTravelers} />
 
                 {!!error && <Text style={styles.error}>{error}</Text>}
               </ScrollView>
@@ -365,30 +345,6 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
-  },
-  stepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_lg,
-  },
-  stepButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepDisabled: {
-    opacity: 0.4,
-  },
-  stepValue: {
-    minWidth: 28,
-    textAlign: 'center',
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
   },
   error: {
     marginTop: SIZES.spacing_md,

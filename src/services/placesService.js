@@ -212,16 +212,19 @@ export async function getPlacesByFilter(placeId, filter) {
  * `theme` is one of: "beaches" | "mountains" | "cities" | "historical" |
  * "islands" | "wildlife".
  *
- * When `coords` ({ lat, lng }) is provided the results are biased toward the
- * user's region ("Nearby"); otherwise they are global. Returns an array of
- * places, each with a normalized `photoUrl`.
+ * With `coords` ({ lat, lng }): places of that kind near you, nearest first,
+ * each with `distanceKm` (not for "cities"). Without: a global search (the app
+ * uses its curated lists instead). Returns places with a normalized `photoUrl`.
  */
-export async function getPlacesByTheme(theme, coords = null) {
+export async function getPlacesByTheme(theme, coords = null, near = null) {
   if (!theme) return [];
   try {
     let url = `${API_URL}/Destinations/by-category?theme=${encodeURIComponent(theme)}`;
     if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number') {
+      // Near you: real places of this kind around you, nearest first, each
+      // with distanceKm. `near` (your city) anchors the search.
       url += `&lat=${coords.lat}&lng=${coords.lng}`;
+      if (near) url += `&near=${encodeURIComponent(near)}`;
     }
     const response = await fetch(url);
     if (!response.ok) return [];

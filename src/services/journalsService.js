@@ -47,7 +47,17 @@ export async function getJournalFeed() {
   const response = await fetch(`${API_URL}/Journals/feed`, { headers: await headers() });
   if (!response.ok) throw new Error(`Couldn't load the community feed (${response.status})`);
   const data = await response.json();
-  return (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  lastFeed = (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  return lastFeed;
+}
+
+// The last feed loaded (by Home at startup, or Community), so Community can
+// open showing it at once and refresh quietly.
+let lastFeed = null;
+
+/** The last loaded feed, or null if none yet. */
+export function peekJournalFeed() {
+  return lastFeed;
 }
 
 /**
@@ -166,6 +176,97 @@ export async function uploadJournalPhoto(id, uri, index = 0) {
   if (response.status === 401) throw new AuthRequiredError();
   if (!response.ok) throw new Error(await errorText(response, 'A photo failed to upload'));
   return response.json();
+}
+
+/** Delete one photo from your journal. Backend: DELETE /api/Journals/{id}/photos/{photoId} */
+export async function deleteJournalPhoto(id, photoId) {
+  const token = await requireToken();
+  const response = await fetch(`${API_URL}/Journals/${encodeURIComponent(id)}/photos/${encodeURIComponent(photoId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok && response.status !== 404) throw new Error(await errorText(response, 'Couldn\'t remove a photo'));
+  return true;
+}
+
+/**
+ * Put your journal's photos in this order (the first is the cover).
+ * Backend: PUT /api/Journals/{id}/photos/order with the photo ids.
+ */
+export async function reorderJournalPhotos(id, photoIds) {
+  const token = await requireToken();
+  const response = await fetch(`${API_URL}/Journals/${encodeURIComponent(id)}/photos/order`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(photoIds),
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) throw new Error(await errorText(response, 'Couldn\'t set the cover photo'));
+  return response.json();
+}
+
+/**
+ * All your journals (public, hidden and drafts), most recently changed first,
+ * in the feed's shape. Backend: GET /api/Journals/mine
+ */
+export async function getMyJournals() {
+  const token = await requireToken();
+  const response = await fetch(`${API_URL}/Journals/mine`, { headers: { Authorization: `Bearer ${token}` } });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) throw new Error(`Couldn't load your stories (${response.status})`);
+  const data = await response.json();
+  return (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+}
+
+// ── Community safety ─────────────────────────────────────────────────────
+
+/** Reasons someone can report a story for (key -> label). */
+export const REPORT_REASONS = [
+  { key: 'spam', label: 'Spam or advertising' },
+  { key: 'inappropriate', label: 'Inappropriate content' },
+  { key: 'harassment', label: 'Harassment or hate' },
+  { key: 'false_info', label: 'False or misleading' },
+  { key: 'other', label: 'Something else' },
+];
+
+async function safetyCall(path, method, body, fallback) {
+  const token = await requireToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) throw new Error(await errorText(response, fallback));
+  return response.json().catch(() => ({}));
+}
+
+/** Report a story (also hides it from your feed). Backend: POST /api/Journals/{id}/report */
+export const reportJournal = (id, reason, details) =>
+  safetyCall(`/Journals/${encodeURIComponent(id)}/report`, 'POST', { reason, details: details || null }, 'Couldn\'t send the report');
+
+/** "Not interested": hide a story from your feed. Backend: POST /api/Journals/{id}/hide */
+export const hideJournal = (id) => safetyCall(`/Journals/${encodeURIComponent(id)}/hide`, 'POST', null, 'Couldn\'t hide the story');
+
+/** Undo "Not interested". Backend: DELETE /api/Journals/{id}/hide */
+export const unhideJournal = (id) => safetyCall(`/Journals/${encodeURIComponent(id)}/hide`, 'DELETE', null, 'Couldn\'t undo that');
+
+/** Block someone: their stories and comments are hidden from you. Backend: POST /api/users/{id}/block */
+export const blockUser = (userId) => safetyCall(`/users/${encodeURIComponent(userId)}/block`, 'POST', null, 'Couldn\'t block them');
+
+/** Unblock someone. Backend: DELETE /api/users/{id}/block */
+export const unblockUser = (userId) => safetyCall(`/users/${encodeURIComponent(userId)}/block`, 'DELETE', null, 'Couldn\'t unblock them');
+
+/** People you've blocked: [{ id, name, photoUrl, blockedAt }]. Backend: GET /api/users/me/blocked */
+export async function getBlockedUsers() {
+  const list = await safetyCall('/users/me/blocked', 'GET', null, 'Couldn\'t load blocked people');
+  return Array.isArray(list) ? list : [];
+}
+
+/** The story's page on the website, for sharing. */
+export function journalShareUrl(id) {
+  return `https://wayraa.com/community/journal/${id}`;
 }
 
 /** Delete one of your journals. Backend: DELETE /api/Journals/{id} */

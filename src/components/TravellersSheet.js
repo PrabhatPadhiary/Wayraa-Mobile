@@ -10,7 +10,6 @@ import {
   Pressable,
   Dimensions,
   Share,
-  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +24,8 @@ import {
   removeMember,
 } from '../services';
 import { avatarColorFor, initialsFor } from './TripStackCard';
+import { showAlert } from './AppDialog';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.9;
 
@@ -120,7 +121,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
   };
 
   const handleRevoke = (invite) => {
-    Alert.alert('Revoke this invite?', 'The link will stop working.', [
+    showAlert('Revoke this invite?', 'The link will stop working.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Revoke',
@@ -131,7 +132,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
             await revokeInvitation(trip.id, invite.id);
             setPending((prev) => prev.filter((i) => i.id !== invite.id));
           } catch (e) {
-            Alert.alert('Could not revoke', e?.message || 'Please try again.');
+            showAlert('Could not revoke', e?.message || 'Please try again.');
           } finally {
             setBusyId(null);
           }
@@ -146,7 +147,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
       await action();
       onChanged?.();
     } catch (e) {
-      Alert.alert('Something went wrong', e?.message || 'Please try again.');
+      showAlert('Something went wrong', e?.message || 'Please try again.');
     } finally {
       setBusyId(null);
     }
@@ -156,7 +157,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
     const role = (member.role || '').toLowerCase();
     const other = role === 'viewer' ? 'member' : 'viewer';
     const name = member.name || 'This person';
-    Alert.alert(name, `${roleInfo(role).label} · ${roleInfo(role).hint}`, [
+    showAlert(name, `${roleInfo(role).label} · ${roleInfo(role).hint}`, [
       {
         text: `Make ${roleInfo(other).label.toLowerCase()}`,
         onPress: () => runMemberChange(member, () => changeMemberRole(trip.id, member.userId, other)),
@@ -164,7 +165,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
       {
         text: 'Remove from trip',
         style: 'destructive',
-        onPress: () => Alert.alert(`Remove ${name}?`, 'They will lose access to this trip.', [
+        onPress: () => showAlert(`Remove ${name}?`, 'They will lose access to this trip.', [
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Remove',
@@ -267,7 +268,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
                 <View key={m.userId} style={styles.memberRow}>
                   <View style={[styles.avatar, { backgroundColor: avatarColorFor(m.name) }]}>
                     {m.photoUrl
-                      ? <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                      ? <Image source={{ uri: cloudinarySized(m.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
                       : <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>}
                   </View>
                   <View style={styles.memberText}>

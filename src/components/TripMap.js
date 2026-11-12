@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
+import { ratingText } from './RatingRow';
 import { COLORS, SIZES } from '../constants';
 
 /** Pin colors by place kind, matching the website's trip map. */
@@ -84,7 +85,7 @@ export default function TripMap({ places, onPressPlace }) {
               key={p.id}
               coordinate={{ latitude: p.latitude, longitude: p.longitude }}
               title={p.name}
-              description={p.rating > 0 ? `★ ${p.rating}` : undefined}
+              description={ratingText(p.rating) || undefined}
               pinColor={(KIND_META[p.kind] || KIND_META.activities).color}
               onCalloutPress={onPressPlace ? () => onPressPlace(p) : undefined}
             />

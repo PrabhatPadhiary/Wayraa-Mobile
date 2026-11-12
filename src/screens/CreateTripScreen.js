@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Image,
   ScrollView,
   TextInput,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
@@ -16,17 +17,33 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt, DateRangeSheet, DateRangeField } from '../components';
+import TravellerStepper from '../components/TravellerStepper';
 import useAuth from '../hooks/useAuth';
 import { createTrip, AuthRequiredError } from '../services';
+import { showAlert } from '../components/AppDialog';
+import { formatDateRange } from '../utils/tripDates';
+import { LoaderOverlay } from '../components/WayraaLoader';
+import { getTripDraft, findTripDraftFor, saveTripDraft, clearTripDraft, newDraftId } from '../services/tripDraft';
 
-const MAX_TRAVELERS = 20;
 /**
  * CreateTripScreen - first step of trip creation, seeded from a destination.
+ * Opens over the tabs (slides up), so a tab button can't drop it half done.
  *
- * Route params: { placeId, name, secondary, photoUrl, lat, lng }
+ *  - Leaving with changes (✕, back, swipe down) asks "Discard this trip?".
+ *  - What's filled in is saved on the phone as you go; next time, an
+ *    unfinished trip is offered back ("Continue your trip to Dubai?").
+ *
+ * Route params: { placeId, name, secondary, photoUrl, lat, lng }, or
+ * { resumeDraftId } from an unfinished-trip row on Home / My Trips (fills
+ * that one straight in).
  */
 export default function CreateTripScreen({ navigation, route }) {
-  const { placeId, name, secondary, photoUrl, lat, lng } = route.params || {};
+  // The destination: from the route, or from an unfinished trip you continue.
+  const [dest, setDest] = useState(() => {
+    const p = route.params || {};
+    return { placeId: p.placeId, name: p.name, secondary: p.secondary, photoUrl: p.photoUrl, lat: p.lat, lng: p.lng };
+  });
+  const { placeId, name, secondary, photoUrl, lat, lng } = dest;
   const { isAuthenticated, isAuthReady } = useAuth();
 
   const [tripName, setTripName] = useState(name ? `Trip to ${name}` : '');
@@ -35,14 +52,152 @@ export default function CreateTripScreen({ navigation, route }) {
   const [endDate, setEndDate] = useState(null);
   const [datesOpen, setDatesOpen] = useState(false);
   const [travelers, setTravelers] = useState(1);
+  const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Missing name: shown under the name field (red border), which gets focus.
+  const [nameMissing, setNameMissing] = useState(false);
+  const nameRef = useRef(null);
+
+  // Anything changed from a fresh form? (Only then is there something to save or lose.)
+  const dirty = tripName.trim() !== (name ? `Trip to ${name}` : '')
+    || !!startDate || !!endDate || travelers !== 1 || !!description.trim();
+
+  // ── Unfinished trip from before ──
+  // This form's draft id: an existing unfinished trip's, or a new one. Other
+  // destinations' unfinished trips are left alone.
+  const draftId = useRef(route.params?.resumeDraftId || newDraftId());
+  const clearDraft = () => clearTripDraft(draftId.current);
+  const [draftChecked, setDraftChecked] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const restore = (draft) => {
+      if (draft.dest?.name) setDest(draft.dest);
+      setTripName(draft.tripName || '');
+      setStartDate(draft.startDate || null);
+      setEndDate(draft.endDate || null);
+      setTravelers(draft.travelers || 1);
+      setDescription(draft.description || '');
+    };
+    (async () => {
+      try {
+        // From an unfinished-trip row: you've already chosen to continue.
+        if (route.params?.resumeDraftId) {
+          const draft = await getTripDraft(route.params.resumeDraftId);
+          if (cancelled) return;
+          if (draft) {
+            restore(draft);
+          } else {
+            // Gone meanwhile (expired or discarded).
+            allowLeave.current = true;
+            navigation.goBack();
+            showAlert('That trip is gone', 'Pick a destination to start a new trip.');
+          }
+          return;
+        }
+        // Started from a destination you already have an unfinished trip for.
+        const draft = await findTripDraftFor(route.params?.placeId);
+        if (cancelled || !draft) return;
+        showAlert(
+          `Continue your trip to ${draft.dest?.name || 'here'}?`,
+          `You started "${draft.tripName || 'a trip'}" earlier and didn't finish it.`,
+          [
+            { text: 'Start fresh', style: 'cancel', onPress: () => clearTripDraft(draft.id) },
+            {
+              text: 'Continue',
+              onPress: () => {
+                draftId.current = draft.id;
+                restore(draft);
+              },
+            },
+          ],
+          { cancelable: false },
+        );
+      } catch {
+        // No draft to offer.
+      } finally {
+        if (!cancelled) setDraftChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Save as you go, from the moment the form opens (after the check above,
+  // so an old draft isn't overwritten before you've chosen). Even an
+  // untouched form is kept, in case the app is closed with it open; closing
+  // it yourself without changes forgets it (below).
+  useEffect(() => {
+    if (!draftChecked) return undefined;
+    if (!dest?.name) return undefined; // nothing to plan around yet
+    const t = setTimeout(() => {
+      saveTripDraft({ id: draftId.current, dest, tripName, startDate, endDate, travelers, description });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [draftChecked, dest, tripName, startDate, endDate, travelers, description]);
+
+  // ── Leaving with changes: ask first ──
+  const allowLeave = useRef(false);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const submittingRef = useRef(submitting);
+  submittingRef.current = submitting;
+  // The form as it is now, for "Save for later" (the listener is set up once).
+  const latest = useRef(null);
+  latest.current = { dest, tripName, startDate, endDate, travelers, description };
+  useEffect(() => navigation.addListener('beforeRemove', (e) => {
+    if (allowLeave.current) return;
+    // Mid-creation (e.g. Android back): stay until it's done.
+    if (submittingRef.current) {
+      e.preventDefault();
+      return;
+    }
+    if (!dirtyRef.current) {
+      // Closed on purpose without filling anything in: nothing to keep.
+      clearDraft();
+      return;
+    }
+    e.preventDefault();
+    const leave = () => {
+      allowLeave.current = true;
+      navigation.dispatch(e.data.action);
+    };
+    const f = latest.current;
+    const summary = [f.tripName.trim() || 'Your trip', formatDateRange(f.startDate, f.endDate)].filter(Boolean).join(' · ');
+    showAlert('Leave this trip?', summary, [
+      {
+        text: 'Save for later',
+        icon: 'bookmark-outline',
+        // Kept on the phone; Home and My Trips show it under "Unfinished".
+        onPress: async () => {
+          await saveTripDraft({
+            id: draftId.current, dest: f.dest, tripName: f.tripName, startDate: f.startDate,
+            endDate: f.endDate, travelers: f.travelers, description: f.description,
+          });
+          leave();
+        },
+      },
+      {
+        text: 'Discard',
+        style: 'destructive',
+        icon: 'trash-outline',
+        onPress: () => {
+          clearDraft();
+          leave();
+        },
+      },
+      { text: 'Keep editing', style: 'cancel' },
+    ]);
+  }), [navigation]);
+
+  const close = useCallback(() => navigation.goBack(), [navigation]);
 
   const handleSubmit = async () => {
     setError('');
+    Keyboard.dismiss();
 
     if (!tripName.trim()) {
-      setError('Give your trip a name.');
+      setNameMissing(true);
+      nameRef.current?.focus();
       return;
     }
 
@@ -56,6 +211,7 @@ export default function CreateTripScreen({ navigation, route }) {
         startDate: startIso,
         endDate: endIso,
         travelersCount: travelers,
+        description: description.trim() || null,
         primaryDestination: name,
         coverPhotoUrl: photoUrl,
         destination: {
@@ -66,22 +222,18 @@ export default function CreateTripScreen({ navigation, route }) {
           photoUrl,
         },
       });
-      // Pop this form off the Explore stack first, so the Home tab returns to
-      // the screen the user started from (not back to this form), then open
-      // the new trip in the My Trips tab. `initial: false` keeps the My Trips
-      // list underneath, so back goes to the list. The tab navigator is
-      // captured before goBack() because this screen unmounts afterwards.
-      const tabNavigator = navigation.getParent();
-      navigation.goBack();
-      if (created?.id) {
-        tabNavigator?.navigate('MyTrips', {
-          screen: 'TripDetail',
-          params: { tripId: created.id, tripName: created.name },
-          initial: false,
-        });
-      } else {
-        tabNavigator?.navigate('MyTrips');
-      }
+      // Created: nothing left to save or ask about. Going to Main closes this
+      // form (it sits on top) and opens the new trip in My Trips;
+      // `initial: false` keeps the My Trips list underneath, so back goes to
+      // the list. The Home tab stays on the page you started from.
+      allowLeave.current = true;
+      clearDraft();
+      navigation.navigate('Main', created?.id
+        ? {
+          screen: 'MyTrips',
+          params: { screen: 'TripDetail', params: { tripId: created.id, tripName: created.name }, initial: false },
+        }
+        : { screen: 'MyTrips' });
     } catch (e) {
       if (e instanceof AuthRequiredError) {
         setError('Your session expired. Please sign in again.');
@@ -97,12 +249,12 @@ export default function CreateTripScreen({ navigation, route }) {
     <View style={styles.header}>
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => navigation.goBack()}
-        accessibilityLabel="Go back"
+        onPress={close}
+        accessibilityLabel="Close"
         activeOpacity={0.8}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
+        <Ionicons name="close" size={22} color={COLORS.textPrimary} />
       </TouchableOpacity>
       <Text style={styles.headerTitle}>Create a trip</Text>
     </View>
@@ -116,7 +268,7 @@ export default function CreateTripScreen({ navigation, route }) {
         <SignInPrompt
           icon="map-outline"
           title="Plan your next adventure"
-          subtitle="Sign in to create trips and keep your journeys organized."
+          subtitle="Sign in to create trips and keep your journeys organised."
           onSignIn={() => navigation.navigate('Welcome')}
         />
       </SafeAreaView>
@@ -158,13 +310,40 @@ export default function CreateTripScreen({ navigation, route }) {
           {/* Trip name */}
           <Text style={styles.fieldLabel}>Trip name</Text>
           <TextInput
-            style={styles.input}
+            ref={nameRef}
+            style={[styles.input, nameMissing && styles.inputError]}
             value={tripName}
-            onChangeText={setTripName}
+            onChangeText={(t) => {
+              setTripName(t);
+              if (nameMissing && t.trim()) setNameMissing(false);
+            }}
+            accessibilityLabel="Trip name"
+            accessibilityHint={nameMissing ? 'Required. Give your trip a name.' : undefined}
             placeholder="e.g. Summer in Goa"
             placeholderTextColor={COLORS.textMuted}
             maxLength={100}
             returnKeyType="next"
+          />
+          {nameMissing && (
+            <View style={styles.fieldError} accessibilityLiveRegion="polite">
+              <Ionicons name="alert-circle" size={15} color={COLORS.error} />
+              <Text style={styles.fieldErrorText}>Give your trip a name</Text>
+            </View>
+          )}
+
+          {/* Description (optional) */}
+          <Text style={styles.fieldLabel}>
+            Description <Text style={styles.optional}>(optional)</Text>
+          </Text>
+          <TextInput
+            style={[styles.input, styles.multiline]}
+            value={description}
+            onChangeText={setDescription}
+            placeholder="What's the plan? e.g. Beaches, seafood and a day trip to the islands"
+            placeholderTextColor={COLORS.textMuted}
+            multiline
+            maxLength={500}
+            accessibilityLabel="Description, optional"
           />
 
           {/* Dates */}
@@ -178,29 +357,9 @@ export default function CreateTripScreen({ navigation, route }) {
           />
           <Text style={styles.hint}>Dates are optional. A trip without dates is saved as a draft.</Text>
 
-          {/* Travelers */}
-          <Text style={styles.fieldLabel}>Travelers</Text>
-          <View style={styles.stepper}>
-            <TouchableOpacity
-              style={[styles.stepButton, travelers <= 1 && styles.stepButtonDisabled]}
-              onPress={() => setTravelers((n) => Math.max(1, n - 1))}
-              disabled={travelers <= 1}
-              accessibilityLabel="Decrease travelers"
-              activeOpacity={0.8}
-            >
-              <Ionicons name="remove" size={20} color={COLORS.textPrimary} />
-            </TouchableOpacity>
-            <Text style={styles.stepValue}>{travelers}</Text>
-            <TouchableOpacity
-              style={[styles.stepButton, travelers >= MAX_TRAVELERS && styles.stepButtonDisabled]}
-              onPress={() => setTravelers((n) => Math.min(MAX_TRAVELERS, n + 1))}
-              disabled={travelers >= MAX_TRAVELERS}
-              accessibilityLabel="Increase travelers"
-              activeOpacity={0.8}
-            >
-              <Ionicons name="add" size={20} color={COLORS.textPrimary} />
-            </TouchableOpacity>
-          </View>
+          {/* Travellers */}
+          <Text style={styles.fieldLabel}>Travellers</Text>
+          <TravellerStepper value={travelers} onChange={setTravelers} />
 
           {!!error && <Text style={styles.error}>{error}</Text>}
 
@@ -218,6 +377,9 @@ export default function CreateTripScreen({ navigation, route }) {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* While creating: the form stays in view, dimmed and locked. */}
+      <LoaderOverlay visible={submitting} message="Creating your trip…" />
 
       <DateRangeSheet
         visible={datesOpen}
@@ -333,6 +495,30 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     backgroundColor: COLORS.white,
   },
+  multiline: {
+    minHeight: 84,
+    textAlignVertical: 'top',
+  },
+  optional: {
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+  },
+  inputError: {
+    borderColor: COLORS.error,
+    borderWidth: 1.5,
+    backgroundColor: '#fff6f6',
+  },
+  fieldError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 6,
+  },
+  fieldErrorText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.error,
+  },
   hint: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_400Regular',
@@ -340,32 +526,6 @@ const styles = StyleSheet.create({
     marginTop: SIZES.spacing_sm,
   },
 
-  // Travelers stepper
-  stepper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_lg,
-  },
-  stepButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.white,
-  },
-  stepButtonDisabled: {
-    opacity: 0.4,
-  },
-  stepValue: {
-    minWidth: 28,
-    textAlign: 'center',
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
 
   error: {
     marginTop: SIZES.spacing_lg,

@@ -11,7 +11,6 @@ import {
   Pressable,
   Dimensions,
   Platform,
-  Alert,
   Keyboard,
   InputAccessoryView,
 } from 'react-native';
@@ -21,6 +20,7 @@ import { COLORS, SIZES } from '../constants';
 import { formatDay } from '../utils/tripDates';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import DateRangeCalendar, { todayDay, dayToIso, isoToDay } from './DateRangeCalendar';
+import { showAlert } from './AppDialog';
 
 const WINDOW_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = WINDOW_HEIGHT * 0.9;
@@ -171,7 +171,7 @@ export default function ExpenseSheet({
   };
 
   const confirmDelete = () => {
-    Alert.alert('Delete expense?', `"${expense?.title}" will be removed.`, [
+    showAlert('Delete expense?', `"${expense?.title}" will be removed.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',

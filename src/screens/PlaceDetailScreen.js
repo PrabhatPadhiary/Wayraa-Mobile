@@ -11,6 +11,7 @@ import {
   Dimensions,
   Platform,
   Share,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -27,14 +28,23 @@ import {
   getFavourites,
   addFavourite,
   removeFavourite,
+  getTripById,
+  addPlaceToTrip,
+  removeTripPlace,
+  journalCategoryFor,
   AuthRequiredError,
 } from '../services';
+import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+import { showAlert } from '../components/AppDialog';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.5);
 // Same canvas as the trip page, so the two read as one app.
 const SHEET_BG = '#f3f5f7';
 const GRID_PHOTOS = 6;
+// The swipeable photos at the top show the first few; the Photos grid and
+// the full-screen viewer have the rest (Google gives up to 10).
+const HERO_PHOTOS = 5;
 
 /** Readable category from the page it was opened from ("food" -> "Food"). */
 function categoryLabel(category) {
@@ -195,6 +205,68 @@ export default function PlaceDetailScreen({ navigation, route }) {
     geometry: details?.geometry,
     previewUrl: heroPhoto,
   };
+  // Came here while adding places to a trip stop (pickForTrip): the button
+  // adds straight to that stop (and removes again), like the + on the cards.
+  // pickedId: the trip place id when it's on the stop ('' = on it, id not
+  // known yet), null when it isn't.
+  const pickTripId = pickForTrip?.tripId;
+  const pickDestId = pickForTrip?.destinationId;
+  const [pickedId, setPickedId] = useState(() => {
+    const hit = (pickForTrip?.saved || []).find(([pid]) => pid === placeId);
+    return hit ? (hit[1] || '') : null;
+  });
+  const [picking, setPicking] = useState(false);
+  useFocusEffect(useCallback(() => {
+    if (!pickTripId || !pickDestId) return undefined;
+    let cancelled = false;
+    getTripById(pickTripId).then((full) => {
+      if (cancelled) return;
+      const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
+      const tp = (dest?.places || []).find((p) => p.placeId === placeId);
+      setPickedId(tp ? tp.id : null);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [pickTripId, pickDestId, placeId]));
+
+  const togglePick = async () => {
+    if (!pickTripId || !pickDestId || picking) return;
+    setPicking(true);
+    try {
+      if (pickedId !== null) {
+        let id = pickedId;
+        if (!id) {
+          const full = await getTripById(pickTripId);
+          const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
+          id = (dest?.places || []).find((p) => p.placeId === placeId)?.id || '';
+        }
+        if (id) await removeTripPlace(id);
+        setPickedId(null);
+      } else {
+        const fromTypes = journalCategoryFor(details?.types || []);
+        const cat = toTripCategory(category)
+          || (fromTypes === 'food' ? 'food' : fromTypes === 'stay' ? 'stay' : 'activity');
+        const res = await addPlaceToTrip(pickTripId, pickDestId, buildTripPlaceDto({
+          placeId,
+          name: displayName,
+          vicinity: displayAddress,
+          rating: displayRating,
+          userRatingsTotal: displayReviewCount,
+          photos: details?.photos,
+          geometry: details?.geometry,
+        }, cat));
+        setPickedId(res?.id || '');
+      }
+    } catch (e) {
+      showAlert(
+        'Could not update trip',
+        e instanceof AuthRequiredError ? 'Sign in to edit your trips.' : (e?.message || 'Please try again.'),
+      );
+    } finally {
+      setPicking(false);
+    }
+  };
+  const isPicked = pickedId !== null;
+
   const openTripFromSheet = (tripId, tripName) => {
     navigation.getParent()?.navigate('MyTrips', {
       screen: 'TripDetail',
@@ -206,10 +278,62 @@ export default function PlaceDetailScreen({ navigation, route }) {
   // ── Photos, hours, reviews ───────────────────────────────────────────────
   const [viewerIndex, setViewerIndex] = useState(null);
   const [heroPage, setHeroPage] = useState(0);
+  // Reviews pager: its width (one review per page) and the page shown.
+  const [reviewWidth, setReviewWidth] = useState(0);
+  const [reviewPage, setReviewPage] = useState(0);
+
+  // Hero photos loop: swiping past the last comes back to the first (and back
+  // from the first to the last). The pager holds [last, ...photos, first];
+  // landing on a copy jumps, without animation, to the real photo.
+  const heroRef = useRef(null);
+  const heroPlaced = useRef(false);
+  const heroPhotos = displayPhotos.slice(0, HERO_PHOTOS);
+  const heroCount = heroPhotos.length;
+  const heroLoops = heroCount > 1;
+  // [url, index of the real photo] per slide, copies at both ends.
+  const heroSlides = heroLoops
+    ? [[heroPhotos[heroCount - 1], heroCount - 1], ...heroPhotos.map((u, i) => [u, i]), [heroPhotos[0], 0]]
+    : heroPhotos.map((u, i) => [u, i]);
+  // Only the photo on screen and its neighbours are loaded (each is a paid
+  // Google request); the others load as you swipe to them.
+  const heroNear = (i) => {
+    const d = Math.abs(i - heroPage);
+    return d <= 1 || d === heroCount - 1;
+  };
+  const onHeroScrollEnd = (e) => {
+    const page = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    if (!heroLoops) {
+      setHeroPage(page);
+      return;
+    }
+    if (page === 0) {
+      heroRef.current?.scrollTo({ x: heroCount * SCREEN_WIDTH, animated: false });
+      setHeroPage(heroCount - 1);
+    } else if (page === heroCount + 1) {
+      heroRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
+      setHeroPage(0);
+    } else {
+      setHeroPage(page - 1);
+    }
+  };
+  // Start on the first real photo (again when more photos arrive).
+  useEffect(() => {
+    setHeroPage(0);
+    if (heroLoops) heroRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
+  }, [heroCount, heroLoops]);
   const [hoursExpanded, setHoursExpanded] = useState(false);
 
   // ── Scroll: sticky header + status bar ───────────────────────────────────
   const scrollY = useRef(new Animated.Value(0)).current;
+
+  // Tapping the rating in the header scrolls down to the Google reviews.
+  const scrollRef = useRef(null);
+  const sheetY = useRef(0);
+  const reviewsY = useRef(null);
+  const scrollToReviews = () => {
+    if (reviewsY.current == null) return;
+    scrollRef.current?.scrollTo({ y: Math.max(0, sheetY.current + reviewsY.current - 80), animated: true });
+  };
   // The compact bar takes over as soon as the photo starts moving up (about
   // when its own back / share / ♡ buttons would slide under the status bar).
   const HEADER_SHOW_AT = 60;
@@ -284,6 +408,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
       </Animated.View>
 
       <Animated.ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
@@ -296,14 +421,25 @@ export default function PlaceDetailScreen({ navigation, route }) {
         <View style={styles.hero}>
           {heroPhoto ? (
             <ScrollView
+              ref={heroRef}
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
-              onMomentumScrollEnd={(e) => setHeroPage(Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH))}
-              accessibilityLabel={`Photos of ${displayName}, ${heroPage + 1} of ${displayPhotos.length}`}
+              contentOffset={{ x: heroLoops ? SCREEN_WIDTH : 0, y: 0 }}
+              onLayout={() => {
+                // Android may ignore contentOffset: place it on the first photo once.
+                if (heroLoops && !heroPlaced.current) {
+                  heroPlaced.current = true;
+                  heroRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
+                }
+              }}
+              onMomentumScrollEnd={onHeroScrollEnd}
+              accessibilityLabel={`Photos of ${displayName}, ${heroPage + 1} of ${heroCount}`}
             >
-              {displayPhotos.map((url, i) => (
-                <Image key={i} source={{ uri: url }} style={styles.heroImage} contentFit="cover" transition={200} />
+              {heroSlides.map(([url, real], i) => (
+                heroNear(real)
+                  ? <Image key={i} source={{ uri: url }} style={styles.heroImage} contentFit="cover" transition={200} />
+                  : <View key={i} style={[styles.heroImage, styles.heroImagePending]} />
               ))}
             </ScrollView>
           ) : (
@@ -325,26 +461,41 @@ export default function PlaceDetailScreen({ navigation, route }) {
             </View>
           </View>
 
-          <View style={styles.heroText} pointerEvents="none">
-            {!!kicker && <Text style={styles.heroKicker} numberOfLines={1}>{kicker}</Text>}
-            <Text style={styles.heroTitle} numberOfLines={2} accessibilityRole="header">{displayName}</Text>
-            <View style={styles.heroMeta}>
-              <RatingRow rating={displayRating} reviews={displayReviewCount} />
+          <View style={styles.heroText} pointerEvents="box-none">
+            {/* Only the rating takes taps here; the rest lets swipes reach the photos. */}
+            {!!kicker && <Text style={styles.heroKicker} numberOfLines={1} pointerEvents="none">{kicker}</Text>}
+            <Text style={styles.heroTitle} numberOfLines={2} accessibilityRole="header" pointerEvents="none">{displayName}</Text>
+            <View style={styles.heroMeta} pointerEvents="box-none">
+              {displayReviews.length > 0 ? (
+                <TouchableOpacity
+                  onPress={scrollToReviews}
+                  activeOpacity={0.8}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                  accessibilityRole="button"
+                  accessibilityHint="Shows the Google reviews"
+                >
+                  <RatingRow rating={displayRating} reviews={displayReviewCount} variant="badge" />
+                </TouchableOpacity>
+              ) : (
+                <View pointerEvents="none">
+                  <RatingRow rating={displayRating} reviews={displayReviewCount} variant="badge" />
+                </View>
+              )}
               {!!price && (
-                <View style={styles.heroChip}>
+                <View style={styles.heroChip} pointerEvents="none">
                   <Text style={styles.heroChipText}>{price}</Text>
                 </View>
               )}
               {displayOpenNow !== null && (
-                <View style={styles.heroChip}>
+                <View style={styles.heroChip} pointerEvents="none">
                   <View style={[styles.openDot, { backgroundColor: displayOpenNow ? '#4ade80' : '#fb923c' }]} />
                   <Text style={styles.heroChipText}>{displayOpenNow ? 'Open now' : 'Closed'}</Text>
                 </View>
               )}
             </View>
-            {displayPhotos.length > 1 && (
-              <View style={styles.heroDots}>
-                {displayPhotos.map((_, i) => (
+            {heroCount > 1 && (
+              <View style={styles.heroDots} pointerEvents="none">
+                {heroPhotos.map((_, i) => (
                   <View key={i} style={[styles.heroDot, i === heroPage && styles.heroDotOn]} />
                 ))}
               </View>
@@ -353,18 +504,44 @@ export default function PlaceDetailScreen({ navigation, route }) {
         </View>
 
         {/* ── Sheet ── */}
-        <View style={styles.sheet}>
+        <View style={styles.sheet} onLayout={(e) => { sheetY.current = e.nativeEvent.layout.y; }}>
           {/* Main action + quick actions */}
           <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={() => setTripSheetOpen(true)}
-              activeOpacity={0.9}
-              accessibilityRole="button"
-            >
-              <Feather name="plus" size={18} color={COLORS.white} />
-              <Text style={styles.addButtonText}>Add to trip</Text>
-            </TouchableOpacity>
+            {pickForTrip ? (
+              // Adding places to a trip stop: straight in (or out), no sheet.
+              <TouchableOpacity
+                style={[styles.addButton, isPicked && styles.addButtonAdded]}
+                onPress={togglePick}
+                disabled={picking}
+                activeOpacity={0.9}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isPicked, busy: picking }}
+                accessibilityLabel={isPicked
+                  ? `Added to ${pickForTrip.tripName || 'your trip'}. Tap to remove`
+                  : `Add to ${pickForTrip.tripName || 'your trip'}`}
+              >
+                {picking ? (
+                  <ActivityIndicator color={isPicked ? COLORS.success : COLORS.white} />
+                ) : (
+                  <>
+                    <Feather name={isPicked ? 'check' : 'plus'} size={18} color={isPicked ? '#1b7a3e' : COLORS.white} />
+                    <Text style={[styles.addButtonText, isPicked && styles.addButtonTextAdded]} numberOfLines={1}>
+                      {isPicked ? 'Added to ' : 'Add to '}{pickForTrip.tripName || 'your trip'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => setTripSheetOpen(true)}
+                activeOpacity={0.9}
+                accessibilityRole="button"
+              >
+                <Feather name="plus" size={18} color={COLORS.white} />
+                <Text style={styles.addButtonText}>Add to trip</Text>
+              </TouchableOpacity>
+            )}
             <View style={styles.quickRow}>
               <TouchableOpacity style={styles.quick} onPress={handleDirections} activeOpacity={0.85} accessibilityRole="button">
                 <Feather name="navigation" size={15} color={COLORS.primary} />
@@ -398,11 +575,10 @@ export default function PlaceDetailScreen({ navigation, route }) {
             <SectionTitle icon="info" tint="#e6f4fb" color={COLORS.primaryLight} title="Good to know" />
 
             {!!displayAddress && (
-              <TouchableOpacity style={styles.infoRow} onPress={handleDirections} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={`Address: ${displayAddress}. Get directions`}>
+              <View style={styles.infoRow} accessible accessibilityLabel={`Address: ${displayAddress}`}>
                 <View style={styles.infoIcon}><Feather name="map-pin" size={16} color={COLORS.accentDeep} /></View>
-                <Text style={styles.infoText} numberOfLines={3}>{displayAddress}</Text>
-                <Feather name="chevron-right" size={18} color={COLORS.textMuted} />
-              </TouchableOpacity>
+                <Text style={styles.infoText} numberOfLines={3} selectable>{displayAddress}</Text>
+              </View>
             )}
 
             {(displayOpenNow !== null || displayHours.length > 0) && (
@@ -448,7 +624,6 @@ export default function PlaceDetailScreen({ navigation, route }) {
               <TouchableOpacity style={[styles.infoRow, styles.infoDivider]} onPress={handleCall} activeOpacity={0.7} accessibilityRole="button">
                 <View style={styles.infoIcon}><Feather name="phone" size={16} color={COLORS.accentDeep} /></View>
                 <Text style={styles.infoText}>{displayPhone}</Text>
-                <Feather name="chevron-right" size={18} color={COLORS.textMuted} />
               </TouchableOpacity>
             )}
 
@@ -520,7 +695,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
 
           {/* Google reviews */}
           {displayReviews.length > 0 && (
-            <View style={styles.card}>
+            <View style={styles.card} onLayout={(e) => { reviewsY.current = e.nativeEvent.layout.y; }}>
               <SectionTitle
                 icon="message-square"
                 tint="#fff6e0"
@@ -528,15 +703,18 @@ export default function PlaceDetailScreen({ navigation, route }) {
                 title="Google reviews"
                 right={<RatingRow rating={displayRating} reviews={displayReviewCount} />}
               />
+              {/* One review per page, full width, with dots like the photos. */}
               <ScrollView
                 horizontal
+                pagingEnabled
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.reviewsRow}
-                decelerationRate="fast"
-                snapToInterval={REVIEW_WIDTH + SIZES.spacing_md}
+                onLayout={(e) => setReviewWidth(e.nativeEvent.layout.width)}
+                onMomentumScrollEnd={(e) => {
+                  if (reviewWidth) setReviewPage(Math.round(e.nativeEvent.contentOffset.x / reviewWidth));
+                }}
               >
                 {displayReviews.map((review, i) => (
-                  <View key={i} style={styles.review}>
+                  <View key={i} style={[styles.review, { width: reviewWidth || REVIEW_WIDTH }]}>
                     <View style={styles.reviewHead}>
                       {review.profilePhotoUrl ? (
                         <Image source={{ uri: review.profilePhotoUrl }} style={styles.reviewAvatar} />
@@ -555,6 +733,13 @@ export default function PlaceDetailScreen({ navigation, route }) {
                   </View>
                 ))}
               </ScrollView>
+              {displayReviews.length > 1 && (
+                <View style={styles.reviewDots} accessibilityLabel={`Review ${reviewPage + 1} of ${displayReviews.length}`}>
+                  {displayReviews.map((_, i) => (
+                    <View key={i} style={[styles.reviewDot, i === reviewPage && styles.reviewDotOn]} />
+                  ))}
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -579,7 +764,8 @@ export default function PlaceDetailScreen({ navigation, route }) {
   );
 }
 
-const REVIEW_WIDTH = Math.min(300, SCREEN_WIDTH - 90);
+// Until the reviews pager is measured: the card's inner width.
+const REVIEW_WIDTH = SCREEN_WIDTH - SIZES.spacing_base * 4 - 2;
 // 3 across: screen minus the sheet's and card's side padding, the card's
 // 1px borders and the two gaps; rounded down so the row never wraps.
 const PHOTO_CELL = Math.floor((SCREEN_WIDTH - SIZES.spacing_base * 4 - 2 - SIZES.spacing_sm * 2) / 3);
@@ -714,6 +900,9 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
   },
+  heroImagePending: {
+    backgroundColor: COLORS.primary,
+  },
   heroDots: {
     flexDirection: 'row',
     gap: 5,
@@ -795,9 +984,20 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accentDeep,
   },
   addButtonText: {
+    flexShrink: 1,
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
+  },
+  // Already on the trip stop: a calm green outline instead of the orange fill.
+  addButtonAdded: {
+    paddingHorizontal: SIZES.spacing_base,
+    backgroundColor: '#eaf6ee',
+    borderWidth: 1.5,
+    borderColor: '#9fd3b0',
+  },
+  addButtonTextAdded: {
+    color: '#1b7a3e',
   },
   quickRow: {
     flexDirection: 'row',
@@ -927,9 +1127,21 @@ const styles = StyleSheet.create({
   },
 
   // Reviews
-  reviewsRow: {
-    gap: SIZES.spacing_md,
-    paddingRight: SIZES.spacing_base,
+  reviewDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: SIZES.spacing_md,
+  },
+  reviewDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#d5dbe2',
+  },
+  reviewDotOn: {
+    width: 16,
+    backgroundColor: COLORS.primary,
   },
   review: {
     width: REVIEW_WIDTH,

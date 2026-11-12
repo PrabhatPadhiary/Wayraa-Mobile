@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
   Animated,
   TextInput,
   Platform,
@@ -20,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { ratingText } from './RatingRow';
 import { COLORS, SIZES } from '../constants';
 import {
   getItinerary,
@@ -57,6 +57,7 @@ import {
 import DateRangeSheet from './DateRangeSheet';
 import { DayMapBackground, openDirections } from './DayMap';
 import { DragSource, createZones } from './ItineraryDrag';
+import { showAlert } from './AppDialog';
 
 const TOAST_MS = 4000;
 const SCREEN_H = Dimensions.get('window').height;
@@ -346,7 +347,7 @@ export default function ItineraryTab({
     const saved = (toSave.length ? arrangeItinerary(trip.id, toSave) : Promise.resolve()).then(() => true, (e) => {
       setItems(before);
       setToast(null);
-      Alert.alert('Could not move that', errorMessage(e));
+      showAlert('Could not move that', errorMessage(e));
       return false;
     });
 
@@ -429,7 +430,7 @@ export default function ItineraryTab({
     }, (e) => {
       setItems((prev) => prev.filter((i) => i.id !== tempId));
       setToast(null);
-      Alert.alert('Could not add to plan', errorMessage(e));
+      showAlert('Could not add to plan', errorMessage(e));
       return null;
     });
 
@@ -468,7 +469,7 @@ export default function ItineraryTab({
       setAddText('');
       setAddingSlot(null);
     } catch (e) {
-      Alert.alert('Could not add that', errorMessage(e));
+      showAlert('Could not add that', errorMessage(e));
     } finally {
       markBusy('new', false);
     }
@@ -483,7 +484,7 @@ export default function ItineraryTab({
     const deleted = deleteItineraryItem(trip.id, item.id).then(() => true, (e) => {
       setItems(before);
       setToast(null);
-      Alert.alert('Could not remove that', errorMessage(e));
+      showAlert('Could not remove that', errorMessage(e));
       return false;
     });
     const undo = async () => {
@@ -505,7 +506,7 @@ export default function ItineraryTab({
         animateNext();
         setItems((prev) => [...prev, restored]);
       } catch (e) {
-        Alert.alert('Could not undo', errorMessage(e));
+        showAlert('Could not undo', errorMessage(e));
       }
     };
     showToast(`Removed ${item.title}`, undo);
@@ -522,7 +523,7 @@ export default function ItineraryTab({
       await updateItineraryItem(trip.id, item.id, changes);
     } catch (e) {
       setItems(before);
-      Alert.alert('Could not save that', errorMessage(e));
+      showAlert('Could not save that', errorMessage(e));
     }
   };
 
@@ -543,7 +544,7 @@ export default function ItineraryTab({
 
   const clearOutside = () => {
     if (!days.length) return;
-    Alert.alert(
+    showAlert(
       'Clear items outside the trip?',
       `${outside.length} ${outside.length === 1 ? 'item is' : 'items are'} scheduled on days that are no longer part of this trip.`,
       [
@@ -557,7 +558,7 @@ export default function ItineraryTab({
               await deleteItineraryOutsideRange(trip.id, dayToIso(days[0].day), dayToIso(days[days.length - 1].day));
               setItems((prev) => prev.filter((i) => daySet.has(isoToDay(i.scheduledDate))));
             } catch (e) {
-              Alert.alert('Could not clear', errorMessage(e));
+              showAlert('Could not clear', errorMessage(e));
             } finally {
               setClearing(false);
             }
@@ -766,7 +767,7 @@ export default function ItineraryTab({
       : 'Saved, not planned yet';
     const area = (place?.vicinity || '').split(',')[0];
     const sub = [
-      place?.rating > 0 ? `★ ${Number(place.rating).toFixed(1)}` : null,
+      ratingText(place?.rating) || null,
       area || null,
       cat.label,
     ].filter(Boolean).join(' · ');
@@ -973,7 +974,7 @@ export default function ItineraryTab({
             try {
               await onSetTripDates({ startDate: range.startDate, endDate: range.endDate || range.startDate });
             } catch (e) {
-              Alert.alert('Could not set dates', errorMessage(e));
+              showAlert('Could not set dates', errorMessage(e));
             }
           }}
         />
@@ -1364,7 +1365,7 @@ export default function ItineraryTab({
                   const area = (p.vicinity || '').split(',')[0];
                   const sub = [
                     multiStop ? p.destName : null,
-                    p.rating > 0 ? `★ ${Number(p.rating).toFixed(1)}` : null,
+                    ratingText(p.rating) || null,
                     area && area !== p.destName ? area : null,
                   ].filter(Boolean).join(' · ');
                   return (

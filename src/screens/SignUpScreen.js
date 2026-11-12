@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { createAccountWithEmail } from '../services';
 import { checkPassword, initialPasswordRules } from '../utils/passwordPolicy';
+import { LoaderOverlay } from '../components/WayraaLoader';
 
 /**
  * SignUpScreen - Shown when a new user needs to create an account.
@@ -89,7 +90,7 @@ export default function SignUpScreen({ navigation, route }) {
           <Text style={styles.emailText}>{email}</Text>
 
           {/* Name Input */}
-          <Text style={styles.label}>Full Name</Text>
+          <Text style={styles.label}>Full name</Text>
           <View style={[
             styles.inputContainer,
             focusedField === 'name' && styles.inputFocused,
@@ -168,11 +169,13 @@ export default function SignUpScreen({ navigation, route }) {
             {isLoading ? (
               <ActivityIndicator color={COLORS.white} />
             ) : (
-              <Text style={styles.primaryButtonText}>Create Account</Text>
+              <Text style={styles.primaryButtonText}>Create account</Text>
             )}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+      {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
+      <LoaderOverlay visible={isLoading} message="Creating your account…" />
     </SafeAreaView>
   );
 }

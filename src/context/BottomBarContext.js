@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
 
 /**
  * BottomBarContext — shared state for the single persistent app tab bar.
@@ -9,7 +9,13 @@ import React, { createContext, useContext, useState, useCallback, useMemo } from
  *   - register a `cta` ({ label, icon, onPress }) that appears beside the
  *     circle when collapsed;
  *   - register `tabs` (the trip screen's section tabs) that appear beside the
- *     circle instead. Tabs keep the bar collapsed while registered.
+ *     circle instead. Tabs keep the bar collapsed while registered;
+ *   - set `hidden` to slide the whole bar down off screen (Home hides it
+ *     while you scroll down and brings it back when you scroll up);
+ *   - claimBar(owner, { cta }) / releaseBar(owner): collapse with a CTA on
+ *     behalf of one screen (owner = its route key). releaseBar only clears it
+ *     if that screen still owns it, so a screen going into the background
+ *     can't wipe the bar the next screen has just set up.
  *
  * `tabs` is owned: { owner, items: [{ key, label, icon, iconFamily? }], activeKey, onChange }.
  * `iconFamily: 'feather'` draws a Feather line icon; otherwise Ionicons
@@ -25,9 +31,26 @@ export function BottomBarProvider({ children }) {
   const [collapsed, setCollapsed] = useState(false);
   const [cta, setCta] = useState(null); // { label, icon, onPress } | null
   const [tabs, setTabs] = useState(null);
+  const [hidden, setHidden] = useState(false);
 
   // Screens call this on unmount / blur to clear their collapse + CTA.
+  const owner = useRef(null);
   const reset = useCallback(() => {
+    owner.current = null;
+    setCollapsed(false);
+    setCta(null);
+    setHidden(false);
+  }, []);
+
+  const claimBar = useCallback((who, { cta: nextCta = null } = {}) => {
+    owner.current = who;
+    setCollapsed(true);
+    setCta(nextCta);
+  }, []);
+
+  const releaseBar = useCallback((who) => {
+    if (owner.current !== who) return;
+    owner.current = null;
     setCollapsed(false);
     setCta(null);
   }, []);
@@ -37,8 +60,8 @@ export function BottomBarProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ collapsed, setCollapsed, cta, setCta, tabs, setTabs, clearTabs, reset }),
-    [collapsed, cta, tabs, reset, clearTabs]
+    () => ({ collapsed, setCollapsed, cta, setCta, tabs, setTabs, clearTabs, hidden, setHidden, reset, claimBar, releaseBar }),
+    [collapsed, cta, tabs, hidden, reset, clearTabs, claimBar, releaseBar]
   );
 
   return <BottomBarContext.Provider value={value}>{children}</BottomBarContext.Provider>;
@@ -56,7 +79,11 @@ export function useBottomBar() {
       tabs: null,
       setTabs: () => {},
       clearTabs: () => {},
+      hidden: false,
+      setHidden: () => {},
       reset: () => {},
+      claimBar: () => {},
+      releaseBar: () => {},
     };
   }
   return ctx;

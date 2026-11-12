@@ -47,7 +47,7 @@ export function isStoryUploading() {
 }
 
 /** Resize + compress a picked photo; returns a local JPEG uri. */
-async function prepareForUpload(asset) {
+export async function prepareForUpload(asset) {
   const ctx = ImageManipulator.manipulate(asset.uri);
   if (asset.width && asset.width > UPLOAD_WIDTH) ctx.resize({ width: UPLOAD_WIDTH });
   const image = await ctx.renderAsync();

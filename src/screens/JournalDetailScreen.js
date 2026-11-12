@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   StatusBar,
   KeyboardAvoidingView,
   Platform,
@@ -31,6 +30,11 @@ import {
   vibeLabel,
   AuthRequiredError,
 } from '../services';
+import { showAlert } from '../components/AppDialog';
+import { useFocusEffect } from '@react-navigation/native';
+import { openStoryMenu, isMyStory, confirmBlock } from '../utils/storyActions';
+import WayraaLoader from '../components/WayraaLoader';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
@@ -40,7 +44,7 @@ function Avatar({ name, photoUrl, size = 36 }) {
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: avatarColorFor(name) }]}>
       {photoUrl
-        ? <Image source={{ uri: photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+        ? <Image source={{ uri: cloudinarySized(photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
         : <Text style={[styles.avatarText, { fontSize: size * 0.38 }]}>{initialsFor(name)}</Text>}
     </View>
   );
@@ -83,7 +87,17 @@ export default function JournalDetailScreen({ navigation, route }) {
     getStoredUser().then((u) => setMyUserId(u?.id || null)).catch(() => {});
   }, [load]);
 
-  const askToSignIn = (what) => Alert.alert(`Sign in to ${what}`, 'Create an account or sign in to like and comment.', [
+  // Back from editing the story: show the changes.
+  const firstFocus = useRef(true);
+  useFocusEffect(useCallback(() => {
+    if (firstFocus.current) {
+      firstFocus.current = false;
+      return;
+    }
+    load();
+  }, [load]));
+
+  const askToSignIn = (what) => showAlert(`Sign in to ${what}`, 'Create an account or sign in to like and comment.', [
     { text: 'Not now', style: 'cancel' },
     { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
   ]);
@@ -118,14 +132,38 @@ export default function JournalDetailScreen({ navigation, route }) {
       setComment('');
     } catch (e) {
       if (e instanceof AuthRequiredError) askToSignIn('comment');
-      else Alert.alert('Couldn\'t post', e?.message || 'Please try again.');
+      else showAlert('Couldn\'t post', e?.message || 'Please try again.');
     } finally {
       setPosting(false);
     }
   };
 
+  // ⋯ on someone else's comment: block them. Their comments go at once; if
+  // they wrote the story, it's closed too.
+  const blockFromComment = (c) => {
+    const name = c.author?.name || 'this traveller';
+    showAlert(name, undefined, [
+      {
+        text: `Block ${name}`,
+        style: 'destructive',
+        icon: 'ban-outline',
+        onPress: () => confirmBlock({ id: c.author.id, name }, (userId) => {
+          if (journal.author?.id === userId) {
+            navigation.goBack();
+            return;
+          }
+          setJournal((j) => {
+            const left = (j.comments || []).filter((x) => x.author?.id !== userId);
+            return { ...j, comments: left, commentsCount: Math.max(0, (j.commentsCount || 0) - ((j.comments || []).length - left.length)) };
+          });
+        }),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ], { sheet: true });
+  };
+
   const removeComment = (c) => {
-    Alert.alert('Delete comment?', undefined, [
+    showAlert('Delete comment?', undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -140,7 +178,7 @@ export default function JournalDetailScreen({ navigation, route }) {
               commentsCount: Math.max(0, (j.commentsCount || 1) - 1),
             }));
           } catch (e) {
-            Alert.alert('Couldn\'t delete', e?.message || 'Please try again.');
+            showAlert('Couldn\'t delete', e?.message || 'Please try again.');
           } finally {
             setDeletingId(null);
           }
@@ -165,7 +203,7 @@ export default function JournalDetailScreen({ navigation, route }) {
       <View style={[styles.container, styles.center]}>
         <StatusBar barStyle="dark-content" />
         {loading ? (
-          <ActivityIndicator color={COLORS.accent} />
+          <WayraaLoader size={88} />
         ) : (
           <>
             <Feather name="book-open" size={40} color={COLORS.textMuted} />
@@ -219,7 +257,7 @@ export default function JournalDetailScreen({ navigation, route }) {
                     accessibilityLabel={p.caption || `Photo ${i + 1} from ${journal.destination}`}
                   >
                     <Image
-                      source={{ uri: p.url }}
+                      source={{ uri: cloudinarySized(p.url, IMAGE_WIDTH.PHOTO) }}
                       style={{ width, height: PHOTO_HEIGHT }}
                       contentFit="cover"
                       transition={200}
@@ -254,6 +292,12 @@ export default function JournalDetailScreen({ navigation, route }) {
               <Text style={styles.destText} numberOfLines={1}>{journal.destination}</Text>
             </View>
             <Text style={styles.title} accessibilityRole="header">{journal.title || routeTitle}</Text>
+            {journal.visibility === 'private' && (
+              <View style={styles.hiddenNote}>
+                <Feather name="eye-off" size={13} color={COLORS.textSecondary} />
+                <Text style={styles.hiddenNoteText}>Hidden from Community · only you can see it</Text>
+              </View>
+            )}
 
             <View style={styles.authorRow}>
               <Avatar name={author} photoUrl={journal.author?.photoUrl} />
@@ -369,6 +413,16 @@ export default function JournalDetailScreen({ navigation, route }) {
                           </TouchableOpacity>
                         )
                       )}
+                      {/* Someone else's comment: block them from here too. */}
+                      {!mine && !!myUserId && !!c.author?.id && (
+                        <TouchableOpacity
+                          onPress={() => blockFromComment(c)}
+                          hitSlop={8}
+                          accessibilityLabel={`More options for ${c.author?.name || 'this'} comment`}
+                        >
+                          <Feather name="more-horizontal" size={15} color={COLORS.textMuted} />
+                        </TouchableOpacity>
+                      )}
                     </View>
                     <Text style={styles.commentBody}>{c.body}</Text>
                   </View>
@@ -401,9 +455,27 @@ export default function JournalDetailScreen({ navigation, route }) {
         </ScrollView>
       </KeyboardAvoidingView>
       {backButton}
+      <TouchableOpacity
+        style={[styles.roundButton, { top: insets.top + SIZES.spacing_sm, right: SIZES.spacing_base }]}
+        onPress={() => openStoryMenu({
+          journal,
+          isMine: isMyStory(journal, myUserId),
+          signedIn: !!myUserId,
+          navigation,
+          onChanged: (j) => setJournal((prev) => ({ ...prev, ...j })),
+          onDeleted: () => navigation.goBack(),
+          onRemoved: () => navigation.goBack(),
+          onBlocked: () => navigation.goBack(),
+        })}
+        accessibilityRole="button"
+        accessibilityLabel="More options for this story"
+        hitSlop={8}
+      >
+        <Ionicons name="ellipsis-horizontal" size={20} color={COLORS.white} />
+      </TouchableOpacity>
       <PhotoViewer
         visible={viewerIndex !== null}
-        photos={photos.map((p) => p.url)}
+        photos={photos.map((p) => cloudinarySized(p.url, IMAGE_WIDTH.FULL))}
         initialIndex={viewerIndex || 0}
         onClose={() => setViewerIndex(null)}
       />
@@ -432,6 +504,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  hiddenNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: SIZES.spacing_sm,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: '#eef1f4',
+  },
+  hiddenNoteText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
   },
   roundButtonDark: {
     backgroundColor: COLORS.primary,

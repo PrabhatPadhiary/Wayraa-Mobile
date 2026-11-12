@@ -9,7 +9,6 @@ import {
   ScrollView,
   RefreshControl,
   Animated,
-  Alert,
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import { ratingText } from '../components/RatingRow';
 import { COLORS, SIZES } from '../constants';
 import {
   FilterChips,
@@ -29,6 +29,7 @@ import { getFavourites, removeFavourite, addFavourite, AuthRequiredError } from 
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { cityOf, groupByCity, favouriteIcon } from '../utils/favourites';
 import useAuth from '../hooks/useAuth';
+import { showAlert } from '../components/AppDialog';
 
 /**
  * Category filters. `match` lists the backend category values each chip includes.
@@ -199,7 +200,7 @@ export default function FavoritesScreen({ navigation }) {
         next.splice(Math.max(0, index), 0, item);
         return next;
       });
-      Alert.alert('Could not remove', 'Please check your connection and try again.');
+      showAlert('Could not remove', 'Please check your connection and try again.');
       return;
     }
     showToast({ item, index });
@@ -228,7 +229,7 @@ export default function FavoritesScreen({ navigation }) {
       if (!res.success) throw new Error(res.error);
     } catch (e) {
       setFavourites((prev) => prev.filter((f) => f.placeId !== item.placeId));
-      Alert.alert('Could not restore', 'Please try saving it again from the place page.');
+      showAlert('Could not restore', 'Please try saving it again from the place page.');
     }
   };
 
@@ -372,9 +373,7 @@ export default function FavoritesScreen({ navigation }) {
             <View style={styles.tileText}>
               <Text style={styles.tileName} numberOfLines={2}>{item.placeName}</Text>
               <Text style={styles.tileMeta} numberOfLines={1}>
-                {item.rating > 0 ? `★ ${item.rating}` : ''}
-                {item.rating > 0 && city ? ' · ' : ''}
-                {city || ''}
+                {[ratingText(item.rating, item.userRatingsTotal), city].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <TouchableOpacity
@@ -505,7 +504,7 @@ export default function FavoritesScreen({ navigation }) {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
         <SignInPrompt
           icon="heart-outline"
-          title="Save your favorite places"
+          title="Save your favourite places"
           subtitle="Sign in to keep the places you love in one place."
           onSignIn={() => navigation.navigate('Welcome')}
         />
@@ -534,7 +533,7 @@ export default function FavoritesScreen({ navigation }) {
 
       {/* Shared floating header panel. List scrolls beneath. */}
       <ScreenHeader
-        title="Favorites"
+        title="Favourites"
         subtitle={
           favourites.length > 0
             ? `${favourites.length} saved ${favourites.length === 1 ? 'place' : 'places'}`

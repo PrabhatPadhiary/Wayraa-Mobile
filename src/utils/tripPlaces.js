@@ -58,3 +58,21 @@ export function buildTripPlaceDto(place, category) {
     longitude: place.geometry?.longitude ?? place.longitude ?? null,
   };
 }
+
+/**
+ * The "adding places" button label, for this visit only: what's on the trip
+ * stop now (`pickedMap`: placeId -> trip place id) compared with what was on
+ * it when you started (`initial`: placeIds, from pickForTrip.initial).
+ * "Done", "Done · 3 added", "Done · 1 added, 1 removed", "Done · 2 removed".
+ * Places are added the moment you tap their +, so this button only finishes.
+ */
+export function pickDoneLabel(pickedMap, initial) {
+  const before = new Set(initial || []);
+  const added = [...pickedMap.keys()].filter((id) => !before.has(id)).length;
+  const removed = [...before].filter((id) => !pickedMap.has(id)).length;
+  const parts = [
+    added ? `${added} added` : null,
+    removed ? `${removed} removed` : null,
+  ].filter(Boolean);
+  return parts.length ? `Done · ${parts.join(', ')}` : 'Done';
+}

@@ -25,6 +25,7 @@ import {
 import { formatDay, dayCount } from '../utils/tripDates';
 import ExpenseSheet, { EXPENSE_CATEGORIES } from './ExpenseSheet';
 import { isoToDay, todayDay } from './DateRangeCalendar';
+import WayraaLoader from './WayraaLoader';
 
 const CATEGORY_BY_KEY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 
@@ -271,7 +272,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
         </View>
 
         {status === 'loading' ? (
-          <ActivityIndicator style={styles.loader} color={COLORS.accent} />
+          <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={64} /></View>
         ) : status === 'error' ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>Couldn't load expenses.</Text>

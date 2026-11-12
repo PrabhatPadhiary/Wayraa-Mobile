@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,6 +10,8 @@ import { avatarColorFor, initialsFor } from './TripStackCard';
 import { timeAgo } from './JournalCard';
 import { getJournalsForPlace } from '../services';
 import useAuth from '../hooks/useAuth';
+import { showAlert } from './AppDialog';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const CARD_WIDTH = 220;
 
@@ -44,7 +46,7 @@ export default function PlaceStories({ placeId, placeName, navigation, prefill }
 
   const shareStory = () => {
     if (!isAuthenticated) {
-      Alert.alert('Sign in to share', 'Create an account or sign in to post your trip stories.', [
+      showAlert('Sign in to share', 'Create an account or sign in to post your trip stories.', [
         { text: 'Not now', style: 'cancel' },
         { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
       ]);
@@ -107,7 +109,7 @@ export default function PlaceStories({ placeId, placeName, navigation, prefill }
           snapToInterval={CARD_WIDTH + SIZES.spacing_md}
         >
           {stories.map((j) => {
-            const cover = j.photos?.[0]?.url;
+            const cover = cloudinarySized(j.photos?.[0]?.url, IMAGE_WIDTH.COVER);
             const author = j.author?.name || 'Traveller';
             return (
               <TouchableOpacity
@@ -139,7 +141,7 @@ export default function PlaceStories({ placeId, placeName, navigation, prefill }
                   <View style={styles.authorRow}>
                     <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
                       {j.author?.photoUrl
-                        ? <Image source={{ uri: j.author.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                        ? <Image source={{ uri: cloudinarySized(j.author.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
                         : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
                     </View>
                     <Text style={styles.authorName} numberOfLines={1}>{author}</Text>

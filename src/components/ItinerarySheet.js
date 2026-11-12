@@ -11,7 +11,6 @@ import {
   Pressable,
   Dimensions,
   Platform,
-  Alert,
   Keyboard,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -34,6 +33,7 @@ import {
   minutesToTime,
   placeToItineraryCategory,
 } from '../utils/itinerary';
+import { showAlert } from './AppDialog';
 
 const WINDOW_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = WINDOW_HEIGHT * 0.9;
@@ -214,7 +214,7 @@ export default function ItinerarySheet({
   };
 
   const confirmDelete = () => {
-    Alert.alert('Remove from plan?', `"${item?.title}" will be removed from the itinerary.`, [
+    showAlert('Remove from plan?', `"${item?.title}" will be removed from the itinerary.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',

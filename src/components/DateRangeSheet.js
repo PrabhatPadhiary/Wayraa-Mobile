@@ -21,12 +21,28 @@ function dayLabel(iso) {
 }
 
 /**
- * "Arrive → Leave · N nights" summary of a date range. Used at the top of the
+ * "Arrive → Leave · N days · N-1 nights" summary of a date range. Used at the top of the
  * calendar and as the tappable field that opens it.
  */
-export function DateRangeSummary({ startDate, endDate, startLabel = 'Arrive', endLabel = 'Leave' }) {
+/** "9 days · 8 nights" (or "Day trip · 1 day") for a range; nothing until both dates are set. */
+export function TripLengthPill({ startDate, endDate, style }) {
   const nights = nightsBetween(startDate, endDate);
+  if (nights == null) return null;
   return (
+    <View style={[styles.nightsPill, style]}>
+      <Text style={styles.nightsText}>
+        {nights === 0
+          ? 'Day trip · 1 day'
+          : `${nights + 1} days · ${nights} ${nights === 1 ? 'night' : 'nights'}`}
+      </Text>
+    </View>
+  );
+}
+
+export function DateRangeSummary({ startDate, endDate, startLabel = 'Arrive', endLabel = 'Leave', showLength = true }) {
+  return (
+    <View style={styles.summaryWrap}>
+    {/* Arrive → Leave on one line; the length on its own line under it. */}
     <View style={styles.summary}>
       <View style={styles.summaryHalf}>
         <Text style={styles.summaryLabel}>{startLabel}</Text>
@@ -41,20 +57,19 @@ export function DateRangeSummary({ startDate, endDate, startLabel = 'Arrive', en
           {dayLabel(endDate) || 'Add date'}
         </Text>
       </View>
-      {nights != null && (
-        <View style={styles.nightsPill}>
-          <Text style={styles.nightsText}>
-            {nights === 0 ? 'Day trip' : `${nights} ${nights === 1 ? 'night' : 'nights'}`}
-          </Text>
-        </View>
-      )}
+    </View>
+      {showLength && <TripLengthPill startDate={startDate} endDate={endDate} />}
     </View>
   );
 }
 
-/** Tappable field showing the chosen range; opens the calendar sheet. */
+/**
+ * Tappable field showing the chosen range; opens the calendar sheet. The
+ * trip's length sits under the field, outside the box.
+ */
 export function DateRangeField({ startDate, endDate, onPress, startLabel, endLabel }) {
   return (
+    <View>
     <TouchableOpacity
       style={styles.field}
       onPress={onPress}
@@ -64,9 +79,11 @@ export function DateRangeField({ startDate, endDate, onPress, startLabel, endLab
     >
       <Ionicons name="calendar" size={18} color={COLORS.accent} />
       <View style={styles.fieldBody}>
-        <DateRangeSummary startDate={startDate} endDate={endDate} startLabel={startLabel} endLabel={endLabel} />
+        <DateRangeSummary startDate={startDate} endDate={endDate} startLabel={startLabel} endLabel={endLabel} showLength={false} />
       </View>
     </TouchableOpacity>
+    <TripLengthPill startDate={startDate} endDate={endDate} />
+    </View>
   );
 }
 
@@ -155,6 +172,9 @@ export default function DateRangeSheet({
 
 const styles = StyleSheet.create({
   // Summary
+  summaryWrap: {
+    alignSelf: 'stretch',
+  },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -182,6 +202,8 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_500Medium',
   },
   nightsPill: {
+    alignSelf: 'flex-start',
+    marginTop: SIZES.spacing_sm,
     paddingHorizontal: SIZES.spacing_sm,
     paddingVertical: 3,
     borderRadius: SIZES.radius_full,

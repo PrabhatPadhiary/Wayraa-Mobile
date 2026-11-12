@@ -21,6 +21,8 @@ import { fallbackGradientFor } from '../components/PlaceTile';
 import { ROLE_INFO } from '../components/TravellersSheet';
 import { getInvitationPreview, joinTrip, parseInviteId, AuthRequiredError } from '../services';
 import { normalizePhotoUrl } from '../utils/placePhotos';
+import { LoaderOverlay } from '../components/WayraaLoader';
+import WayraaLoader from '../components/WayraaLoader';
 
 /**
  * Join a trip from an invite.
@@ -170,7 +172,7 @@ export default function JoinTripScreen({ navigation, route }) {
             </>
           )}
 
-          {loading && <ActivityIndicator style={styles.loader} color={COLORS.accent} />}
+          {loading && <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={72} /></View>}
 
           {!!error && (
             <View style={styles.errorBox}>
@@ -255,6 +257,8 @@ export default function JoinTripScreen({ navigation, route }) {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+      {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
+      <LoaderOverlay visible={joining} message="Joining the trip…" />
     </SafeAreaView>
   );
 }

@@ -104,7 +104,19 @@ function SectionTabs({ tabs, width }) {
 }
 
 export default function AppTabBar({ state, navigation }) {
-  const { collapsed, cta, tabs } = useBottomBar();
+  const { collapsed, cta, tabs, hidden } = useBottomBar();
+
+  // Slide the whole bar down off screen while `hidden` (and back up).
+  const [barHeight, setBarHeight] = useState(110);
+  const hideAnim = useRef(new Animated.Value(hidden ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(hideAnim, {
+      toValue: hidden ? 1 : 0,
+      duration: hidden ? 260 : 320,
+      easing: hidden ? Easing.in(Easing.cubic) : Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [hidden, hideAnim]);
 
   // Section tabs replace the app tabs inside the same full-width pill, with a
   // crossfade. The last tabs are kept during the fade-out after they clear.
@@ -183,10 +195,21 @@ export default function AppTabBar({ state, navigation }) {
   };
 
   return (
-    <View
-      style={[styles.wrapper, { paddingBottom: Platform.OS === 'ios' ? 28 : SIZES.spacing_lg }]}
-      pointerEvents="box-none"
-      onLayout={(e) => setRowWidth(e.nativeEvent.layout.width - SIZES.spacing_lg * 2)}
+    <Animated.View
+      style={[
+        styles.wrapper,
+        {
+          paddingBottom: Platform.OS === 'ios' ? 28 : SIZES.spacing_lg,
+          transform: [{
+            translateY: hideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, barHeight + 12] }),
+          }],
+        },
+      ]}
+      pointerEvents={hidden ? 'none' : 'box-none'}
+      onLayout={(e) => {
+        setRowWidth(e.nativeEvent.layout.width - SIZES.spacing_lg * 2);
+        setBarHeight(e.nativeEvent.layout.height);
+      }}
     >
       <View style={styles.row}>
         {/* Morphing glass pill: full tab bar -> active-tab circle. */}
@@ -272,7 +295,7 @@ export default function AppTabBar({ state, navigation }) {
           </Animated.View>
         )}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

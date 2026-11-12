@@ -8,6 +8,7 @@ import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
 import { vibeLabel } from '../services/journalsService';
 import { dayCount } from '../utils/tripDates';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -59,8 +60,10 @@ const LIKE_RED = '#e0245e';
  * @param {() => void} onToggleLike
  * @param {() => void} [onDoubleTapLike]  like (never unlike) from a double tap
  * @param {() => void} [onLongPress]
+ * @param {() => void} [onMore]   the ⋯ menu (edit, share, delete, ...)
+ * @param {string} [badge]        a tag on the photo, e.g. "Hidden"
  */
-export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTapLike, onLongPress }) {
+export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTapLike, onLongPress, onMore, badge }) {
   const [failed, setFailed] = useState(false);
   const lastTap = useRef(0);
   const singleTapTimer = useRef(null);
@@ -91,7 +94,7 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
       onPress?.();
     }, DOUBLE_TAP_MS);
   };
-  const cover = journal.photos?.[0]?.url;
+  const cover = cloudinarySized(journal.photos?.[0]?.url, IMAGE_WIDTH.COVER);
   useEffect(() => setFailed(false), [cover]);
   const showPhoto = !!cover && !failed;
   const when = tripWhen(journal);
@@ -150,6 +153,12 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
           </View>
           {!!when && <Text style={styles.whenText}>{when}</Text>}
         </View>
+        {!!badge && (
+          <View style={styles.badge}>
+            <Feather name="eye-off" size={11} color={COLORS.white} />
+            <Text style={styles.badgeText}>{badge}</Text>
+          </View>
+        )}
         {photoCount > 1 && (
           <View style={styles.photoCount}>
             <Feather name="image" size={11} color={COLORS.white} />
@@ -190,7 +199,7 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
         <View style={styles.footer}>
           <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
             {journal.author?.photoUrl
-              ? <Image source={{ uri: journal.author?.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+              ? <Image source={{ uri: cloudinarySized(journal.author?.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
               : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
           </View>
           <View style={styles.authorText}>
@@ -217,6 +226,17 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
             <Feather name="message-circle" size={17} color={COLORS.textSecondary} />
             <Text style={styles.statText}>{journal.commentsCount || 0}</Text>
           </View>
+          {onMore && (
+            <TouchableOpacity
+              style={styles.more}
+              onPress={onMore}
+              hitSlop={{ top: 10, bottom: 10, left: 6, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="More options for this story"
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </TouchableOpacity>
@@ -383,5 +403,31 @@ const styles = StyleSheet.create({
   },
   statTextLiked: {
     color: '#e0245e',
+  },
+  more: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginLeft: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f0f2f5',
+  },
+  badge: {
+    position: 'absolute',
+    top: SIZES.spacing_md,
+    left: SIZES.spacing_md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: 'rgba(4,50,71,0.85)',
+  },
+  badgeText: {
+    fontSize: SIZES.xs + 1,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
   },
 });

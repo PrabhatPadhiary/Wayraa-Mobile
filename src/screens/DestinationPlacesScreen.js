@@ -9,19 +9,17 @@ import {
   ScrollView,
   ActivityIndicator,
   StatusBar,
-  Alert,
   Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
-import { Image } from 'expo-image';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import RatingRow from '../components/RatingRow';
+import PlaceGridCard, { CardCornerButton } from '../components/PlaceGridCard';
 import { placeIconFor } from '../components/PlaceSearchField';
 import PickToggle from '../components/PickToggle';
 import { useBottomBar } from '../context/BottomBarContext';
-import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
 import {
   searchInDestination,
   searchAnyPlace,
@@ -35,6 +33,8 @@ import {
   journalCategoryFor,
   AuthRequiredError,
 } from '../services';
+import { showAlert } from '../components/AppDialog';
+import WayraaLoader from '../components/WayraaLoader';
 
 /** A trip place category from Google types: food, stay or activity. */
 function tripCategoryFromTypes(types = []) {
@@ -64,6 +64,8 @@ const SUGGEST_RADIUS = 50000; // metres around the destination
  *    categoryLabel, filters (chip labels, 'All' first), filter (starting chip)
  *  - search: query (optional starting text), coords ({ lat, lng }) to keep
  *    live suggestions inside the destination
+ *  - createTrip (CreateTrip's params): the destination's "Create a trip",
+ *    kept in the bottom bar here as on the destination page
  *  - pickForTrip ({ tripId, destinationId, tripName, saved }): adding to a
  *    trip stop — cards and suggestions get add / added toggles instead of
  *    the heart, and the bottom bar shows "Add (N)" to finish
@@ -85,6 +87,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
     query: startQuery = '',
     coords = null,
     pickForTrip = null,
+    createTrip = null,
   } = route.params || {};
   const isSearch = mode === 'search';
 
@@ -108,19 +111,37 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   }, [pickTripId, loadPicked]));
 
   // Bottom bar: "Add (N)" (or "Done") returns to where adding started.
-  const { setCollapsed, setCta, reset } = useBottomBar();
+  const { claimBar, releaseBar } = useBottomBar();
+  const barOwner = route?.key;
   const isFocused = useIsFocused();
   const pickedCount = pickedMap.size;
+  // "Done · 3 added": this visit's changes only (not everything on the stop).
+  const doneLabel = pickDoneLabel(pickedMap, pickForTrip?.initial);
+  // Browsing / searching a destination: the bar stays collapsed with its
+  // "Create a trip" button, the same as on the destination page.
+  useEffect(() => {
+    if (pickForTrip || !createTrip || !isFocused) return undefined;
+    claimBar(barOwner, {
+      cta: {
+        label: 'Create a trip',
+        icon: 'add-circle-outline',
+        onPress: () => navigation.navigate('CreateTrip', createTrip),
+      },
+    });
+    return () => releaseBar(barOwner);
+  }, [pickForTrip, createTrip, isFocused, claimBar, releaseBar, barOwner, navigation]);
+
   useEffect(() => {
     if (!pickForTrip || !isFocused) return undefined;
-    setCollapsed(true);
-    setCta({
-      label: pickedCount > 0 ? `Add (${pickedCount})` : 'Done',
-      icon: 'checkmark-circle',
-      onPress: () => navigation.goBack(),
+    claimBar(barOwner, {
+      cta: {
+        label: doneLabel,
+        icon: 'checkmark-circle',
+        onPress: () => navigation.goBack(),
+      },
     });
-    return () => reset();
-  }, [pickForTrip, isFocused, pickedCount, setCta, setCollapsed, reset, navigation]);
+    return () => releaseBar(barOwner);
+  }, [pickForTrip, isFocused, doneLabel, claimBar, releaseBar, barOwner, navigation]);
 
   // Add / remove a place on the trip stop. `place` is a search result or a
   // suggestion (suggestions are looked up first, for photo and coordinates).
@@ -154,7 +175,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
         setPickedMap((prev) => new Map(prev).set(id, res.id || ''));
       }
     } catch (e) {
-      Alert.alert(
+      showAlert(
         'Could not update trip',
         e instanceof AuthRequiredError ? 'Sign in to edit your trips.' : (e?.message || 'Please try again.')
       );
@@ -307,7 +328,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
     } catch (e) {
       flip(wasFaved);
       if (e instanceof AuthRequiredError) {
-        Alert.alert('Sign in to save places', 'Create an account or sign in to keep favourites.', [
+        showAlert('Sign in to save places', 'Create an account or sign in to keep favourites.', [
           { text: 'Not now', style: 'cancel' },
           { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
         ]);
@@ -320,9 +341,14 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   const renderPlace = ({ item }) => {
     const isFaved = favedIds.has(item.placeId);
     return (
-      <TouchableOpacity
-        style={styles.card}
-        activeOpacity={0.92}
+      <PlaceGridCard
+        style={styles.cardCell}
+        name={item.name}
+        photoUrl={item.photoUrl}
+        rating={item.rating}
+        reviews={item.userRatingsTotal}
+        subtitle={item.vicinity}
+        accessibilityLabel={`${item.name}${item.rating ? `, rated ${item.rating}` : ''}`}
         onPress={() => navigation.navigate('PlaceDetail', {
           placeId: item.placeId,
           name: item.name,
@@ -332,44 +358,24 @@ export default function DestinationPlacesScreen({ navigation, route }) {
           category: categoryKey,
           pickForTrip,
         })}
-        accessibilityRole="button"
-        accessibilityLabel={`${item.name}${item.rating ? `, rated ${item.rating}` : ''}`}
-      >
-        <View>
-          {item.photoUrl ? (
-            <Image source={{ uri: item.photoUrl }} style={styles.cardImage} contentFit="cover" transition={150} />
-          ) : (
-            <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
-              <Ionicons name="image-outline" size={26} color={COLORS.textMuted} />
-            </View>
-          )}
-          {pickForTrip ? (
-            <PickToggle
-              picked={pickedMap.has(item.placeId)}
-              pending={pickPending.has(item.placeId)}
-              onPress={() => togglePick(item)}
-              label={pickedMap.has(item.placeId)
-                ? `Remove ${item.name} from ${pickForTrip.tripName}`
-                : `Add ${item.name} to ${pickForTrip.tripName}`}
-            />
-          ) : (
-            <TouchableOpacity
-              style={styles.heartButton}
-              onPress={() => toggleFavourite(item)}
-              activeOpacity={0.8}
-              accessibilityLabel={isFaved ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Ionicons name={isFaved ? 'heart' : 'heart-outline'} size={18} color={isFaved ? COLORS.accent : COLORS.textPrimary} />
-            </TouchableOpacity>
-          )}
-        </View>
-        <View style={styles.cardContent}>
-          <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
-          <RatingRow rating={item.rating} reviews={item.userRatingsTotal} style={styles.cardRating} />
-          {!!item.vicinity && <Text style={styles.cardVicinity} numberOfLines={2}>{item.vicinity}</Text>}
-        </View>
-      </TouchableOpacity>
+        corner={pickForTrip ? (
+          <PickToggle
+            picked={pickedMap.has(item.placeId)}
+            pending={pickPending.has(item.placeId)}
+            onPress={() => togglePick(item)}
+            label={pickedMap.has(item.placeId)
+              ? `Remove ${item.name} from ${pickForTrip.tripName}`
+              : `Add ${item.name} to ${pickForTrip.tripName}`}
+          />
+        ) : (
+          <CardCornerButton
+            icon={isFaved ? 'heart' : 'heart-outline'}
+            color={isFaved ? COLORS.accent : COLORS.textPrimary}
+            onPress={() => toggleFavourite(item)}
+            accessibilityLabel={isFaved ? `Remove ${item.name} from favourites` : `Add ${item.name} to favourites`}
+          />
+        )}
+      />
     );
   };
 
@@ -396,7 +402,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   };
 
   const renderEmpty = () => {
-    if (loading) return <ActivityIndicator style={styles.loader} color={COLORS.accent} />;
+    if (loading) return <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={72} /></View>;
     if (isSearch && !query) {
       return (
         <View style={styles.state}>
@@ -599,6 +605,10 @@ export default function DestinationPlacesScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
+  // Two-column grid cell (the card itself is PlaceGridCard).
+  cardCell: {
+    maxWidth: '48.5%',
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.white,
@@ -767,59 +777,6 @@ const styles = StyleSheet.create({
   },
   column: {
     gap: SIZES.spacing_base,
-  },
-  // Same card as the destination page.
-  card: {
-    flex: 1,
-    maxWidth: '48.5%',
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    marginBottom: SIZES.spacing_base,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-    overflow: 'hidden',
-  },
-  cardImage: {
-    width: '100%',
-    height: 120,
-  },
-  cardImagePlaceholder: {
-    backgroundColor: COLORS.cardBackground,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  heartButton: {
-    position: 'absolute',
-    top: SIZES.spacing_sm,
-    right: SIZES.spacing_sm,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardContent: {
-    padding: SIZES.spacing_md,
-  },
-  cardName: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  cardRating: {
-    marginTop: 4,
-  },
-  cardVicinity: {
-    marginTop: 2,
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
   },
 
   footerSpinner: {

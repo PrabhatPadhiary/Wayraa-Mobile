@@ -1,25 +1,20 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   StatusBar,
-  Image,
+  ScrollView,
   FlatList,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { FilterChips, ScreenHeader, GridSkeleton } from '../components';
-import { getPlacesByTheme, getCurrentLocation } from '../services';
-
-// Global vs. region-biased ("Nearby") toggle.
-const SCOPES = [
-  { key: 'global', label: 'Global', icon: 'earth-outline' },
-  { key: 'nearby', label: 'Nearby', icon: 'navigate-outline' },
-];
+import { CURATED_DESTINATIONS } from '../constants/curatedDestinations';
+import { ScreenHeader, Skeleton, PlaceTile } from '../components';
+import PlaceGridCard from '../components/PlaceGridCard';
+import { getPlacesByTheme, getCurrentLocation, reverseGeocode, isRegionResult } from '../services';
+import { placePhotoUrl } from '../utils/placePhotos';
 
 // Fallback copy per theme if the route doesn't pass a label.
 const THEME_LABELS = {
@@ -31,338 +26,285 @@ const THEME_LABELS = {
   wildlife: 'Wildlife',
 };
 
+// What "near you" is called per theme. Cities has none: you're in one.
+const NEARBY_COPY = {
+  beaches: 'Beaches you can get to',
+  mountains: 'Hills & mountains nearby',
+  historical: 'History around you',
+  islands: 'Islands you can get to',
+  wildlife: 'Wildlife nearby',
+};
+
+// Past this, "near you" is a stretch: the row is titled "Closest to you".
+const FAR_KM = 600;
+
+// PlaceTile's size, for the loading placeholders.
+const TILE_W = 150;
+const TILE_H = 190;
+
+function distanceText(km) {
+  if (km == null) return null;
+  if (km < 1) return 'Under 1 km';
+  if (km < 10) return `${km.toFixed(1)} km`;
+  return `${Math.round(km).toLocaleString()} km`;
+}
+
 /**
- * CategoryResultsScreen - themed destinations for a home-screen category
- * (Beaches, Mountains, ...). A Global / Nearby toggle switches between a
- * worldwide list and one biased toward the user's region.
+ * CategoryResultsScreen - a home-screen category (Beaches, Mountains, ...).
+ *
+ *  - "Near you": real places of that kind around you, nearest first, with
+ *    their distance (a sideways row; hidden for Cities, or without location).
+ *  - "Around the world": a curated grid of famous destinations.
+ *
+ * Route params: theme, title.
  */
 export default function CategoryResultsScreen({ route, navigation }) {
   const theme = route?.params?.theme;
   const title = route?.params?.title || THEME_LABELS[theme] || 'Destinations';
+  const curated = CURATED_DESTINATIONS[theme] || [];
+  const hasNearby = !!NEARBY_COPY[theme];
 
-  const [scope, setScope] = useState('global');
-  const [places, setPlaces] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [locationDenied, setLocationDenied] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(0);
+  // 'loading' | 'ready' | 'off' (no location) | 'none' (nothing found)
+  const [nearState, setNearState] = useState(hasNearby ? 'loading' : 'off');
+  const [nearby, setNearby] = useState([]);
+  const [city, setCity] = useState(null);
 
-  // Cache the resolved coordinates so switching back to Nearby doesn't
-  // re-prompt / re-fetch GPS each time.
-  const coordsRef = useRef(null);
-
-  const load = useCallback(async (activeScope) => {
-    setLoading(true);
-    setError(false);
-    setLocationDenied(false);
-
-    try {
-      let coords = null;
-      if (activeScope === 'nearby') {
-        if (coordsRef.current) {
-          coords = coordsRef.current;
-        } else {
-          const loc = await getCurrentLocation();
-          if (loc.granted) {
-            coords = { lat: loc.lat, lng: loc.lng };
-            coordsRef.current = coords;
-          } else {
-            // No permission: show a note and fall back to a global list so the
-            // screen is never empty.
-            setLocationDenied(true);
-          }
-        }
-      }
-
-      const data = await getPlacesByTheme(theme, coords);
-      setPlaces(data);
-    } catch (e) {
-      console.log('CategoryResults load error:', e);
-      setError(true);
-    } finally {
-      setLoading(false);
+  const loadNearby = useCallback(async () => {
+    if (!hasNearby) return;
+    setNearState('loading');
+    const loc = await getCurrentLocation();
+    if (!loc?.granted) {
+      setNearState('off');
+      return;
     }
-  }, [theme]);
+    const label = await reverseGeocode(loc.lat, loc.lng);
+    setCity(label);
+    const places = await getPlacesByTheme(theme, { lat: loc.lat, lng: loc.lng }, label);
+    setNearby(places);
+    setNearState(places.length ? 'ready' : 'none');
+  }, [hasNearby, theme]);
 
   useEffect(() => {
-    load(scope);
-  }, [scope, load]);
+    loadNearby();
+  }, [loadNearby]);
 
-  const changeScope = (key) => {
-    if (key === scope) return;
-    setScope(key);
-  };
-
-  const openDestination = (item) => {
+  // An area (a country, an island, a city) opens its destination page, with
+  // stays, food and things to do inside it; a single spot (a beach, a
+  // monument, a national park) opens its place page.
+  const openItem = (item, { isArea }) => {
     if (!item?.placeId) return;
-    navigation.navigate('DestinationDetail', {
-      placeId: item.placeId,
-      name: item.name,
-      secondary: item.vicinity || '',
-    });
+    if (isArea) {
+      navigation.navigate('DestinationDetail', {
+        placeId: item.placeId,
+        name: item.name,
+        secondary: item.vicinity || item.country || '',
+      });
+    } else {
+      navigation.navigate('PlaceDetail', {
+        placeId: item.placeId,
+        name: item.name,
+        vicinity: item.vicinity || item.country || '',
+        photoUrl: item.photoUrl,
+        rating: item.rating,
+      });
+    }
   };
 
-  const renderCard = ({ item }) => (
-    <TouchableOpacity
-      style={styles.card}
-      activeOpacity={0.9}
-      onPress={() => openDestination(item)}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${item.name}`}
-    >
-      <View style={styles.cardImageWrap}>
-        {item.photoUrl ? (
-          <Image source={{ uri: item.photoUrl }} style={styles.cardImage} />
-        ) : (
-          <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
-            <Ionicons name="image-outline" size={26} color={COLORS.textMuted} />
-          </View>
-        )}
-        {item.rating > 0 && (
-          <View style={styles.ratingPill}>
-            <Ionicons name="star" size={11} color="#FFC107" />
-            <Text style={styles.ratingText}>{item.rating}</Text>
-          </View>
-        )}
-      </View>
-      <View style={styles.cardContent}>
-        <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
-        {!!item.vicinity && (
-          <Text style={styles.cardVicinity} numberOfLines={2}>{item.vicinity}</Text>
-        )}
-        {item.userRatingsTotal > 0 && (
-          <Text style={styles.cardReviews}>{item.userRatingsTotal.toLocaleString()} reviews</Text>
-        )}
-      </View>
-    </TouchableOpacity>
+  const allFar = nearby.length > 0 && nearby.every((p) => (p.distanceKm ?? 0) > FAR_KM);
+
+  const renderNearbyCard = ({ item }) => (
+    <PlaceTile
+      title={item.name}
+      subtitle={item.distanceKm != null ? `${distanceText(item.distanceKm)} away` : null}
+      imageUri={item.photoUrl}
+      rating={item.rating}
+      reviews={item.userRatingsTotal}
+      onPress={() => openItem(item, { isArea: isRegionResult(item) })}
+    />
   );
 
-  const renderEmpty = () => {
-    if (error) {
-      return (
-        <View style={styles.stateContainer}>
-          <Ionicons name="cloud-offline-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.stateTitle}>Couldn't load destinations</Text>
-          <Text style={styles.stateSubtitle}>Check your connection and try again.</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => load(scope)}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
+  const renderNearbySection = () => {
+    if (!hasNearby) return null;
+
+    let body;
+    if (nearState === 'loading') {
+      body = (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nearRow} scrollEnabled={false}>
+          {[0, 1, 2].map((i) => <Skeleton key={i} width={TILE_W} height={TILE_H} radius={SIZES.radius_lg} />)}
+        </ScrollView>
+      );
+    } else if (nearState === 'off') {
+      body = (
+        <TouchableOpacity style={styles.notice} onPress={loadNearby} activeOpacity={0.8}>
+          <Ionicons name="location-outline" size={18} color={COLORS.accentDeep} />
+          <Text style={styles.noticeText}>Turn on location to see {title.toLowerCase()} near you.</Text>
+        </TouchableOpacity>
+      );
+    } else if (nearState === 'none') {
+      body = (
+        <View style={styles.notice}>
+          <Ionicons name="compass-outline" size={18} color={COLORS.textSecondary} />
+          <Text style={styles.noticeText}>Nothing close by. Try the picks below.</Text>
         </View>
       );
+    } else {
+      body = (
+        <FlatList
+          data={nearby}
+          keyExtractor={(item) => item.placeId}
+          renderItem={renderNearbyCard}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.nearRow}
+        />
+      );
     }
+
     return (
-      <View style={styles.stateContainer}>
-        <Ionicons name="search-outline" size={48} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>No destinations found</Text>
-        <Text style={styles.stateSubtitle}>Try the other view.</Text>
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <Text style={styles.sectionTitle}>{allFar ? 'Closest to you' : 'Near you'}</Text>
+          <Text style={styles.sectionSub} numberOfLines={1}>
+            {allFar
+              ? `Nothing nearer${city ? ` to ${city}` : ''}, these are the closest`
+              : `${NEARBY_COPY[theme]}${city ? ` from ${city}` : ''}`}
+          </Text>
+        </View>
+        {body}
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" />
 
-      {loading ? (
-        // Offset below the floating header, like the real list.
-        <View style={{ paddingTop: headerHeight + SIZES.spacing_sm }}>
-          <GridSkeleton />
-        </View>
-      ) : (
-        <FlatList
-          data={places}
-          renderItem={renderCard}
-          keyExtractor={(item) => item.placeId}
-          numColumns={2}
-          columnWrapperStyle={places.length > 0 ? styles.column : undefined}
-          contentContainerStyle={[
-            places.length === 0 ? styles.listEmpty : styles.listContent,
-            places.length > 0 && { paddingTop: headerHeight + SIZES.spacing_sm },
-          ]}
-          ListHeaderComponent={
-            locationDenied ? (
-              <View style={styles.noticeRow}>
-                <Ionicons name="information-circle-outline" size={16} color={COLORS.textSecondary} />
-                <Text style={styles.noticeText}>
-                  Location is off, showing global picks. Enable location for nearby results.
-                </Text>
+      <ScrollView
+        contentContainerStyle={{ paddingTop: headerHeight + SIZES.spacing_sm, paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {renderNearbySection()}
+
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Around the world</Text>
+            <Text style={styles.sectionSub}>Famous {title.toLowerCase()} worth the trip</Text>
+          </View>
+          <View style={styles.grid}>
+            {pairs(curated).map((row) => (
+              <View key={row[0].placeId} style={styles.gridRow}>
+                {row.map((item) => (
+                  <PlaceGridCard
+                    key={item.placeId}
+                    name={item.name}
+                    photoUrl={placePhotoUrl(item.placeId, 600)}
+                    subtitle={item.country}
+                    accessibilityLabel={`${item.name}${item.country ? `, ${item.country}` : ''}`}
+                    onPress={() => openItem(
+                      { ...item, photoUrl: placePhotoUrl(item.placeId, 800) },
+                      { isArea: item.kind !== 'place' },
+                    )}
+                  />
+                ))}
+                {row.length === 1 && <View style={styles.gridSpacer} />}
               </View>
-            ) : null
-          }
-          ListEmptyComponent={renderEmpty}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+            ))}
+          </View>
+        </View>
+      </ScrollView>
 
-      {/* Floating header: back button + title + Global/Nearby toggle. */}
+      {/* Floating header: back button + title. */}
       <ScreenHeader
         title={title}
-        subtitle="Popular destinations"
+        subtitle={hasNearby ? 'Near you and around the world' : 'Around the world'}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
-      >
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
-        </TouchableOpacity>
-
-        <FilterChips
-          filters={SCOPES}
-          activeKey={scope}
-          onChange={changeScope}
-          variant="pills"
-        />
-      </ScreenHeader>
-    </SafeAreaView>
+        left={(
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="chevron-back" size={24} color={COLORS.textPrimary} />
+          </TouchableOpacity>
+        )}
+      />
+    </View>
   );
 }
 
-const CARD_GAP = SIZES.spacing_base;
+/** [a, b, c] -> [[a, b], [c]]: rows of a two-column grid. */
+function pairs(list) {
+  const rows = [];
+  for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2));
+  return rows;
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    backgroundColor: COLORS.backgroundWarm,
   },
-  // Back button pinned to the left of the centered header title.
   backButton: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
     width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 2,
   },
 
-  listContent: {
+  section: {
+    marginTop: SIZES.spacing_base,
+  },
+  sectionHead: {
     paddingHorizontal: SIZES.spacing_base,
-    paddingTop: SIZES.spacing_xs,
-    paddingBottom: 120,
+    marginBottom: SIZES.spacing_md,
   },
-  listEmpty: {
-    flexGrow: 1,
+  sectionTitle: {
+    fontSize: SIZES.xl,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
   },
-  column: {
-    gap: CARD_GAP,
+  sectionSub: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+    marginTop: 1,
   },
 
-  noticeRow: {
+  // Near you (sideways row)
+  nearRow: {
+    paddingHorizontal: SIZES.spacing_base,
+    gap: SIZES.spacing_md,
+  },
+  notice: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_xs,
-    paddingHorizontal: SIZES.spacing_xs,
-    paddingBottom: SIZES.spacing_sm,
+    gap: SIZES.spacing_sm,
+    marginHorizontal: SIZES.spacing_base,
+    padding: SIZES.spacing_md,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   noticeText: {
     flex: 1,
-    fontSize: SIZES.sm,
+    fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
   },
 
-  // Card (matches the DestinationDetail result card).
-  card: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius_lg,
-    marginBottom: CARD_GAP,
-    borderWidth: 1,
-    borderColor: COLORS.borderLight,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
-    overflow: 'hidden',
+  // Around the world (grid of PlaceGridCard)
+  grid: {
+    paddingHorizontal: SIZES.spacing_base,
   },
-  cardImageWrap: {
-    width: '100%',
-    height: 120,
-    backgroundColor: COLORS.cardBackground,
-  },
-  cardImage: {
-    width: '100%',
-    height: '100%',
-  },
-  cardImagePlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ratingPill: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
+  gridRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: SIZES.radius_full,
+    gap: SIZES.spacing_base,
   },
-  ratingText: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  cardContent: {
-    padding: SIZES.spacing_base,
-  },
-  cardName: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  cardVicinity: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  cardReviews: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textMuted,
-    marginTop: SIZES.spacing_xs,
-  },
-
-  // State (loading / empty / error).
-  stateContainer: {
+  gridSpacer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SIZES.spacing_xl,
-  },
-  stateTitle: {
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-    marginTop: SIZES.spacing_base,
-  },
-  stateSubtitle: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: SIZES.spacing_xs,
-  },
-  retryButton: {
-    marginTop: SIZES.spacing_base,
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingVertical: SIZES.spacing_sm,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: COLORS.accent,
-  },
-  retryText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
   },
 });

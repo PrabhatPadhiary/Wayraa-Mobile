@@ -1,5 +1,6 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Dimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 
 /**
@@ -9,6 +10,10 @@ import { COLORS, SIZES } from '../constants';
  * after a full range starts a new one; tapping a day before the start moves
  * the start. Dates are whole days in UTC (the backend stores trip dates as
  * UTC midnight), passed in and out as ISO strings.
+ *
+ * Saturdays and Sundays are marked. The "📅 Month Year ▾" button above
+ * opens a month / year picker to jump straight to a month (no scrolling
+ * through years to plan far ahead).
  *
  * @param {string|null} startDate  ISO
  * @param {string|null} endDate    ISO
@@ -23,7 +28,9 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-const MONTHS_AHEAD = 18;
+const SHORT_MONTHS = MONTHS.map((m) => m.slice(0, 3));
+const MONTHS_AHEAD = 36; // three years to plan ahead
+const isWeekend = (col) => col === 0 || col === 6; // Sunday, Saturday
 const CELL_HEIGHT = 44;
 const MONTH_TITLE_HEIGHT = 44;
 // Every month is drawn with 6 week rows so all items share one height,
@@ -74,6 +81,10 @@ export default function DateRangeCalendar({
   const minDay = Math.min(minDate ? isoToDay(minDate) : today, start ?? Infinity);
 
   const cellWidth = Math.floor((Dimensions.get('window').width - horizontalPadding * 2) / 7);
+  const gridWidth = cellWidth * 7;
+  // Month picker: 4 across, even gaps, spanning the grid.
+  const CHIP_GAP = SIZES.spacing_sm;
+  const chipWidth = Math.floor((gridWidth - CHIP_GAP * 3 - SIZES.spacing_base * 2) / 4);
 
   const months = useMemo(() => {
     const first = new Date(minDay * DAY_MS);
@@ -95,6 +106,28 @@ export default function DateRangeCalendar({
     // Only on mount: later taps shouldn't jump the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [months]);
+
+  // The month at the top of the list (for the jump button), and the picker.
+  const listRef = useRef(null);
+  const [visibleIndex, setVisibleIndex] = useState(initialIndex);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [jumpYear, setJumpYear] = useState(null);
+  const onViewable = useRef(({ viewableItems }) => {
+    if (viewableItems?.length) setVisibleIndex(viewableItems[0].index ?? 0);
+  }).current;
+  const visible = months[visibleIndex] || months[0];
+  const years = [...new Set(months.map((m) => m.year))];
+  const openJump = () => {
+    setJumpYear(visible.year);
+    setJumpOpen(true);
+  };
+  const jumpTo = (year, month) => {
+    const idx = months.findIndex((m) => m.year === year && m.month === month);
+    if (idx < 0) return;
+    setJumpOpen(false);
+    setVisibleIndex(idx);
+    listRef.current?.scrollToIndex({ index: idx, animated: false });
+  };
 
   const pick = useCallback((day) => {
     if (start == null || end != null || day < start) {
@@ -118,6 +151,7 @@ export default function DateRangeCalendar({
       }
       const day = firstDay + dateNum - 1;
       const disabled = day < minDay;
+      const weekend = isWeekend(i % 7);
       const isStart = day === start;
       const isEnd = day === end;
       const inRange = start != null && end != null && day > start && day < end;
@@ -128,7 +162,9 @@ export default function DateRangeCalendar({
       cells.push(
         <TouchableOpacity
           key={i}
-          style={{ width: cellWidth, height: CELL_HEIGHT, justifyContent: 'center', alignItems: 'center' }}
+          style={[
+            { width: cellWidth, height: CELL_HEIGHT, justifyContent: 'center', alignItems: 'center' },
+          ]}
           onPress={() => pick(day)}
           disabled={disabled}
           activeOpacity={0.7}
@@ -150,6 +186,7 @@ export default function DateRangeCalendar({
             <Text
               style={[
                 styles.dayText,
+                weekend && styles.dayTextWeekend,
                 disabled && styles.dayTextDisabled,
                 inRange && styles.dayTextInRange,
                 selected && styles.dayTextSelected,
@@ -173,12 +210,41 @@ export default function DateRangeCalendar({
 
   return (
     <View style={styles.container}>
-      <View style={styles.weekdays}>
+      {/* Month bar, lined up with the grid: tap to choose a month and year. */}
+      <View style={[styles.monthBar, { width: gridWidth }]}>
+        <TouchableOpacity
+          style={styles.monthBarLabel}
+          onPress={jumpOpen ? () => setJumpOpen(false) : openJump}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Showing ${MONTHS[visible.month]} ${visible.year}. Choose a month`}
+        >
+          <Text style={styles.monthBarText}>{MONTHS[visible.month]} {visible.year}</Text>
+          <Ionicons name={jumpOpen ? 'chevron-up' : 'chevron-down'} size={18} color={COLORS.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.monthBarButton, jumpOpen && styles.monthBarButtonOn]}
+          onPress={jumpOpen ? () => setJumpOpen(false) : openJump}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Choose a month and year"
+        >
+          <Ionicons name="calendar-outline" size={18} color={jumpOpen ? COLORS.white : COLORS.accentDeep} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.weekdays, { width: gridWidth }]}>
         {WEEKDAYS.map((w, i) => (
-          <Text key={i} style={[styles.weekday, { width: cellWidth }]}>{w}</Text>
+          <View key={i} style={[styles.weekdayCell, { width: cellWidth }]}>
+            <Text style={[styles.weekday, isWeekend(i) && styles.weekdayWeekend]}>{w}</Text>
+          </View>
         ))}
       </View>
+      <View style={styles.flex}>
       <FlatList
+        ref={listRef}
+        onViewableItemsChanged={onViewable}
+        viewabilityConfig={VIEWABILITY}
         data={months}
         keyExtractor={(m) => m.key}
         renderItem={renderMonth}
@@ -190,25 +256,176 @@ export default function DateRangeCalendar({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       />
+
+      {/* Month / year picker over the calendar. */}
+      {jumpOpen && (
+        <View style={[styles.jumpPanel, { width: gridWidth }]}>
+          <View style={styles.yearRow}>
+            <TouchableOpacity
+              style={styles.yearArrow}
+              onPress={() => setJumpYear((y) => Math.max(years[0], y - 1))}
+              disabled={jumpYear <= years[0]}
+              accessibilityLabel="Previous year"
+            >
+              <Ionicons name="chevron-back" size={20} color={jumpYear <= years[0] ? COLORS.border : COLORS.textPrimary} />
+            </TouchableOpacity>
+            <Text style={styles.yearText}>{jumpYear}</Text>
+            <TouchableOpacity
+              style={styles.yearArrow}
+              onPress={() => setJumpYear((y) => Math.min(years[years.length - 1], y + 1))}
+              disabled={jumpYear >= years[years.length - 1]}
+              accessibilityLabel="Next year"
+            >
+              <Ionicons name="chevron-forward" size={20} color={jumpYear >= years[years.length - 1] ? COLORS.border : COLORS.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <View style={[styles.monthGrid, { columnGap: CHIP_GAP, rowGap: CHIP_GAP }]}>
+            {SHORT_MONTHS.map((label, m) => {
+              const available = months.some((mo) => mo.year === jumpYear && mo.month === m);
+              const current = visible.year === jumpYear && visible.month === m;
+              return (
+                <TouchableOpacity
+                  key={label}
+                  style={[styles.monthChip, { width: chipWidth }, current && styles.monthChipOn, !available && styles.monthChipOff]}
+                  onPress={() => jumpTo(jumpYear, m)}
+                  disabled={!available}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: current, disabled: !available }}
+                  accessibilityLabel={`${MONTHS[m]} ${jumpYear}`}
+                >
+                  <Text style={[styles.monthChipText, current && styles.monthChipTextOn, !available && styles.monthChipTextOff]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+      </View>
     </View>
   );
 }
+
+const VIEWABILITY = { itemVisiblePercentThreshold: 40 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  flex: {
+    flex: 1,
+  },
+  monthBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SIZES.spacing_sm,
+  },
+  monthBarLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+  },
+  monthBarText: {
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+  },
+  monthBarButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff1e8',
+  },
+  monthBarButtonOn: {
+    backgroundColor: COLORS.accent,
+  },
+  jumpPanel: {
+    position: 'absolute',
+    top: SIZES.spacing_sm,
+    left: 0,
+    padding: SIZES.spacing_base,
+    borderRadius: 20,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  yearRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SIZES.spacing_base,
+  },
+  yearArrow: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f0f2f5',
+  },
+  yearText: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: SIZES.xl,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  monthChip: {
+    height: 46,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 14,
+    backgroundColor: '#f6f7f9',
+  },
+  monthChipOn: {
+    backgroundColor: COLORS.accent,
+  },
+  monthChipOff: {
+    backgroundColor: 'transparent',
+  },
+  monthChipText: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  monthChipTextOn: {
+    color: COLORS.white,
+  },
+  monthChipTextOff: {
+    color: '#c8c8c8',
+  },
   weekdays: {
     flexDirection: 'row',
-    paddingBottom: SIZES.spacing_sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
+  },
+  weekdayCell: {
+    paddingVertical: 6,
   },
   weekday: {
     textAlign: 'center',
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textMuted,
+  },
+  weekdayWeekend: {
+    color: COLORS.accentDeep,
+    fontFamily: 'Poppins_700Bold',
   },
   monthTitle: {
     height: MONTH_TITLE_HEIGHT,
@@ -249,6 +466,11 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textPrimary,
+  },
+  // Saturdays and Sundays (in range / selected / past styles still win).
+  dayTextWeekend: {
+    color: COLORS.accentDeep,
+    fontFamily: 'Poppins_600SemiBold',
   },
   dayTextDisabled: {
     color: '#c8c8c8',

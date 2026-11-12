@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
 import { formatDateRange, dayCount } from '../utils/tripDates';
 import { fallbackGradientFor } from './PlaceTile';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 export const TRIP_CARD_HEIGHT = 210;
 // How far each card slides up over the one above it (the "deck" look).
@@ -162,7 +163,7 @@ export default function TripStackCard({
                       ]}
                     >
                       {m.photoUrl
-                        ? <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                        ? <Image source={{ uri: cloudinarySized(m.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
                         : <Text style={styles.avatarText}>{initialsFor(m.name)}</Text>}
                     </View>
                   ))}
@@ -176,7 +177,7 @@ export default function TripStackCard({
                 <View style={styles.travelersChip}>
                   <Ionicons name="people-outline" size={13} color={COLORS.white} />
                   <Text style={styles.travelersText}>
-                    {travelers} {travelers === 1 ? 'traveler' : 'travelers'}
+                    {travelers} {travelers === 1 ? 'traveller' : 'travellers'}
                   </Text>
                 </View>
               )}

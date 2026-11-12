@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { signInWithEmail } from '../services';
 import useGoogleAuth from '../hooks/useGoogleAuth';
+import { LoaderOverlay } from '../components/WayraaLoader';
 
 /**
  * LoginScreen - Shown when a returning user needs to sign in.
@@ -141,7 +142,7 @@ export default function LoginScreen({ navigation, route }) {
               {isLoading ? (
                 <ActivityIndicator color={COLORS.white} />
               ) : (
-                <Text style={styles.primaryButtonText}>Sign In</Text>
+                <Text style={styles.primaryButtonText}>Sign in</Text>
               )}
             </TouchableOpacity>
 
@@ -154,6 +155,8 @@ export default function LoginScreen({ navigation, route }) {
         {/* Error */}
         {error && <Text style={styles.errorText}>{error}</Text>}
       </KeyboardAvoidingView>
+      {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
+      <LoaderOverlay visible={isLoading} message="Signing you in…" />
     </SafeAreaView>
   );
 }

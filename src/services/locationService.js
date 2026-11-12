@@ -60,9 +60,10 @@ export function getCurrentLocation() {
  * Fetch nearby tourist attractions from the backend.
  * Returns array of { placeId, name, vicinity, rating, photoUrl }
  */
-export async function getNearbyPlaces(lat, lng, radius = 30000) {
+export async function getNearbyPlaces(lat, lng, radius = 30000, { type, limit } = {}) {
   try {
-    const url = `${API_URL}/Destinations/nearby?lat=${lat}&lng=${lng}&radius=${radius}`;
+    const extra = `${type ? `&type=${encodeURIComponent(type)}` : ''}${limit ? `&limit=${limit}` : ''}`;
+    const url = `${API_URL}/Destinations/nearby?lat=${lat}&lng=${lng}&radius=${radius}${extra}`;
     const response = await fetch(url);
 
     if (!response.ok) return [];

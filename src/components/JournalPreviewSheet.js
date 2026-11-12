@@ -20,6 +20,7 @@ import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
 import { timeAgo, tripWhen } from './JournalCard';
 import { vibeLabel } from '../services/journalsService';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const PHOTO_HEIGHT = 300;
 // Swipe-down to close: distance (px) or flick speed past which it closes.
@@ -103,7 +104,7 @@ export default function JournalPreviewSheet({ journal, onClose, onToggleLike, on
           <View style={styles.authorRow}>
             <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
               {j.author?.photoUrl
-                ? <Image source={{ uri: j.author?.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                ? <Image source={{ uri: cloudinarySized(j.author?.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
                 : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
             </View>
             <View style={styles.flex}>
@@ -128,7 +129,7 @@ export default function JournalPreviewSheet({ journal, onClose, onToggleLike, on
                 {photos.map((p) => (
                   <Image
                     key={p.id}
-                    source={{ uri: p.url }}
+                    source={{ uri: cloudinarySized(p.url, IMAGE_WIDTH.PHOTO) }}
                     style={{ width: photoWidth, height: PHOTO_HEIGHT }}
                     contentFit="cover"
                     transition={150}

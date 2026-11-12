@@ -15,3 +15,6 @@ export { default as ProfileScreen } from './ProfileScreen';
 export { default as JournalDetailScreen } from './JournalDetailScreen';
 export { default as WriteJournalScreen } from './WriteJournalScreen';
 export { default as DestinationPlacesScreen } from './DestinationPlacesScreen';
+export { default as NearbyPlacesScreen } from './NearbyPlacesScreen';
+export { default as MyStoriesScreen } from './MyStoriesScreen';
+export { default as BlockedPeopleScreen } from './BlockedPeopleScreen';

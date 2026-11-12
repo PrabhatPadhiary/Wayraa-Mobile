@@ -22,6 +22,7 @@ import {
 } from '../services';
 import { TRIP_CATEGORIES, toTripCategory, buildTripPlaceDto } from '../utils/tripPlaces';
 import { formatDateRange } from '../utils/tripDates';
+import WayraaLoader from './WayraaLoader';
 
 const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.86;
 
@@ -215,7 +216,7 @@ export default function AddToTripSheet({
     if (status === 'loading') {
       return (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
+          <WayraaLoader size={72} />
         </View>
       );
     }

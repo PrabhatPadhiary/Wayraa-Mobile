@@ -8,7 +8,6 @@ import {
   ScrollView,
   RefreshControl,
   Animated,
-  Alert,
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
@@ -16,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import RatingRow from '../components/RatingRow';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
 import { SignInPrompt, TripDetailSkeleton, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
@@ -29,6 +29,7 @@ import {
   getItinerary,
   getStoredUser,
   deleteTrip,
+  getMyTrips,
   addTripDestination,
   removeTripPlace,
   removeTripDestination,
@@ -39,6 +40,9 @@ import {
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { formatDateRange, dayCount, daysUntil, formatDay } from '../utils/tripDates';
 import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinDayLabel, compareByTime } from '../utils/itinerary';
+import { showAlert } from '../components/AppDialog';
+import { LoaderOverlay } from '../components/WayraaLoader';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
@@ -193,8 +197,8 @@ function distanceKm(lat1, lng1, lat2, lng2) {
 
 function formatDistance(km) {
   if (km == null) return null;
-  if (km < 1) return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m from center`;
-  return `${km < 10 ? km.toFixed(1) : Math.round(km)} km from center`;
+  if (km < 1) return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m from centre`;
+  return `${km < 10 ? km.toFixed(1) : Math.round(km)} km from centre`;
 }
 
 /**
@@ -408,11 +412,19 @@ export default function TripDetailScreen({ navigation, route }) {
     setDeletingTrip(true);
     try {
       await deleteTrip(trip.id);
-      // Back to wherever the trip was opened from (My Trips reloads on focus).
-      navigation.goBack();
+      // Other trips left: back to the My Trips list. That was the only one:
+      // Home (My Trips is reset underneath, showing its empty state next time).
+      let left = 1;
+      try {
+        left = (await getMyTrips()).length;
+      } catch {
+        // Couldn't check: My Trips is a safe place to land.
+      }
+      navigation.popToTop();
+      if (left === 0) navigation.getParent()?.navigate('Explore');
     } catch (e) {
       setDeletingTrip(false);
-      Alert.alert('Could not delete trip', e?.message || 'Please try again.');
+      showAlert('Could not delete trip', e?.message || 'Please try again.');
     }
   };
 
@@ -538,7 +550,7 @@ export default function TripDetailScreen({ navigation, route }) {
 
   const confirmRemoveDestination = (dest) => {
     const count = (dest.places || []).length;
-    Alert.alert(
+    showAlert(
       `Remove ${dest.name}?`,
       count > 0
         ? `Its ${count} saved ${count === 1 ? 'place' : 'places'} will be removed too.`
@@ -555,7 +567,7 @@ export default function TripDetailScreen({ navigation, route }) {
               if (addDestId === dest.id) setAddDestId('');
               await loadTrip();
             } catch (e) {
-              Alert.alert('Could not remove', e?.message || 'Please try again.');
+              showAlert('Could not remove', e?.message || 'Please try again.');
             } finally {
               setRemovingDestId('');
             }
@@ -567,7 +579,7 @@ export default function TripDetailScreen({ navigation, route }) {
 
   // Remove a saved place: DELETE /api/trip-places/{id}, then drop it locally.
   const confirmRemovePlace = (place) => {
-    Alert.alert(
+    showAlert(
       'Remove place?',
       `${place.placeName} will be removed from this trip.`,
       [
@@ -590,7 +602,7 @@ export default function TripDetailScreen({ navigation, route }) {
               const message = e instanceof AuthRequiredError
                 ? 'Sign in to edit this trip.'
                 : (e?.message || 'Please try again.');
-              Alert.alert('Could not remove place', message);
+              showAlert('Could not remove place', message);
             } finally {
               setRemovingPlaceId('');
             }
@@ -605,7 +617,7 @@ export default function TripDetailScreen({ navigation, route }) {
       await setPrimaryDestination(trip.id, dest.id);
       await loadTrip();
     } catch (e) {
-      Alert.alert('Could not change it', e?.message || 'Please try again.');
+      showAlert('Could not change it', e?.message || 'Please try again.');
     }
   };
 
@@ -620,7 +632,7 @@ export default function TripDetailScreen({ navigation, route }) {
       buttons.push({ text: 'Remove', style: 'destructive', onPress: () => confirmRemoveDestination(dest) });
     }
     buttons.push({ text: 'Cancel', style: 'cancel' });
-    Alert.alert(dest.name, isPrimary ? 'Primary destination' : undefined, buttons);
+    showAlert(dest.name, isPrimary ? 'Primary destination' : undefined, buttons);
   };
 
   const openPlace = (place) => {
@@ -648,6 +660,9 @@ export default function TripDetailScreen({ navigation, route }) {
         tripName: trip.name,
         // Already-saved places, so the picker can show its ticks immediately.
         saved: (addTarget.places || []).map((p) => [p.placeId, p.id]),
+        // What was on the stop when adding started, so "Done · 3 added"
+        // counts only this visit (kept as it's passed from screen to screen).
+        initial: (addTarget.places || []).map((p) => p.placeId),
       },
     });
   };
@@ -969,7 +984,6 @@ export default function TripDetailScreen({ navigation, route }) {
 
         {/* Sheet overlapping the hero */}
         <View style={styles.sheet}>
-          <View style={styles.grabber} />
 
           {activeTab === 'overview' && (
           <>
@@ -1033,7 +1047,7 @@ export default function TripDetailScreen({ navigation, route }) {
                       ]}
                     >
                       {m?.photoUrl ? (
-                        <Image source={{ uri: m.photoUrl }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                        <Image source={{ uri: cloudinarySized(m.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
                       ) : m ? (
                         <Text style={styles.avatarTextSmall}>{initialsFor(m.name)}</Text>
                       ) : (
@@ -1257,13 +1271,7 @@ export default function TripDetailScreen({ navigation, route }) {
                               <Text style={styles.placeRowArea} numberOfLines={1}>{locationLine}</Text>
                             )}
                             {place.rating > 0 && (
-                              <View style={styles.ratingPill}>
-                                <Ionicons name="star" size={11} color="#f59e0b" />
-                                <Text style={styles.ratingPillText}>
-                                  {place.rating}
-                                  {place.userRatingsTotal > 0 ? ` · ${place.userRatingsTotal.toLocaleString()}` : ''}
-                                </Text>
-                              </View>
+                              <RatingRow rating={place.rating} reviews={place.userRatingsTotal} style={styles.placeRowRating} />
                             )}
                           </View>
                           {renderRemoveSpot(place, styles.removePlaceButton, 17)}
@@ -1446,11 +1454,17 @@ export default function TripDetailScreen({ navigation, route }) {
         onClose={() => setTravellersOpen(false)}
         onChanged={loadTrip}
       />
+      {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
+      <LoaderOverlay visible={deletingTrip} message="Deleting trip…" />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Rating under a saved spot's name.
+  placeRowRating: {
+    marginTop: 3,
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.white,
@@ -1539,7 +1553,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: SIZES.radius_xl,
     borderTopRightRadius: SIZES.radius_xl,
     paddingHorizontal: SIZES.spacing_base,
-    paddingTop: SIZES.spacing_md,
+    paddingTop: SIZES.spacing_base,
     // Clears the floating tab bar; padding (not scroll padding) keeps the grey canvas to the bottom.
     paddingBottom: 150,
     flexGrow: 1,
@@ -1858,17 +1872,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
   },
-  ratingPill: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 1,
-    paddingHorizontal: 7,
-    paddingVertical: 1,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff7e6',
-  },
   removePlaceButton: {
     width: 34,
     height: 34,
@@ -1975,14 +1978,6 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  grabber: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    marginBottom: SIZES.spacing_md,
-    backgroundColor: COLORS.border,
   },
   statusDot: {
     width: 7,
@@ -2096,11 +2091,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.cardBackground,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  ratingPillText: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_600SemiBold',
-    color: '#8a5a00',
   },
 
   emptyPlaces: {

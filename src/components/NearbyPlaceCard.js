@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
+import RatingRow from './RatingRow';
 import { fallbackGradientFor } from './PlaceTile';
 
 export const NEARBY_CARD_WIDTH = 240;
@@ -56,8 +57,7 @@ export default function NearbyPlaceCard({ place, onPress }) {
 
       {place.rating > 0 && (
         <View style={styles.ratingPill}>
-          <Ionicons name="star" size={11} color="#FFC107" />
-          <Text style={styles.ratingText}>{place.rating}</Text>
+          <RatingRow rating={place.rating} reviews={place.userRatingsTotal} tone="light" size={SIZES.xs + 1} />
         </View>
       )}
 
