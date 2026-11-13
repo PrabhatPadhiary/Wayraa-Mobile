@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -74,12 +74,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.16,
     shadowRadius: 16,
-    elevation: 8,
+    // Android draws elevation shadows through a see-through surface, which
+    // shows up as hard lines along the edges; the frosted fill + border are
+    // enough there. iOS keeps its soft shadow (shadow* above).
+    elevation: Platform.OS === 'android' ? 0 : 8,
   },
   fill: {
     // A touch of cool grey (not pure white) so the panel reads on white
     // backgrounds, while staying light enough to look like glass over images.
-    backgroundColor: 'rgba(236,238,243,0.5)',
+    // Android: expo-blur doesn't blur there (it only draws a see-through
+    // layer), so a much denser frost gives the same "content behind is soft"
+    // look as iOS's real blur without its cost.
+    backgroundColor: Platform.OS === 'android' ? 'rgba(246,247,250,0.94)' : 'rgba(236,238,243,0.5)',
   },
   content: {
     zIndex: 2,

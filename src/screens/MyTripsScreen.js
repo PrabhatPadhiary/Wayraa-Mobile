@@ -496,7 +496,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.white,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   // Main list view: same as container but without the Android status bar
   // padding (the floating header handles that).

@@ -22,6 +22,7 @@ import { checkEmailExists } from '../services';
 import useGoogleAuth from '../hooks/useGoogleAuth';
 import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import WayraaLoader from '../components/WayraaLoader';
+import useKeyboardHeight from '../hooks/useKeyboardHeight';
 
 /*
  * First screen for signed-out users: full-screen travel photos that slowly
@@ -47,6 +48,9 @@ export default function WelcomeScreen({ navigation }) {
   const { height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const compact = screenHeight < 720; // short phones
+  // The sign-in sheet sits on top of the keyboard (Android doesn't move it: the
+  // app is drawn edge to edge, so the window isn't resized for the keyboard).
+  const keyboardHeight = useKeyboardHeight();
 
   const [active, setActive] = useState(0);
   const [previous, setPrevious] = useState(null);
@@ -444,8 +448,9 @@ export default function WelcomeScreen({ navigation }) {
             style={[
               styles.authSheet,
               {
-                maxHeight: screenHeight * 0.85,
-                paddingBottom: insets.bottom + SIZES.spacing_lg,
+                bottom: keyboardHeight,
+                maxHeight: Math.max(240, screenHeight * 0.85 - keyboardHeight),
+                paddingBottom: keyboardHeight ? SIZES.spacing_base : insets.bottom + SIZES.spacing_lg,
                 transform: [{ translateY: sheetAnim }],
               },
             ]}
@@ -498,6 +503,11 @@ export default function WelcomeScreen({ navigation }) {
               <Text style={styles.sheetPrimaryButtonText}>Continue</Text>
             </TouchableOpacity>
 
+            {/* While typing the email only the field and Continue matter: the
+                Google option and terms come back when the keyboard closes, so
+                the sheet fits above the keyboard on every phone. */}
+            {!keyboardHeight && (
+            <>
             <View style={styles.dividerRow}>
               <View style={styles.dividerLine} />
               <Text style={styles.dividerText}>or</Text>
@@ -522,6 +532,8 @@ export default function WelcomeScreen({ navigation }) {
               {' '}and{' '}
               <Text style={styles.termsLink} onPress={openPrivacyPolicy} accessibilityRole="link">Privacy Policy</Text>.
             </Text>
+            </>
+            )}
 
             {isLoading && (
               <View style={styles.loadingOverlay}>

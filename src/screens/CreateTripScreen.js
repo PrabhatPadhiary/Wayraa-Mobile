@@ -300,7 +300,7 @@ export default function CreateTripScreen({ navigation, route }) {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
       >
         <ScrollView
           contentContainerStyle={{ paddingBottom: bottomPad }}

@@ -89,8 +89,9 @@ export default function ItinerarySheet({
   onDelete,
 }) {
   const insets = useSafeAreaInsets();
-  const iosKeyboard = useKeyboardHeight();
-  const keyboardHeight = Platform.OS === 'ios' ? iosKeyboard : 0;
+  // On both platforms: Android is drawn edge to edge, so its window isn't
+  // resized for the keyboard and the sheet has to make room itself.
+  const keyboardHeight = useKeyboardHeight();
   const isEdit = !!item;
 
   const [mode, setMode] = useState('place'); // place | custom

@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Animated,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -277,14 +278,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_xs,
     borderRadius: SIZES.radius_full,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    // Android has no real blur behind this bar (expo-blur only tints there),
+    // so it gets a dense white frost instead; iOS keeps the light tint over
+    // its real blur.
+    backgroundColor: Platform.OS === 'android' ? 'rgba(255, 255, 255, 0.94)' : 'rgba(255, 255, 255, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
+    borderColor: Platform.OS === 'android' ? 'rgba(220, 225, 232, 0.9)' : 'rgba(255, 255, 255, 0.4)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
     shadowRadius: 12,
-    elevation: 6,
+    // No elevation on Android: on this see-through bar it draws hard lines.
+    elevation: Platform.OS === 'android' ? 0 : 6,
   },
   // The moving highlight pill behind the active item.
   capsule: {

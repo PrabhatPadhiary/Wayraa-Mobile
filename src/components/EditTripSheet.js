@@ -41,8 +41,9 @@ const MAX_SHEET_HEIGHT = WINDOW_HEIGHT * 0.9;
  */
 export default function EditTripSheet({ visible, trip, onClose, onSaved }) {
   const insets = useSafeAreaInsets();
-  const iosKeyboard = useKeyboardHeight();
-  const keyboardHeight = Platform.OS === 'ios' ? iosKeyboard : 0;
+  // On both platforms: Android is drawn edge to edge, so its window isn't
+  // resized for the keyboard and the sheet has to make room itself.
+  const keyboardHeight = useKeyboardHeight();
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');

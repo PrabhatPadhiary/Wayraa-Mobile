@@ -248,7 +248,7 @@ export default function JournalDetailScreen({ navigation, route }) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 140 }}>
           {/* Photos */}
           <View style={{ height: PHOTO_HEIGHT }}>

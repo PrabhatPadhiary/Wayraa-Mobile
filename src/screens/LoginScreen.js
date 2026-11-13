@@ -72,7 +72,7 @@ export default function LoginScreen({ navigation, route }) {
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
       <KeyboardAvoidingView
         style={styles.content}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
       >
         {/* Back Button */}
         <TouchableOpacity
@@ -165,7 +165,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.white,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   content: {
     flex: 1,

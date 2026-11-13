@@ -82,7 +82,9 @@ export default function ScreenHeader({
             outputRange: [1, 0],
             extrapolate: 'clamp',
           }),
-          maxHeight: anim.interpolate({ inputRange: [0, 1], outputRange: [64, 0] }),
+          // Only a ceiling for the collapse animation: roomy enough that the
+          // title + subtitle never get clipped (Android adds font padding).
+          maxHeight: anim.interpolate({ inputRange: [0, 1], outputRange: [96, 0] }),
           transform: [
             { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
           ],
@@ -165,18 +167,24 @@ const styles = StyleSheet.create({
   titleBlock: {
     alignItems: 'center',
   },
+  // Fixed line heights (and no Android font padding) so the title block is
+  // the same height on Android and iOS.
   title: {
     fontSize: SIZES.xxl,
+    lineHeight: 36,
     fontFamily: 'Poppins_700Bold',
     color: COLORS.textPrimary,
     textAlign: 'center',
+    includeFontPadding: false,
   },
   subtitle: {
     fontSize: SIZES.md,
+    lineHeight: 20,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
     marginTop: 2,
     textAlign: 'center',
+    includeFontPadding: false,
   },
   right: {
     position: 'absolute',

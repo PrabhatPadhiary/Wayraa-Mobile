@@ -490,17 +490,20 @@ export default function ExploreScreen({ route, navigation }) {
   };
 
 
-  // Prevent back button from going to Welcome/Login screens
-  useEffect(() => {
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (isSearchActive) {
-        closeSearch();
+  // Android back on Home: close search if it's open, otherwise stay here (so
+  // back never returns to the Welcome / Login screens). Only while Home itself
+  // is showing: this tab stays mounted underneath the screens opened from it
+  // (destination, place, trip), and there back must work normally.
+  useFocusEffect(
+    useCallback(() => {
+      const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (isSearchActive) closeSearch();
         return true;
-      }
-      return true;
-    });
-    return () => backHandler.remove();
-  }, [isSearchActive]);
+      });
+      return () => backHandler.remove();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isSearchActive])
+  );
 
   // Load recent searches and journals on mount
   useEffect(() => {
@@ -1302,7 +1305,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.white,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   scrollView: {
     flex: 1,

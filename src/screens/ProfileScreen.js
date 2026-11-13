@@ -79,8 +79,9 @@ function Row({ icon, label, value, onPress, danger, last }) {
 export default function ProfileScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
-  const iosKeyboard = useKeyboardHeight();
-  const keyboardHeight = Platform.OS === 'ios' ? iosKeyboard : 0;
+  // On both platforms: Android is drawn edge to edge, so its window isn't
+  // resized for the keyboard and the sheet has to make room itself.
+  const keyboardHeight = useKeyboardHeight();
 
   const [profile, setProfile] = useState(null);
   const [nextTrip, setNextTrip] = useState(null);

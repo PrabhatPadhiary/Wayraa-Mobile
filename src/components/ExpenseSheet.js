@@ -81,8 +81,9 @@ export default function ExpenseSheet({
 }) {
   const insets = useSafeAreaInsets();
   // iOS only: Android already resizes the modal window for the keyboard.
-  const iosKeyboard = useKeyboardHeight();
-  const keyboardHeight = Platform.OS === 'ios' ? iosKeyboard : 0;
+  // On both platforms: Android is drawn edge to edge, so its window isn't
+  // resized for the keyboard and the sheet has to make room itself.
+  const keyboardHeight = useKeyboardHeight();
   const isEdit = !!expense;
   // With the keyboard up, the sheet sits on top of it and only uses the space
   // that's left (its body scrolls), so the header never goes off screen.

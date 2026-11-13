@@ -82,7 +82,7 @@ function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.backdrop} behavior="padding">
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + SIZES.spacing_base }]}>
           <View style={styles.grabber} />

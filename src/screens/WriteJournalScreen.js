@@ -468,7 +468,7 @@ export default function WriteJournalScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView
           contentContainerStyle={[styles.form, { paddingBottom: insets.bottom + 40 }]}
           keyboardShouldPersistTaps="handled"
