@@ -20,6 +20,7 @@ import { COLORS, SIZES } from '../constants';
 import { Ionicons } from '@expo/vector-icons';
 import { checkEmailExists } from '../services';
 import useGoogleAuth from '../hooks/useGoogleAuth';
+import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import WayraaLoader from '../components/WayraaLoader';
 
 /*
@@ -516,7 +517,10 @@ export default function WelcomeScreen({ navigation }) {
             </TouchableOpacity>
 
             <Text style={styles.termsText}>
-              By continuing, you agree to Wayraa's Terms and Privacy Policy.
+              By continuing, you agree to Wayraa's{' '}
+              <Text style={styles.termsLink} onPress={openTerms} accessibilityRole="link">Terms</Text>
+              {' '}and{' '}
+              <Text style={styles.termsLink} onPress={openPrivacyPolicy} accessibilityRole="link">Privacy Policy</Text>.
             </Text>
 
             {isLoading && (
@@ -827,6 +831,11 @@ const styles = StyleSheet.create({
     fontSize: SIZES.base,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.white,
+  },
+  termsLink: {
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primaryLight,
+    textDecorationLine: 'underline',
   },
   termsText: {
     fontSize: SIZES.sm,

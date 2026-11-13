@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { createAccountWithEmail } from '../services';
+import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import { checkPassword, initialPasswordRules } from '../utils/passwordPolicy';
 import { LoaderOverlay } from '../components/WayraaLoader';
 
@@ -172,6 +173,13 @@ export default function SignUpScreen({ navigation, route }) {
               <Text style={styles.primaryButtonText}>Create account</Text>
             )}
           </TouchableOpacity>
+
+          <Text style={styles.legalText}>
+            By creating an account, you agree to Wayraa's{' '}
+            <Text style={styles.legalLink} onPress={openTerms} accessibilityRole="link">Terms</Text>
+            {' '}and{' '}
+            <Text style={styles.legalLink} onPress={openPrivacyPolicy} accessibilityRole="link">Privacy Policy</Text>.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
       {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
@@ -282,5 +290,18 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: SIZES.lg,
     fontFamily: 'Poppins_600SemiBold',
+  },
+  legalText: {
+    marginTop: SIZES.spacing_base,
+    fontSize: SIZES.sm,
+    lineHeight: 18,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+    textAlign: 'center',
+  },
+  legalLink: {
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primaryLight,
+    textDecorationLine: 'underline',
   },
 });

@@ -60,14 +60,19 @@ preloadPublic(HOME_STATIC_IMAGES);
 
 /**
  * Links that open the app: an invite opens the Join trip screen.
- *  - wayraa://join/<inviteId>            (installed app)
+ *  - https://wayraa.com/join/<inviteId>  (Android: verified App Link, opens the
+ *    app directly once installed; otherwise the website's join page)
+ *  - wayraa://join/<inviteId>            (installed app; the website's
+ *    "Open in Wayraa app" button uses this)
  *  - exp://<host>/--/join/<inviteId>     (Expo Go, via Linking.createURL)
- * https://wayraa.com/join/<id> links open the website unless universal links
- * are set up for the domain; on the phone they can be pasted into
- * My Trips → Join a trip instead.
+ * On iPhone https links still open the website until Universal Links are set
+ * up (needs an Apple Developer account). Links can also be pasted into
+ * My Trips → Join a trip.
  */
 const linking = {
-  prefixes: [Linking.createURL('/'), 'wayraa://'],
+  // https://wayraa.com/join/<id> opens here directly on Android (App Links:
+  // app.json intentFilters + wayraa.com/.well-known/assetlinks.json).
+  prefixes: [Linking.createURL('/'), 'wayraa://', 'https://wayraa.com'],
   config: {
     screens: {
       Main: {

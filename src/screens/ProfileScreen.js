@@ -41,6 +41,7 @@ import { pickNextTrip, formatDateRange, daysUntil } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import appConfig from '../../app.json';
 import { showAlert } from '../components/AppDialog';
+import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import { LoaderOverlay } from '../components/WayraaLoader';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
@@ -495,6 +496,15 @@ export default function ProfileScreen({ navigation }) {
               onPress={() => navigation.navigate('BlockedPeople')}
               last
             />
+          </View>
+        </View>
+
+        {/* About: the legal pages (also linked on Welcome and Sign up). */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>About</Text>
+          <View style={styles.group}>
+            <Row icon="shield" label="Privacy policy" onPress={openPrivacyPolicy} />
+            <Row icon="file-text" label="Terms of use" onPress={openTerms} last />
           </View>
         </View>
 
