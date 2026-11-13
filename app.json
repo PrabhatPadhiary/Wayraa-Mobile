@@ -2,7 +2,7 @@
   "expo": {
     "name": "Wayraa",
     "slug": "Wayraa-Mobile",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "scheme": "wayraa",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,7 +19,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.wayraa.mobile",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
