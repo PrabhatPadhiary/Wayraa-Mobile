@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
 import Skeleton from './Skeleton';
@@ -10,7 +10,16 @@ import { TRIP_CARD_HEIGHT, TRIP_CARD_OVERLAP } from './TripStackCard';
  * to screen readers as one "loading" item rather than many empty boxes.
  */
 
+// Loads that finish this fast never show a placeholder (no flicker).
+const SHOW_AFTER_MS = 200;
+
 function Group({ label, style, children }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setShown(true), SHOW_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  if (!shown) return <View style={style} />;
   return (
     <View
       style={style}
@@ -225,4 +234,155 @@ const styles = StyleSheet.create({
   placeText: {
     flex: 1,
   },
+  card: {
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius_xl,
+    padding: SIZES.spacing_base,
+    marginBottom: SIZES.spacing_md,
+    borderWidth: 1,
+    borderColor: '#e9edf1',
+  },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+  },
+  headTitle: { flex: 1 },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: SIZES.spacing_base,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+    paddingVertical: SIZES.spacing_sm + 2,
+  },
+  rowText: { flex: 1 },
+  gapMd: { marginTop: SIZES.spacing_md },
+  gapBottom: { marginBottom: SIZES.spacing_md },
+  itinerary: { padding: SIZES.spacing_base },
+  chipsRow: {
+    flexDirection: 'row',
+    gap: SIZES.spacing_sm,
+    marginBottom: SIZES.spacing_md,
+  },
+  slotCard: { paddingVertical: SIZES.spacing_md },
+  journalBody: { padding: SIZES.spacing_lg },
 });
+
+// ── Trip tabs and lists ─────────────────────────────────────────────────────
+
+/** A white card like the trip tabs' (Budget, Checklist). */
+function Card({ children, style }) {
+  return <View style={[styles.card, style]}>{children}</View>;
+}
+
+/** Card heading: round icon + title (+ a button on the right). */
+function CardHead({ button = false }) {
+  return (
+    <View style={styles.headRow}>
+      <Skeleton width={32} height={32} radius={16} />
+      <Skeleton width="38%" height={16} style={styles.headTitle} />
+      {button && <Skeleton width={74} height={32} radius={16} />}
+    </View>
+  );
+}
+
+/** A list row: thumbnail (square or round) and two lines of text. */
+function Row({ thumb = 48, round = false, trailing = false }) {
+  return (
+    <View style={styles.row}>
+      <Skeleton width={thumb} height={thumb} radius={round ? thumb / 2 : SIZES.radius_sm} />
+      <View style={styles.rowText}>
+        <Skeleton width="70%" height={14} />
+        <Skeleton width="45%" height={10} style={styles.gapTopSmall} />
+      </View>
+      {trailing && <Skeleton width={56} height={14} />}
+    </View>
+  );
+}
+
+/** Budget tab: summary (amount, bar, three stats), where it's going, expenses. */
+export function BudgetSkeleton() {
+  return (
+    <Group label="Loading budget">
+      <Card>
+        <CardHead button />
+        <Skeleton width="55%" height={28} style={styles.gapMd} />
+        <Skeleton width="100%" height={8} radius={4} style={styles.gapMd} />
+        <View style={styles.statsRow}>
+          {[0, 1, 2].map((i) => <Skeleton key={i} width="31%" height={54} radius={SIZES.radius_md} />)}
+        </View>
+      </Card>
+      <Card>
+        <Skeleton width="42%" height={16} />
+        <Skeleton width="100%" height={10} radius={5} style={styles.gapMd} />
+        {[0, 1, 2].map((i) => <Row key={i} thumb={30} round trailing />)}
+      </Card>
+      <Card>
+        <CardHead button />
+        {[0, 1, 2].map((i) => <Row key={i} thumb={40} round trailing />)}
+      </Card>
+    </Group>
+  );
+}
+
+/** Checklist tab: the add box, then a card of to-dos (tick circle + text). */
+export function ChecklistSkeleton({ count = 5 }) {
+  return (
+    <Group label="Loading checklist">
+      <Skeleton width="100%" height={48} radius={SIZES.radius_lg} style={styles.gapBottom} />
+      <Card>
+        <CardHead />
+        {Array.from({ length: count }, (_, i) => <Row key={i} thumb={24} round />)}
+      </Card>
+    </Group>
+  );
+}
+
+/** Itinerary sheet: day chips, then morning / afternoon / evening with stops. */
+export function ItinerarySkeleton() {
+  return (
+    <Group label="Loading your plan" style={styles.itinerary}>
+      <View style={styles.chipsRow}>
+        {[0, 1, 2, 3].map((i) => <Skeleton key={i} width={78} height={34} radius={17} />)}
+      </View>
+      {[0, 1, 2].map((slot) => (
+        <Card key={slot} style={styles.slotCard}>
+          <Skeleton width="34%" height={14} />
+          <Row thumb={40} round />
+        </Card>
+      ))}
+    </Group>
+  );
+}
+
+/** Plain lists of rows (people, stories, trips to pick): thumbnail + two lines. */
+export function RowListSkeleton({ count = 5, thumb = 56, round = false, label = 'Loading' }) {
+  return (
+    <Group label={label} style={styles.list}>
+      {Array.from({ length: count }, (_, i) => <Row key={i} thumb={thumb} round={round} />)}
+    </Group>
+  );
+}
+
+/** Opening a journal: cover photo, title, author line and paragraphs. */
+export function JournalDetailSkeleton() {
+  return (
+    <Group label="Opening the story">
+      <Skeleton width="100%" height={TRIP_HERO_HEIGHT} radius={0} />
+      <View style={styles.journalBody}>
+        <Skeleton width="80%" height={26} />
+        <View style={[styles.row, styles.gapMd]}>
+          <Skeleton width={36} height={36} radius={18} />
+          <Skeleton width="40%" height={12} style={styles.headTitle} />
+        </View>
+        {[100, 96, 92, 60].map((w, i) => (
+          <Skeleton key={i} width={`${w}%`} height={12} style={styles.gapMd} />
+        ))}
+      </View>
+    </Group>
+  );
+}

@@ -63,6 +63,8 @@ export {
   inviteLinkFor,
   parseInviteId,
   createInvitation,
+  getShareLinks,
+  resetShareLink,
   getPendingInvitations,
   revokeInvitation,
   getInvitationPreview,

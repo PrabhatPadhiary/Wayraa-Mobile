@@ -198,14 +198,25 @@ export default function EditTripSheet({ visible, trip, onClose, onSaved }) {
                 <Text style={styles.label}>Dates</Text>
                 {multiStop ? (
                   <View style={styles.readOnlyDates}>
-                    <Ionicons name="calendar" size={18} color={COLORS.accent} />
-                    <View style={styles.readOnlyText}>
+                    <View style={styles.readOnlyRow}>
+                      <Ionicons name="calendar" size={20} color={COLORS.accent} />
                       <Text style={styles.readOnlyValue}>
                         {formatDateRange(trip?.startDate, trip?.endDate) || 'Dates not set'}
                       </Text>
-                      <Text style={styles.readOnlyHint}>
-                        This trip has {stops.length} stops. Change dates per stop in Destinations on Overview.
-                      </Text>
+                    </View>
+                    <View style={styles.readOnlyNote}>
+                      <Ionicons name="information-circle" size={20} color={COLORS.primaryLight} />
+                      <View style={styles.readOnlyText}>
+                        <Text style={styles.readOnlyNoteTitle}>
+                          Set by your {stops.length} stops
+                        </Text>
+                        <Text style={styles.readOnlyHint}>
+                          The trip runs from the first stop's start to the last stop's end. To change it, go to
+                          {' '}<Text style={styles.readOnlyStrong}>Destinations</Text> on the Overview, tap
+                          {' '}<Text style={styles.readOnlyStrong}>⋯</Text> next to a stop and choose
+                          {' '}<Text style={styles.readOnlyStrong}>Edit dates</Text>.
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 ) : (
@@ -325,26 +336,48 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   readOnlyDates: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: SIZES.spacing_md,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
     backgroundColor: COLORS.cardBackground,
+  },
+  readOnlyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
   },
   readOnlyText: {
     flex: 1,
   },
   readOnlyValue: {
-    fontSize: SIZES.base,
+    flex: 1,
+    fontSize: SIZES.lg,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
   },
+  // "Set by your 4 stops" + how to change them
+  readOnlyNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: SIZES.spacing_md,
+    marginTop: SIZES.spacing_md,
+    padding: SIZES.spacing_md,
+    borderRadius: SIZES.radius_md,
+    backgroundColor: '#e6f4fb',
+  },
+  readOnlyNoteTitle: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
+  },
   readOnlyHint: {
-    marginTop: 2,
-    fontSize: SIZES.sm,
+    marginTop: 4,
+    fontSize: SIZES.md,
+    lineHeight: 21,
     fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
+    color: COLORS.textPrimary,
+  },
+  readOnlyStrong: {
+    fontFamily: 'Poppins_600SemiBold',
   },
   error: {
     marginTop: SIZES.spacing_md,

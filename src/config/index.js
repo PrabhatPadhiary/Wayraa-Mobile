@@ -23,19 +23,24 @@ export const GOOGLE_WEB_CLIENT_ID =
   '379966737355-o00i3e5tf9882s41s95r88oplg5547c3.apps.googleusercontent.com';
 
 /**
- * Google OAuth iOS client ID (Application type: iOS in Google Cloud Console,
- * bundle id com.wayraa.mobile). Required by expo-auth-session on iOS.
- * TODO: paste the iOS client ID here.
+ * Google OAuth iOS client ID, bundle id com.wayraa.mobile. Required by
+ * expo-auth-session on iOS. It must belong to the Firebase project
+ * (wanderlust-35cd9, number 379966737355): Firebase only accepts Google
+ * sign-ins from client IDs in its own project. Created via Firebase →
+ * Project settings → Add app → iOS (CLIENT_ID in GoogleService-Info.plist).
+ * Google sign-in can't work in Expo Go on iOS (wrong bundle id): test it in a
+ * dev or release build.
  */
 export const GOOGLE_IOS_CLIENT_ID =
-  '411332993861-mjhe3ib8elhk3a9qd81spkpgtvdl1m0m.apps.googleusercontent.com';
+  '379966737355-vpod3ufd9l0do0mjt5m2cggvn0jqv6r9.apps.googleusercontent.com';
 
 /**
- * Google OAuth Android client ID (Application type: Android in Google Cloud
- * Console, package com.wayraa.mobile + the signing key's SHA-1). Required by
- * expo-auth-session on Android. While empty, Google sign-in is disabled on
- * Android (the button explains why) instead of crashing the screen.
- * TODO: paste the Android client ID here.
+ * Google OAuth Android client ID (package com.wayraa.mobile + the EAS signing
+ * key's SHA-1), in the Firebase project. Android signs in with Google's native
+ * account picker, which finds this client by package + signing key; the app
+ * code doesn't send it, but while it's empty Google sign-in is switched off on
+ * Android (the button explains why). A new signing key needs its SHA-1 added.
  */
-export const GOOGLE_ANDROID_CLIENT_ID = '';
+export const GOOGLE_ANDROID_CLIENT_ID =
+  '379966737355-ovvppnbneavunaa62kdvhcrhjehc45i6.apps.googleusercontent.com';
 

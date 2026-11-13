@@ -39,9 +39,12 @@ import {
 } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { formatDateRange, dayCount, daysUntil, formatDay } from '../utils/tripDates';
-import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinDayLabel, compareByTime } from '../utils/itinerary';
+import { areaFromAddress, formatCentreDistance, cityCentre } from '../utils/address';
+import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinDayLabel, compareByTime, distanceKm } from '../utils/itinerary';
 import { showAlert } from '../components/AppDialog';
 import { LoaderOverlay } from '../components/WayraaLoader';
+import LiveToast, { describeTripChange, ViewerFaces } from '../components/LiveToast';
+import useTripLive from '../hooks/useTripLive';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
@@ -184,40 +187,6 @@ function countdownInfo(trip) {
   };
 }
 
-/** Straight-line distance in km between two coordinates (haversine). */
-function distanceKm(lat1, lng1, lat2, lng2) {
-  if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return null;
-  const toRad = (deg) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function formatDistance(km) {
-  if (km == null) return null;
-  if (km < 1) return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m from centre`;
-  return `${km < 10 ? km.toFixed(1) : Math.round(km)} km from centre`;
-}
-
-/**
- * Best-effort neighborhood from Google's `vicinity` ("street, area, city"):
- * the last part that isn't the city itself or a street number.
- */
-function neighborhoodOf(vicinity, cityName) {
-  if (!vicinity) return null;
-  const city = (cityName || '').split(',')[0].trim().toLowerCase();
-  const parts = vicinity.split(',').map((p) => p.trim()).filter(Boolean);
-  const useful = parts.filter((p) => {
-    const lower = p.toLowerCase();
-    if (city && (lower === city || lower.includes(city))) return false;
-    // Skip street numbers / postcodes such as "570-8" or "1-2-3".
-    return !/^[\d\s\-−‐,.#/]+$/.test(p) && (p.match(/\d/g) || []).length < 3;
-  });
-  return useful[useful.length - 1] || parts[0] || null;
-}
-
 function formatBudget(amount, currency) {
   if (amount == null) return null;
   const rounded = Math.round(amount).toLocaleString();
@@ -350,6 +319,45 @@ export default function TripDetailScreen({ navigation, route }) {
     }, [loadTrip, isAuthReady, isAuthenticated])
   );
 
+  // ── Live updates: friends' changes show up without refreshing ──────────
+  // Someone else changed the trip: reload the overview (debounced, so a burst
+  // of changes is one reload), bump liveKey so the open tab reloads its own
+  // data, and say who did what at the top of the screen.
+  const [liveKey, setLiveKey] = useState(0);
+  const [liveToast, setLiveToast] = useState(null);
+  const liveTimers = useRef({});
+  const onLiveChange = useCallback((change) => {
+    clearTimeout(liveTimers.current.reload);
+    liveTimers.current.reload = setTimeout(() => {
+      loadTrip();
+      setLiveKey((k) => k + 1);
+    }, 300);
+    if (change.missed) return;
+    // You were removed: the trip is no longer yours to see.
+    if (change.section === 'travellers' && change.action === 'removed' && change.targetIsMe) {
+      showAlert('Removed from trip', `${describeTripChange(change)}.`, [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
+      return;
+    }
+    if (change.section === 'trip' && change.action === 'deleted') {
+      showAlert('Trip deleted', `${describeTripChange(change)}.`, [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
+      return;
+    }
+    setLiveToast({ key: Date.now(), text: describeTripChange(change), initials: initialsFor(change.actorName || '') });
+    clearTimeout(liveTimers.current.toast);
+    liveTimers.current.toast = setTimeout(() => setLiveToast(null), 3500);
+  }, [loadTrip, navigation]);
+  useEffect(() => () => {
+    clearTimeout(liveTimers.current.reload);
+    clearTimeout(liveTimers.current.toast);
+  }, []);
+  // Everyone else with this trip open right now ("Satish is here too").
+  const [viewers, setViewers] = useState([]);
+  useTripLive(tripId, isFocused && isAuthReady && isAuthenticated, onLiveChange, setViewers);
+
   const tripLoaded = !!trip;
 
   // Total spent, for the Overview budget card. Refreshed whenever Overview is
@@ -445,6 +453,13 @@ export default function TripDetailScreen({ navigation, route }) {
   // The trip's traveller count can exceed the joined members (people who
   // haven't signed up), so draw one circle per traveller, not per member.
   const travellerCount = Math.max(members.length, trip?.travelersCount || 1);
+  // Travellers with the trip open right now (live): green dot + "Satish is viewing now".
+  const viewingIds = new Set(viewers.map((v) => v.userId));
+  const hereNames = viewers.map((v) => (v.name || 'Someone').split(' ')[0]);
+  const hereNow = !hereNames.length ? null
+    : hereNames.length === 1 ? `${hereNames[0]} is viewing now`
+      : hereNames.length === 2 ? `${hereNames[0]} and ${hereNames[1]} are viewing now`
+        : `${hereNames[0]} and ${hereNames.length - 1} others are viewing now`;
   // Hero photos: one per stop, the primary destination first, then the rest in
   // route order. Each comes straight from the stop's place id (the backend keeps
   // it fresh), falling back to its stored photo (and the trip cover for the
@@ -636,6 +651,7 @@ export default function TripDetailScreen({ navigation, route }) {
   };
 
   const openPlace = (place) => {
+    const dest = destByPlaceId[place.id];
     navigation.navigate('PlaceDetail', {
       placeId: place.placeId,
       name: place.placeName,
@@ -643,6 +659,7 @@ export default function TripDetailScreen({ navigation, route }) {
       photoUrl: placePhotoUrl(place.placeId, 800) || normalizePhotoUrl(place.photoUrl, 800),
       rating: place.rating,
       category: place.category,
+      city: cityCentre(dest?.name, dest?.latitude, dest?.longitude),
     });
   };
 
@@ -816,12 +833,11 @@ export default function TripDetailScreen({ navigation, route }) {
   // Shared by the Saved spots card and list layouts.
   const spotInfo = (place) => {
     const dest = destByPlaceId[place.id];
-    const area = neighborhoodOf(place.vicinity, dest?.name);
-    const distance = formatDistance(
-      distanceKm(place.latitude, place.longitude, dest?.latitude, dest?.longitude)
-    );
+    const area = areaFromAddress(place.vicinity, dest?.name);
+    const distance = formatCentreDistance(distanceKm(place, dest));
     return {
-      locationLine: [area, distance].filter(Boolean).join(' · '),
+      // Distance first: if the line runs out of room, the area gets the "…".
+      locationLine: [distance, area].filter(Boolean).join(' · '),
       section: PLACE_FILTERS.find((f) => f.key === sectionKeyFor(place.category)),
       thumb: placeThumbFor(place),
     };
@@ -855,6 +871,11 @@ export default function TripDetailScreen({ navigation, route }) {
     );
   };
 
+  // The live toast sits under the header on Budget/Checklist, under the hero buttons elsewhere.
+  const liveToastTop = activeTab === 'budget' || activeTab === 'checklist'
+    ? tabHeaderHeight + SIZES.spacing_sm
+    : insets.top + 64;
+
   // ── Itinerary: the day's map fills the screen; the plan sits in a bottom
   // sheet you drag between peek, half and full, so the map is always there. ──
   if (activeTab === 'itinerary') {
@@ -864,6 +885,7 @@ export default function TripDetailScreen({ navigation, route }) {
         <ItineraryTab
           key={`itinerary-${tabRefreshKey}`}
           trip={trip}
+          liveKey={liveKey}
           sortedDests={sortedDestinations}
           canEdit={canEdit}
           onSetTripDates={handleSetTripDates}
@@ -872,11 +894,15 @@ export default function TripDetailScreen({ navigation, route }) {
           heroControls={(
             <View style={[styles.heroControls, { top: insets.top + SIZES.spacing_sm }]} pointerEvents="box-none">
               {heroRoundButton('chevron-back', () => selectTab('overview'), 'Back to overview')}
-              {isOwner && heroRoundButton('ellipsis-horizontal', openTripMenu, 'Trip options', deletingTrip)}
+              <View style={styles.headerRight}>
+                <ViewerFaces viewers={viewers} />
+                {isOwner && heroRoundButton('ellipsis-horizontal', openTripMenu, 'Trip options', deletingTrip)}
+              </View>
             </View>
           )}
         />
         {tabOverlay}
+        <LiveToast toast={liveToast} top={liveToastTop} />
         {editSheet}
       </View>
     );
@@ -913,12 +939,13 @@ export default function TripDetailScreen({ navigation, route }) {
           }
         >
           <View key={`${activeTab}-${tabRefreshKey}`}>
-              {activeTab === 'checklist' && <ChecklistTab tripId={trip.id} canEdit={canEdit} />}
+              {activeTab === 'checklist' && <ChecklistTab tripId={trip.id} canEdit={canEdit} liveKey={liveKey} />}
 
               {activeTab === 'budget' && (
                 <BudgetTab
                   trip={trip}
                   canEdit={canEdit}
+                  liveKey={liveKey}
                   openBudgetSheet={openBudgetSheet}
                   onBudgetSheetOpened={() => setOpenBudgetSheet(false)}
                   onBudgetSaved={({ totalBudget, currency }) =>
@@ -945,7 +972,12 @@ export default function TripDetailScreen({ navigation, route }) {
         >
           <Ionicons name="chevron-back" size={22} color={COLORS.white} />
         </TouchableOpacity>
+        <ViewerFaces
+          viewers={viewers}
+          style={[styles.tabHeaderFaces, { top: insets.top + SIZES.spacing_base + 4, right: SIZES.spacing_lg + (isOwner ? 38 + SIZES.spacing_sm : 0) }]}
+        />
         {renderMenuButton(true)}
+        <LiveToast toast={liveToast} top={liveToastTop} />
         {editSheet}
       </View>
     );
@@ -978,7 +1010,10 @@ export default function TripDetailScreen({ navigation, route }) {
           {/* Round buttons on the photo, like the place page. */}
           <View style={[styles.heroControls, { top: insets.top + SIZES.spacing_sm }]} pointerEvents="box-none">
             {heroRoundButton('chevron-back', () => navigation.goBack(), 'Go back')}
-            {isOwner && heroRoundButton('ellipsis-horizontal', openTripMenu, 'Trip options', deletingTrip)}
+            <View style={styles.headerRight}>
+                <ViewerFaces viewers={viewers} />
+                {isOwner && heroRoundButton('ellipsis-horizontal', openTripMenu, 'Trip options', deletingTrip)}
+              </View>
           </View>
         </TripHero>
 
@@ -1053,6 +1088,7 @@ export default function TripDetailScreen({ navigation, route }) {
                       ) : (
                         <Ionicons name="person" size={13} color={COLORS.textMuted} />
                       )}
+                      {!!m && viewingIds.has(m.userId) && <View style={styles.hereDot} />}
                     </View>
                   );
                 })}
@@ -1066,7 +1102,12 @@ export default function TripDetailScreen({ navigation, route }) {
                 <Text style={styles.travellersTitle} numberOfLines={1}>
                   {travellerCount} {travellerCount === 1 ? 'traveller' : 'travellers'}
                 </Text>
-                {members.length > 0 && (
+                {hereNow ? (
+                  <View style={styles.hereRow}>
+                    <View style={styles.hereRowDot} />
+                    <Text style={styles.hereText} numberOfLines={1}>{hereNow}</Text>
+                  </View>
+                ) : members.length > 0 && (
                   <Text style={styles.travellersNames} numberOfLines={1}>
                     {members.map((m) => (m.name || '').split(' ')[0]).filter(Boolean).join(', ')}
                   </Text>
@@ -1420,6 +1461,8 @@ export default function TripDetailScreen({ navigation, route }) {
           <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.stickyTitle} numberOfLines={1}>{trip.name}</Text>
+        {/* Owners: faces sit left of ⋯. Others have no ⋯, so the faces take its spot. */}
+        {isOwner && <ViewerFaces viewers={viewers} style={styles.stickyFaces} />}
         {isOwner ? (
           <TouchableOpacity
             style={styles.stickyButton}
@@ -1432,6 +1475,8 @@ export default function TripDetailScreen({ navigation, route }) {
               ? <ActivityIndicator size="small" color={COLORS.textPrimary} />
               : <Ionicons name="ellipsis-horizontal" size={20} color={COLORS.textPrimary} />}
           </TouchableOpacity>
+        ) : viewers.length ? (
+          <ViewerFaces viewers={viewers} />
         ) : (
           <View style={styles.stickyButtonSpacer} />
         )}
@@ -1447,6 +1492,7 @@ export default function TripDetailScreen({ navigation, route }) {
         onSubmit={destSheet?.mode === 'edit' ? handleEditDates : handleAddDestination}
       />
 
+      <LiveToast toast={liveToast} top={liveToastTop} />
       {editSheet}
       <TravellersSheet
         visible={travellersOpen}
@@ -1529,6 +1575,49 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   // Round buttons on the photo (same as the place page)
+  // Viewer faces + ⋯ on the right of the hero / map buttons.
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+  },
+  stickyFaces: {
+    marginRight: SIZES.spacing_xs,
+  },
+  tabHeaderFaces: {
+    position: 'absolute',
+    zIndex: 30,
+    elevation: 9,
+  },
+  // Green "here now" dot on a traveller's avatar.
+  hereDot: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: COLORS.white,
+    backgroundColor: '#22c55e',
+  },
+  hereRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  hereRowDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#22c55e',
+  },
+  hereText: {
+    flexShrink: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: '#15803d',
+  },
   heroControls: {
     position: 'absolute',
     left: SIZES.spacing_base,

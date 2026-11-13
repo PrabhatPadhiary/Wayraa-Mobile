@@ -35,7 +35,7 @@ import {
 import PlaceSearchField from '../components/PlaceSearchField';
 import { startStoryUpload, isStoryUploading, prepareForUpload } from '../services/storyUpload';
 import { showAlert } from '../components/AppDialog';
-import WayraaLoader, { LoaderOverlay } from '../components/WayraaLoader';
+import { LoaderOverlay } from '../components/WayraaLoader';
 
 const MAX_PHOTOS = 10;
 const MAX_PLACES = 20;
@@ -722,11 +722,7 @@ export default function WriteJournalScreen({ navigation, route }) {
       </KeyboardAvoidingView>
       {/* Saving an edited story: the animated logo over the form. */}
       <LoaderOverlay visible={saving} message="Saving your story…" />
-      {editLoading && (
-        <View style={[styles.editLoading, { top: insets.top + 56 }]}>
-          <WayraaLoader size={88} />
-        </View>
-      )}
+      <LoaderOverlay visible={editLoading} message="Opening your story…" />
     </View>
   );
 }

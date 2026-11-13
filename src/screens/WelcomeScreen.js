@@ -521,7 +521,7 @@ export default function WelcomeScreen({ navigation }) {
 
             {isLoading && (
               <View style={styles.loadingOverlay}>
-                <WayraaLoader size={88} />
+                <WayraaLoader size={112} />
                 <Text style={styles.loadingText}>Signing you in…</Text>
               </View>
             )}

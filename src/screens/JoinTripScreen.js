@@ -22,7 +22,6 @@ import { ROLE_INFO } from '../components/TravellersSheet';
 import { getInvitationPreview, joinTrip, parseInviteId, AuthRequiredError } from '../services';
 import { normalizePhotoUrl } from '../utils/placePhotos';
 import { LoaderOverlay } from '../components/WayraaLoader';
-import WayraaLoader from '../components/WayraaLoader';
 
 /**
  * Join a trip from an invite.
@@ -172,7 +171,6 @@ export default function JoinTripScreen({ navigation, route }) {
             </>
           )}
 
-          {loading && <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={72} /></View>}
 
           {!!error && (
             <View style={styles.errorBox}>
@@ -259,6 +257,7 @@ export default function JoinTripScreen({ navigation, route }) {
       </KeyboardAvoidingView>
       {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
       <LoaderOverlay visible={joining} message="Joining the trip…" />
+      <LoaderOverlay visible={loading && !joining} message="Finding the trip…" />
     </SafeAreaView>
   );
 }

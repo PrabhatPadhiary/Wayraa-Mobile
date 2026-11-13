@@ -19,6 +19,7 @@ import {
 } from '../services';
 import { formatDay } from '../utils/tripDates';
 import { showAlert } from './AppDialog';
+import { ChecklistSkeleton } from './skeletons';
 
 /** Backend categories, with the website's colors. */
 export const CHECKLIST_CATEGORIES = [
@@ -55,7 +56,7 @@ function errorMessage(e) {
  * @param {string} tripId
  * @param {boolean} canEdit  owners and editors; viewers only see the list
  */
-export default function ChecklistTab({ tripId, canEdit }) {
+export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [title, setTitle] = useState('');
@@ -78,6 +79,11 @@ export default function ChecklistTab({ tripId, canEdit }) {
     setStatus('loading');
     load();
   }, [load]);
+
+  // A friend changed the trip (live update): reload quietly.
+  useEffect(() => {
+    if (liveKey) load();
+  }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const markPending = (id, on) => setPending((prev) => {
     const next = new Set(prev);
@@ -141,13 +147,8 @@ export default function ChecklistTab({ tripId, canEdit }) {
     ]);
   };
 
-  if (status === 'loading') {
-    return (
-      <View style={[styles.card, styles.center]}>
-        <ActivityIndicator color={COLORS.accent} />
-      </View>
-    );
-  }
+  // Loading: placeholders shaped like the tab, so nothing jumps when it arrives.
+  if (status === 'loading') return <ChecklistSkeleton />;
 
   if (status === 'error') {
     return (

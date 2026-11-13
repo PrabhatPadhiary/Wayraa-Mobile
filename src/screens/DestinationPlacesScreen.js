@@ -34,7 +34,7 @@ import {
   AuthRequiredError,
 } from '../services';
 import { showAlert } from '../components/AppDialog';
-import WayraaLoader from '../components/WayraaLoader';
+import { GridSkeleton } from '../components/skeletons';
 
 /** A trip place category from Google types: food, stay or activity. */
 function tripCategoryFromTypes(types = []) {
@@ -88,6 +88,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
     coords = null,
     pickForTrip = null,
     createTrip = null,
+    city = null, // { name, lat, lng }: passed on so place pages show "km from centre"
   } = route.params || {};
   const isSearch = mode === 'search';
 
@@ -298,7 +299,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   const openSuggestion = (s) => {
     leaveSearchBox();
     setShowSuggestions(false);
-    navigation.navigate('PlaceDetail', { placeId: s.placeId, name: s.name, vicinity: s.secondary, pickForTrip });
+    navigation.navigate('PlaceDetail', { placeId: s.placeId, name: s.name, vicinity: s.secondary, pickForTrip, city });
   };
 
   const toggleFavourite = async (item) => {
@@ -357,6 +358,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
           rating: item.rating,
           category: categoryKey,
           pickForTrip,
+          city,
         })}
         corner={pickForTrip ? (
           <PickToggle
@@ -402,7 +404,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   };
 
   const renderEmpty = () => {
-    if (loading) return <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={72} /></View>;
+    if (loading) return <GridSkeleton label={isSearch ? 'Searching' : 'Loading places'} />;
     if (isSearch && !query) {
       return (
         <View style={styles.state}>

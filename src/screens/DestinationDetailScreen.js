@@ -34,6 +34,7 @@ import {
 } from '../services';
 import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
+import { cityCentre } from '../utils/address';
 
 
 /**
@@ -120,9 +121,11 @@ export default function DestinationDetailScreen({ navigation, route }) {
       ? { ...pickForTrip, saved: Array.from(pickedMap.entries()) }
       : undefined,
     createTrip: pickForTrip ? undefined : createTripParams(),
+    city: cityParam(),
   });
   const openSeeAll = () => navigation.navigate('DestinationPlaces', {
     createTrip: pickForTrip ? undefined : createTripParams(),
+    city: cityParam(),
     // While adding to a trip, See all adds to the same stop (with its ticks
     // and the "Done · N added" button).
     pickForTrip: pickForTrip
@@ -256,6 +259,11 @@ export default function DestinationDetailScreen({ navigation, route }) {
       lat: location?.lat,
       lng: location?.lng,
     };
+  };
+  // This city's centre, for "2.5 km from Dubai centre" on its places' pages.
+  const cityParam = () => {
+    const c = placeCoords(details);
+    return cityCentre(name || details?.name, c?.lat, c?.lng);
   };
   const handleCreateTrip = useCallback(() => {
     navigation.navigate('CreateTrip', createTripParams());
@@ -462,6 +470,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
           rating: item.rating,
           category: activeCategory,
           pickForTrip,
+          city: cityParam(),
         })}
         corner={pickForTrip ? (
           /* Picking for a trip: add / saved toggle */

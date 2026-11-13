@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, Modal } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Modal, useWindowDimensions } from 'react-native';
 import Svg, { Path, Ellipse } from 'react-native-svg';
 import { COLORS, SIZES } from '../constants';
 
@@ -140,6 +140,30 @@ export default function WayraaLoader({ size = 72 }) {
 }
 
 /**
+ * The loader in place of content that's loading (a list, a tab, a sheet):
+ * big and centred in the space it's given, with a short line under it, never
+ * a small logo tucked into a corner of a card. Tall by default (about half the
+ * screen) so it sits in the middle of the page even inside a list.
+ *
+ * @param {string} [message]    e.g. "Loading your stories…"
+ * @param {number} [minHeight]  space to centre in (default: ~half the screen)
+ * @param {number} [size]       logo size (default 112)
+ */
+export function LoaderBlock({ message, minHeight, size = 112, style }) {
+  const { height } = useWindowDimensions();
+  return (
+    <View
+      style={[styles.block, { minHeight: minHeight ?? Math.round(height * 0.5) }, style]}
+      accessibilityLiveRegion="polite"
+      accessibilityLabel={message || 'Loading'}
+    >
+      <WayraaLoader size={size} />
+      {!!message && <Text style={styles.message}>{message}</Text>}
+    </View>
+  );
+}
+
+/**
  * The loader straight on the screen: the page fades behind a soft warm-white
  * veil (still faintly visible, and not touchable meanwhile) with the animated
  * logo and a line under it in the middle (e.g. "Creating your trip…").
@@ -161,7 +185,7 @@ export function LoaderOverlay({ visible, message }) {
           style={[styles.center, { transform: [{ scale: fade.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }] }]}
           accessibilityLiveRegion="polite"
         >
-          <WayraaLoader size={104} />
+          <WayraaLoader size={112} />
           {!!message && <Text style={styles.message}>{message}</Text>}
         </Animated.View>
       </Animated.View>
@@ -179,6 +203,12 @@ const styles = StyleSheet.create({
   },
   center: {
     alignItems: 'center',
+  },
+  block: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: SIZES.spacing_xl,
   },
   message: {
     marginTop: SIZES.spacing_base,

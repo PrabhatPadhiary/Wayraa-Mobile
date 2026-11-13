@@ -8,7 +8,7 @@ import { ScreenHeader } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
 import { getBlockedUsers, unblockUser } from '../services';
 import { showAlert } from '../components/AppDialog';
-import WayraaLoader from '../components/WayraaLoader';
+import { RowListSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 /**
@@ -84,7 +84,7 @@ export default function BlockedPeopleScreen({ navigation }) {
   };
 
   const renderEmpty = () => {
-    if (loading) return <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={72} /></View>;
+    if (loading) return <RowListSkeleton thumb={42} round label="Loading blocked people" />;
     return (
       <View style={styles.state}>
         <Feather name={error ? 'cloud-off' : 'user-check'} size={36} color={COLORS.textMuted} />

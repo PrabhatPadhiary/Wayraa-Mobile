@@ -36,6 +36,8 @@ import {
 } from '../services';
 import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
+import { areaFromAddress as areaOf, formatCentreDistance } from '../utils/address';
+import { distanceKm } from '../utils/itinerary';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.5);
@@ -93,7 +95,9 @@ function SectionTitle({ icon, tint, color, title, right }) {
 /**
  * PlaceDetailScreen — one place (a café, a hotel, a sight).
  *
- * Route params: { placeId, name, vicinity, photoUrl, rating, category, pickForTrip }
+ * Route params: { placeId, name, vicinity, photoUrl, rating, category, pickForTrip,
+ *   city } — `city` ({ name, lat, lng }) adds "2.5 km from Dubai centre" when the
+ *   page is opened from a city or trip.
  *
  * Built in the trip page's language:
  *  - Photo carousel hero with the place on it: category · area, name,
@@ -114,6 +118,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
     rating: routeRating,
     category,
     pickForTrip,
+    city,
   } = route.params || {};
 
   const insets = useSafeAreaInsets();
@@ -147,7 +152,15 @@ export default function PlaceDetailScreen({ navigation, route }) {
     return routePhotoUrl ? [routePhotoUrl] : [];
   })();
   const heroPhoto = displayPhotos[0] || null;
-  const kicker = [categoryLabel(category), areaFromAddress(displayAddress)].filter(Boolean).join(' · ');
+  // With the city known, the shared helper also handles "A - B - Dubai" addresses.
+  const area = city?.name ? areaOf(displayAddress, city.name) : areaFromAddress(displayAddress);
+  const kicker = [categoryLabel(category), area].filter(Boolean).join(' · ');
+  const fromCentre = city && displayCoords
+    ? formatCentreDistance(
+      distanceKm({ latitude: city.lat, longitude: city.lng }, { latitude: displayCoords.lat, longitude: displayCoords.lng }),
+      city.name,
+    )
+    : null;
   const price = priceLabel(details?.priceLevel);
   const today = todaysHours(displayHours);
   const todayIndex = (new Date().getDay() + 6) % 7;
@@ -578,6 +591,13 @@ export default function PlaceDetailScreen({ navigation, route }) {
               <View style={styles.infoRow} accessible accessibilityLabel={`Address: ${displayAddress}`}>
                 <View style={styles.infoIcon}><Feather name="map-pin" size={16} color={COLORS.accentDeep} /></View>
                 <Text style={styles.infoText} numberOfLines={3} selectable>{displayAddress}</Text>
+              </View>
+            )}
+
+            {!!fromCentre && (
+              <View style={[styles.infoRow, styles.infoDivider]} accessible accessibilityLabel={`${fromCentre}, in a straight line`}>
+                <View style={styles.infoIcon}><Feather name="navigation" size={16} color={COLORS.accentDeep} /></View>
+                <Text style={styles.infoText} numberOfLines={1}>{fromCentre}</Text>
               </View>
             )}
 

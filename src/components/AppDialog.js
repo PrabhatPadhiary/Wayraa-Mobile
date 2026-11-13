@@ -38,7 +38,12 @@ import { COLORS, SIZES } from '../constants';
  * onPress runs once the dialog has closed, so it can open the next one; alerts
  * raised while one is showing wait their turn.
  *
- * <AppDialogHost /> is mounted once, in App.js.
+ * <AppDialogHost /> is mounted in App.js, and again inside each sheet that is
+ * itself a <Modal> (Travellers, Expense, Itinerary item). On iPhone a second
+ * modal can't open from the app's root while a sheet's modal is showing: it
+ * silently never appears and its invisible layer blocks every touch. So the
+ * most recently mounted host (the open sheet's) shows the alerts, and once the
+ * sheet closes they go back to the root host.
  */
 
 // Menu rows get an icon from their text unless the button sets one
@@ -64,9 +69,9 @@ function iconFor(button) {
   return rule ? rule[1] : 'ellipse-outline';
 }
 
-let enqueue = null;
+const hosts = []; // mounted hosts' enqueue functions; the last one is on top
 let nextId = 1;
-const pending = []; // alerts raised before the host mounted
+const pending = []; // alerts raised before any host mounted
 
 export function showAlert(title, message, buttons, options) {
   const dialog = {
@@ -76,6 +81,7 @@ export function showAlert(title, message, buttons, options) {
     buttons: Array.isArray(buttons) && buttons.length ? buttons : [{ text: 'OK' }],
     options: options || {},
   };
+  const enqueue = hosts[hosts.length - 1];
   if (enqueue) enqueue(dialog);
   else pending.push(dialog);
 }
@@ -84,9 +90,13 @@ export function AppDialogHost() {
   const [queue, setQueue] = useState([]);
 
   useEffect(() => {
-    enqueue = (dialog) => setQueue((q) => [...q, dialog]);
+    const enqueue = (dialog) => setQueue((q) => [...q, dialog]);
+    hosts.push(enqueue);
     if (pending.length) setQueue((q) => [...q, ...pending.splice(0)]);
-    return () => { enqueue = null; };
+    return () => {
+      const i = hosts.lastIndexOf(enqueue);
+      if (i >= 0) hosts.splice(i, 1);
+    };
   }, []);
 
   const current = queue[0] || null;

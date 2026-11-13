@@ -79,7 +79,8 @@ export default function TripListRow({
   const extra = Math.max(0, memberCount - members.length);
 
   const place = destination !== trip.name ? destination : null;
-  const meta = [place, days ? `${days} ${days === 1 ? 'day' : 'days'}` : null].filter(Boolean).join(' · ');
+  const daysText = days ? `${days} ${days === 1 ? 'day' : 'days'}` : null;
+  const meta = [place, daysText].filter(Boolean).join(' · ');
 
   return (
     <TouchableOpacity
@@ -125,7 +126,9 @@ export default function TripListRow({
         {!!meta && (
           <View style={styles.metaRow}>
             <Ionicons name="location" size={12} color={COLORS.accent} />
-            <Text style={styles.meta} numberOfLines={1}>{meta}</Text>
+            {/* A long list of places shrinks with "…"; the day count always shows. */}
+            {!!place && <Text style={styles.meta} numberOfLines={1}>{place}</Text>}
+            {!!daysText && <Text style={styles.metaDays}>{place ? `· ${daysText}` : daysText}</Text>}
           </View>
         )}
         <View style={styles.footRow}>
@@ -236,6 +239,12 @@ const styles = StyleSheet.create({
   },
   meta: {
     flexShrink: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  metaDays: {
+    flexShrink: 0,
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textSecondary,

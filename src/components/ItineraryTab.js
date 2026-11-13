@@ -58,6 +58,8 @@ import DateRangeSheet from './DateRangeSheet';
 import { DayMapBackground, openDirections } from './DayMap';
 import { DragSource, createZones } from './ItineraryDrag';
 import { showAlert } from './AppDialog';
+import { ItinerarySkeleton } from './skeletons';
+import { areaFromAddress } from '../utils/address';
 
 const TOAST_MS = 4000;
 const SCREEN_H = Dimensions.get('window').height;
@@ -125,6 +127,7 @@ function animateNext() {
  */
 export default function ItineraryTab({
   trip,
+  liveKey = 0,
   sortedDests,
   canEdit,
   onSetTripDates,
@@ -230,6 +233,21 @@ export default function ItineraryTab({
     setStatus('loading');
     load();
   }, [load]);
+
+  // A friend changed the trip (live update): reload quietly, but never in the
+  // middle of a drag. The reload waits until you let go.
+  const liveReloadPending = useRef(false);
+  useEffect(() => {
+    if (!liveKey) return;
+    if (drag) liveReloadPending.current = true;
+    else load();
+  }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!drag && liveReloadPending.current) {
+      liveReloadPending.current = false;
+      load();
+    }
+  }, [drag, load]);
 
   // Open on today while the trip is under way, otherwise on Day 1.
   useEffect(() => {
@@ -765,11 +783,12 @@ export default function ItineraryTab({
       ? [`Stop ${d.n}`, SLOT_LABEL[slotOf(item)], hasTime(item?.startTime) ? timeLabel(item.startTime) : null]
         .filter(Boolean).join(' · ')
       : 'Saved, not planned yet';
-    const area = (place?.vicinity || '').split(',')[0];
+    const area = areaFromAddress(place?.vicinity, place?.destName);
+    // Area last: a long one gets the "…" instead of the category.
     const sub = [
       ratingText(place?.rating) || null,
-      area || null,
       cat.label,
+      area || null,
     ].filter(Boolean).join(' · ');
     const directionsTo = () => {
       const q = `${d.latitude},${d.longitude}`;
@@ -925,12 +944,9 @@ export default function ItineraryTab({
   };
 
   // ── States ───────────────────────────────────────────────────────────────
+  // Loading: placeholders shaped like the plan, so nothing jumps when it arrives.
   if (status === 'loading') {
-    return wrap(
-      <View style={[styles.card, styles.center]}>
-        <ActivityIndicator color={COLORS.accent} />
-      </View>
-    );
+    return wrap(<ItinerarySkeleton />);
   }
 
   if (status === 'error') {
@@ -1052,14 +1068,14 @@ export default function ItineraryTab({
             color={COLORS.textMuted}
           />
         )}
-        <Text style={styles.gapText} numberOfLines={1}>
-          {travel ? (
-            <>
-              From <Text style={styles.gapFrom}>{prev.title}</Text>
-              {`  ·  ${travelLabel(travel)}`}
-            </>
-          ) : null}
-          {free ? `${travel ? '  ·  ' : ''}${free}` : ''}
+        {/* The stop name shrinks with "…"; the travel time and free time always show. */}
+        {travel && (
+          <Text style={styles.gapText} numberOfLines={1}>
+            From <Text style={styles.gapFrom}>{prev.title}</Text>
+          </Text>
+        )}
+        <Text style={styles.gapInfo} numberOfLines={1}>
+          {(travel ? '·  ' : '') + [travel ? travelLabel(travel) : null, free].filter(Boolean).join('  ·  ')}
         </Text>
       </View>
     );
@@ -1362,7 +1378,7 @@ export default function ItineraryTab({
                   const picked = trayPick?.id === p.id;
                   const busy = busyIds.has(p.id);
                   const dragging = drag?.kind === 'place' && drag.place.id === p.id;
-                  const area = (p.vicinity || '').split(',')[0];
+                  const area = areaFromAddress(p.vicinity, p.destName);
                   const sub = [
                     multiStop ? p.destName : null,
                     ratingText(p.rating) || null,
@@ -2064,6 +2080,13 @@ const styles = StyleSheet.create({
   gapFrom: {
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textSecondary,
+  },
+  // Travel/free time next to the stop name: never shrinks, so it's never cut off.
+  gapInfo: {
+    flexShrink: 0,
+    fontSize: 11,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textMuted,
   },
   // Card: number circle (matches the map pin), title, time pill + type.
   stopNo: {

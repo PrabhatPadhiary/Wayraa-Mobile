@@ -12,9 +12,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
+import { TRIP_CARD_HEIGHT } from '../components/TripStackCard';
 import { tripTiming } from '../components/TripListRow';
 import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
 import { getMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
@@ -42,6 +45,12 @@ const FILTERS = [
  * switches to a compact list of every trip.
  */
 const FAN_LIMIT = 6;
+
+// Space kept under the fan for the floating tab bar.
+const FAN_BOTTOM_INSET = 120;
+
+// Stands in for the "+N more trips" card at the end of the fan.
+const MORE_TRIPS_ITEM = { id: '__more-trips__', isMoreCard: true };
 
 /**
  * MyTripsScreen - lists the signed-in user's trips fetched from the backend.
@@ -235,6 +244,48 @@ export default function MyTripsScreen({ navigation }) {
     return out;
   })();
 
+  // The last card of the deck when the fan can't hold every trip: same size
+  // and shape as a trip card, so its top strip ("+4 more trips") peeks out
+  // under the 6th card like the others. Opens the list of all trips.
+  const hiddenTrips = visibleTrips.slice(FAN_LIMIT);
+  const moreTripsCard = (
+    <TouchableOpacity
+      style={styles.moreCard}
+      onPress={() => toggleShowAll(true)}
+      activeOpacity={0.9}
+      accessibilityRole="button"
+      accessibilityLabel={`${hiddenCount} more ${hiddenCount === 1 ? 'trip' : 'trips'}. See all ${visibleTrips.length} trips`}
+    >
+      <View style={styles.moreClip}>
+        {/* Collage of the hidden trips' photos, darkened at the top for the text. */}
+        <View style={styles.moreCollage}>
+          {hiddenTrips.slice(0, 3).map((trip) => {
+            const placeId = trip.primaryPlaceId || (Array.isArray(trip.placeIds) ? trip.placeIds[0] : null);
+            const uri = placePhotoUrl(placeId, 400) || normalizePhotoUrl(trip.coverPhotoUrl, 400);
+            return (
+              <View key={trip.id} style={styles.morePhoto}>
+                {uri && <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" />}
+              </View>
+            );
+          })}
+        </View>
+        <LinearGradient
+          colors={['rgba(4,30,44,0.85)', 'rgba(4,30,44,0.35)', 'rgba(4,30,44,0.15)']}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.moreTop}>
+          <View style={styles.moreText}>
+            <Text style={styles.moreTitle}>+{hiddenCount} more {hiddenCount === 1 ? 'trip' : 'trips'}</Text>
+            <Text style={styles.moreSub}>See all {visibleTrips.length} trips</Text>
+          </View>
+          <View style={styles.moreGo}>
+            <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
+          </View>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+
   // Cards / list switch at the top-right of the header, shown whenever the
   // fan can't hold every trip. Two icons side by side, the current view
   // highlighted (no count badge, so it doesn't read as a menu with alerts).
@@ -371,11 +422,11 @@ export default function MyTripsScreen({ navigation }) {
             ) : (
               <TripFan
                 // Remount when the set of trips changes so the scroll resets.
-                key={`${activeFilter}-${fanTrips.length}`}
-                trips={fanTrips}
-                renderCard={(trip) => renderTrip(trip)}
+                key={`${activeFilter}-${fanTrips.length}-${hiddenCount}`}
+                trips={hiddenCount > 0 ? [...fanTrips, MORE_TRIPS_ITEM] : fanTrips}
+                renderCard={(trip) => (trip.isMoreCard ? moreTripsCard : renderTrip(trip))}
                 topInset={topInset + SIZES.spacing_sm}
-                bottomInset={120}
+                bottomInset={FAN_BOTTOM_INSET}
                 onScrollBeginDrag={() => setOpenSwipeId(null)}
                 refreshControlProps={refreshControlProps}
               />
@@ -509,6 +560,61 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.sand,
+  },
+  // "+4 more trips": last card of the fan (same size and shape as a trip card)
+  moreCard: {
+    height: TRIP_CARD_HEIGHT,
+    borderRadius: 28,
+    backgroundColor: COLORS.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  moreClip: {
+    flex: 1,
+    borderRadius: 28,
+    overflow: 'hidden',
+  },
+  moreCollage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    gap: 2,
+  },
+  morePhoto: {
+    flex: 1,
+    backgroundColor: COLORS.primaryLight,
+  },
+  moreTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+    paddingHorizontal: SIZES.spacing_lg,
+    paddingTop: SIZES.spacing_lg,
+  },
+  moreText: { flex: 1 },
+  moreTitle: {
+    fontSize: SIZES.xl,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+  moreSub: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: '#ffd3b5',
+  },
+  moreGo: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   viewToggle: {
     flexDirection: 'row',

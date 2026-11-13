@@ -20,6 +20,12 @@ const LAYER_SHRINK = 0.04;
 // Space between the last card and the footer.
 const FOOTER_GAP = SIZES.spacing_base;
 
+/** How far each card sits below the previous one at rest, for `n` cards. */
+function peekFor(n) {
+  return Math.max(MIN_PEEK, MAX_PEEK - Math.max(0, n - MAX_STACK) * 10);
+}
+
+
 /**
  * Vertical, scroll-driven fan of trip cards (the iOS app switcher turned
  * vertical). At rest the cards overlap in a tight fan. As you scroll, the top
@@ -59,7 +65,7 @@ export default function TripFan({
   const [footerHeight, setFooterHeight] = useState(0);
 
   const n = trips.length;
-  const peek = Math.max(MIN_PEEK, MAX_PEEK - Math.max(0, n - MAX_STACK) * 10);
+  const peek = peekFor(n);
 
   // Scroll offset at which card `i` reaches its slot in the parked stack.
   const parkAtOf = (i) => i * peek - Math.min(i, MAX_STACK - 1) * PARK_PEEK;

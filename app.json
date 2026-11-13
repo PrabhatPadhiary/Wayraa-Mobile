@@ -64,6 +64,12 @@
             "extraProguardRules": "# WorkManager's Room database: R8 stripped the generated class and the app crashed at launch\n-keep class * extends androidx.room.RoomDatabase { <init>(); }\n-keep class androidx.work.impl.** { *; }\n-keep class androidx.room.** { *; }\n-dontwarn androidx.room.paging.**"
           }
         }
+      ],
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.379966737355-vpod3ufd9l0do0mjt5m2cggvn0jqv6r9"
+        }
       ]
     ],
     "extra": {

@@ -12,9 +12,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt, DateRangeSheet, DateRangeField } from '../components';
 import TravellerStepper from '../components/TravellerStepper';
@@ -24,6 +26,12 @@ import { showAlert } from '../components/AppDialog';
 import { formatDateRange } from '../utils/tripDates';
 import { LoaderOverlay } from '../components/WayraaLoader';
 import { getTripDraft, findTripDraftFor, saveTripDraft, clearTripDraft, newDraftId } from '../services/tripDraft';
+
+// The destination photo's share of the screen height (status bar included),
+// close to the trip page (46%) and place page (50%).
+const HERO_SHARE = 0.42;
+// How far the form's white sheet overlaps the photo.
+const SHEET_OVERLAP = 24;
 
 /**
  * CreateTripScreen - first step of trip creation, seeded from a destination.
@@ -38,6 +46,12 @@ import { getTripDraft, findTripDraftFor, saveTripDraft, clearTripDraft, newDraft
  * that one straight in).
  */
 export default function CreateTripScreen({ navigation, route }) {
+  const insets = useSafeAreaInsets();
+  // Scrolled past the photo: dark status bar on a white strip.
+  const [pastHero, setPastHero] = useState(false);
+  const { height: windowHeight } = useWindowDimensions();
+  const bottomPad = insets.bottom + SIZES.spacing_lg;
+  const heroHeight = Math.round(windowHeight * HERO_SHARE);
   // The destination: from the route, or from an unfinished trip you continue.
   const [dest, setDest] = useState(() => {
     const p = route.params || {};
@@ -276,36 +290,63 @@ export default function CreateTripScreen({ navigation, route }) {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
-      {renderHeader()}
+    <View style={styles.container}>
+      <StatusBar
+        barStyle={pastHero ? 'dark-content' : 'light-content'}
+        translucent
+        backgroundColor="transparent"
+        animated
+      />
 
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          contentContainerStyle={styles.content}
+          contentContainerStyle={{ paddingBottom: bottomPad }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          scrollEventThrottle={16}
+          onScroll={(e) => {
+            const past = e.nativeEvent.contentOffset.y > heroHeight - insets.top - 40;
+            if (past !== pastHero) setPastHero(past);
+          }}
         >
-          {/* Destination summary */}
-          <View style={styles.destinationCard}>
+          {/* Where you're going: the place's photo, edge to edge, under the status bar. */}
+          <View
+            style={[styles.destinationCard, { height: heroHeight, paddingTop: insets.top + 64 }]}
+            accessible
+            accessibilityLabel={`Destination: ${[name, secondary].filter(Boolean).join(', ') || 'not set'}`}
+          >
             {photoUrl ? (
-              <Image source={{ uri: photoUrl }} style={styles.destinationImage} />
+              <Image source={{ uri: photoUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
             ) : (
-              <View style={[styles.destinationImage, styles.destinationPlaceholder]}>
-                <Ionicons name="image-outline" size={24} color={COLORS.textMuted} />
-              </View>
+              <LinearGradient
+                colors={[COLORS.primary, COLORS.primaryLight]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
             )}
+            <LinearGradient
+              colors={['rgba(0,0,0,0.25)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.7)']}
+              locations={[0, 0.35, 1]}
+              style={StyleSheet.absoluteFill}
+            />
             <View style={styles.destinationText}>
-              <Text style={styles.destinationLabel}>Destination</Text>
+              <Text style={styles.destinationKicker}>Plan a trip to</Text>
               <Text style={styles.destinationName} numberOfLines={1}>{name || 'Destination'}</Text>
               {!!secondary && (
-                <Text style={styles.destinationSecondary} numberOfLines={1}>{secondary}</Text>
+                <View style={styles.destinationPlaceRow}>
+                  <Ionicons name="location" size={14} color="rgba(255,255,255,0.9)" />
+                  <Text style={styles.destinationSecondary} numberOfLines={1}>{secondary}</Text>
+                </View>
               )}
             </View>
           </View>
+
+          {/* The form, on a white sheet that overlaps the photo. */}
+          <View style={styles.formSheet}>
 
           {/* Trip name */}
           <Text style={styles.fieldLabel}>Trip name</Text>
@@ -363,20 +404,37 @@ export default function CreateTripScreen({ navigation, route }) {
 
           {!!error && <Text style={styles.error}>{error}</Text>}
 
-          <TouchableOpacity
-            style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={submitting}
-            activeOpacity={0.9}
-          >
-            {submitting ? (
-              <ActivityIndicator color={COLORS.white} />
-            ) : (
-              <Text style={styles.submitText}>Create trip</Text>
-            )}
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+              onPress={handleSubmit}
+              disabled={submitting}
+              activeOpacity={0.9}
+              accessibilityRole="button"
+            >
+              {submitting ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <Text style={styles.submitText}>Create trip</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Once the photo has scrolled away, a white strip keeps the status bar readable. */}
+      {pastHero && <View style={[styles.statusBackdrop, { height: insets.top }]} />}
+
+      {/* Close: a round button on the photo, like the trip and place pages. */}
+      <TouchableOpacity
+        style={[styles.heroClose, { top: insets.top + SIZES.spacing_sm }]}
+        onPress={close}
+        accessibilityLabel="Close"
+        accessibilityRole="button"
+        activeOpacity={0.8}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Ionicons name="close" size={22} color={COLORS.white} />
+      </TouchableOpacity>
 
       {/* While creating: the form stays in view, dimmed and locked. */}
       <LoaderOverlay visible={submitting} message="Creating your trip…" />
@@ -393,7 +451,7 @@ export default function CreateTripScreen({ navigation, route }) {
           setDatesOpen(false);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -436,44 +494,63 @@ const styles = StyleSheet.create({
     paddingBottom: SIZES.spacing_xxl,
   },
 
-  // Destination summary card
+  // Destination photo, edge to edge at the top
   destinationCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.cardBackground,
-    borderRadius: SIZES.radius_lg,
-    padding: SIZES.spacing_md,
-    marginBottom: SIZES.spacing_lg,
-    gap: SIZES.spacing_md,
+    justifyContent: 'flex-end',
+    paddingHorizontal: SIZES.spacing_lg,
+    paddingBottom: SIZES.spacing_xl + 24, // clears the sheet's rounded overlap
+    backgroundColor: COLORS.primary,
   },
-  destinationImage: {
-    width: 64,
-    height: 64,
-    borderRadius: SIZES.radius_md,
-  },
-  destinationPlaceholder: {
-    backgroundColor: COLORS.borderLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  destinationText: {
-    flex: 1,
-  },
-  destinationLabel: {
-    fontSize: SIZES.xs,
+  destinationText: {},
+  destinationKicker: {
+    fontSize: SIZES.md,
     fontFamily: 'Poppins_500Medium',
-    color: COLORS.textMuted,
-    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.85)',
   },
   destinationName: {
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
+    fontSize: 34,
+    lineHeight: 42,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.white,
+  },
+  destinationPlaceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   destinationSecondary: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
+    flexShrink: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  // White sheet holding the form, overlapping the photo's bottom edge
+  formSheet: {
+    marginTop: -SHEET_OVERLAP,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: COLORS.white,
+    padding: SIZES.spacing_lg,
+    paddingTop: SIZES.spacing_sm,
+  },
+  heroClose: {
+    position: 'absolute',
+    left: SIZES.spacing_lg,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(4,50,71,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  statusBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.white,
   },
 
   // Form
@@ -481,8 +558,8 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
-    marginBottom: SIZES.spacing_sm,
-    marginTop: SIZES.spacing_base,
+    marginBottom: 6,
+    marginTop: SIZES.spacing_md,
   },
   input: {
     borderWidth: 1,
@@ -496,7 +573,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   multiline: {
-    minHeight: 84,
+    minHeight: 64,
     textAlignVertical: 'top',
   },
   optional: {
@@ -535,7 +612,7 @@ const styles = StyleSheet.create({
   },
 
   submitButton: {
-    marginTop: SIZES.spacing_xl,
+    marginTop: SIZES.spacing_lg,
     backgroundColor: COLORS.accent,
     paddingVertical: SIZES.spacing_base,
     borderRadius: SIZES.radius_full,

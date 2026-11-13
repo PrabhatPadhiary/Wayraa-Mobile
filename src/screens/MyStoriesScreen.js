@@ -6,7 +6,7 @@ import { COLORS, SIZES } from '../constants';
 import { ScreenHeader, JournalCard } from '../components';
 import { getMyJournals, toggleJournalLike } from '../services';
 import { openStoryMenu } from '../utils/storyActions';
-import WayraaLoader from '../components/WayraaLoader';
+import { RowListSkeleton } from '../components/skeletons';
 
 /**
  * Your stories: everything you've posted, including ones hidden from
@@ -45,7 +45,7 @@ export default function MyStoriesScreen({ navigation }) {
   };
 
   const renderEmpty = () => {
-    if (loading) return <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={72} /></View>;
+    if (loading) return <RowListSkeleton thumb={64} label="Loading your stories" />;
     if (error) {
       return (
         <View style={styles.state}>

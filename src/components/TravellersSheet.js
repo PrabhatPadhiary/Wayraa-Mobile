@@ -17,14 +17,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
 import {
   getStoredUser,
-  createInvitation,
+  getShareLinks,
+  resetShareLink,
   getPendingInvitations,
   revokeInvitation,
   changeMemberRole,
   removeMember,
 } from '../services';
 import { avatarColorFor, initialsFor } from './TripStackCard';
-import { showAlert } from './AppDialog';
+import { showAlert, AppDialogHost } from './AppDialog';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.9;
@@ -49,7 +50,8 @@ function timeLeft(iso) {
 
 async function shareInvite(tripName, invite) {
   const role = roleInfo(invite.role).label.toLowerCase();
-  const message = `Join my trip "${tripName}" on Wayraa as an ${role}: ${invite.link}`;
+  const article = /^[aeiou]/.test(role) ? 'an' : 'a';
+  const message = `Join my trip "${tripName}" on Wayraa as ${article} ${role}: ${invite.link}`;
   // iOS shows `url` as a link preview; Android only uses `message`.
   await Share.share({ message, url: invite.link }, { subject: `Join "${tripName}" on Wayraa` });
 }
@@ -58,9 +60,11 @@ async function shareInvite(tripName, invite) {
  * Who's on the trip, and inviting more people.
  *
  * - Everyone sees the travellers and their roles.
- * - Owners and editors can invite: pick Editor or Viewer, then share a
- *   single-use link (valid 48 hours) through the phone's share sheet. Links
- *   not used yet are listed under "Pending invites" to share again or revoke.
+ * - Owners and editors can invite: pick Editor or Viewer, then share that
+ *   role's link through the phone's share sheet. It's one link per role for
+ *   the whole group: anyone with it can join, until the owner resets it
+ *   (owner only). Older single-use links that haven't
+ *   been used yet are listed under "Pending invites" to share again or revoke.
  * - Owners can change a person's role or remove them.
  *
  * @param {boolean} visible
@@ -77,6 +81,8 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
   const [myUserId, setMyUserId] = useState(null);
   const [inviteRole, setInviteRole] = useState('member');
   const [creating, setCreating] = useState(false);
+  const [links, setLinks] = useState(null); // { member: { id, link }, viewer: { id, link } }
+  const [linksBusy, setLinksBusy] = useState(false);
   const [pending, setPending] = useState([]);
   const [busyId, setBusyId] = useState(null); // member / invite being changed
   const [error, setError] = useState('');
@@ -90,12 +96,20 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
     }
   }, [trip?.id, canInvite]);
 
+  const loadLinks = useCallback(async () => {
+    if (!trip?.id || !canInvite) return null;
+    const next = await getShareLinks(trip.id);
+    setLinks(next);
+    return next;
+  }, [trip?.id, canInvite]);
+
   useEffect(() => {
     if (!visible) return;
     setError('');
     getStoredUser().then((u) => setMyUserId(u?.id || null)).catch(() => {});
     loadPending();
-  }, [visible, loadPending]);
+    loadLinks().catch(() => {}); // fetched again when sharing if this fails
+  }, [visible, loadPending, loadLinks]);
 
   // Owner first, then editors, then viewers; alphabetical within each.
   const order = { owner: 0, member: 1, viewer: 2 };
@@ -105,20 +119,44 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
   );
   const notJoined = Math.max(0, (trip?.travelersCount || 0) - members.length);
 
+  // Share the chosen role's link.
   const handleInvite = async () => {
     if (creating || !trip) return;
     setCreating(true);
     setError('');
     try {
-      const invite = await createInvitation(trip.id, inviteRole);
-      setPending((prev) => [invite, ...prev]);
-      await shareInvite(trip.name, invite);
+      const current = links?.[inviteRole] ? links : await loadLinks();
+      const link = current?.[inviteRole];
+      if (!link) throw new Error('Could not load the invite link. Please try again.');
+      await shareInvite(trip.name, { role: inviteRole, link: link.link });
     } catch (e) {
-      setError(e?.message || 'Could not create the invite. Please try again.');
+      setError(e?.message || 'Could not share the invite. Please try again.');
     } finally {
       setCreating(false);
     }
   };
+
+  const runLinkChange = async (action) => {
+    setLinksBusy(true);
+    setError('');
+    try {
+      setLinks(await action());
+    } catch (e) {
+      showAlert('Something went wrong', e?.message || 'Please try again.');
+    } finally {
+      setLinksBusy(false);
+    }
+  };
+
+  const handleResetLink = () => {
+    const label = roleInfo(inviteRole).label.toLowerCase();
+    showAlert(`Reset the ${label} link?`, 'The current link stops working. Anyone who already joined stays on the trip.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reset link', onPress: () => runLinkChange(() => resetShareLink(trip.id, inviteRole)) },
+    ]);
+  };
+
+  const roleLabel = roleInfo(inviteRole).label.toLowerCase();
 
   const handleRevoke = (invite) => {
     showAlert('Revoke this invite?', 'The link will stop working.', [
@@ -250,7 +288,20 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
                     </>
                   )}
                 </TouchableOpacity>
-                <Text style={styles.inviteFoot}>Each link works for one person and expires in 48 hours.</Text>
+                <Text style={styles.inviteFoot}>
+                  {`One link for the whole group: anyone with it joins as ${/^[aeiou]/.test(roleLabel) ? 'an' : 'a'} ${roleLabel}.`}
+                </Text>
+                {isOwner && links?.[inviteRole] && (
+                  <View style={styles.linkActions}>
+                    {linksBusy ? (
+                      <ActivityIndicator size="small" color={COLORS.accent} />
+                    ) : (
+                      <TouchableOpacity onPress={handleResetLink} accessibilityRole="button" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Text style={styles.linkAction}>Reset {roleLabel} link</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
                 {!!error && <Text style={styles.error}>{error}</Text>}
               </View>
             )}
@@ -349,6 +400,8 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
           </ScrollView>
         </View>
       </View>
+      {/* Alerts from this sheet open inside its modal (see AppDialog). */}
+      <AppDialogHost />
     </Modal>
   );
 }
@@ -471,6 +524,18 @@ const styles = StyleSheet.create({
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
+  },
+  linkActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SIZES.spacing_sm,
+    marginTop: SIZES.spacing_sm,
+  },
+  linkAction: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
   },
   inviteFoot: {
     marginTop: SIZES.spacing_sm,

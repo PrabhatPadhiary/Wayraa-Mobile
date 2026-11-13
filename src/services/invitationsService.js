@@ -5,8 +5,10 @@ import { AuthRequiredError, ForbiddenError } from './errors';
 /**
  * Trip sharing: invite links and member management.
  *
- * Invites are single-use links with a role, "member" (can edit, shown as
- * Editor) or "viewer" (read only), that expire after 48 hours by default.
+ * Each trip has two shared invite links, one per role: "member" (can edit,
+ * shown as Editor) and "viewer" (read only). Anyone with a link can join until
+ * the owner resets it. (Older single-use links, valid 48
+ * hours, still work until they expire.)
  * Backend: InvitationsController and TripMembersController.
  */
 
@@ -54,6 +56,37 @@ async function errorFrom(response, fallback) {
     // ignore
   }
   return new Error(message && message.length < 200 ? message : `${fallback} (${response.status})`);
+}
+
+/** { member: { id, link } | null, viewer: { id, link } | null } */
+function withLinks(data) {
+  const link = (l) => (l?.id ? { id: l.id, link: inviteLinkFor(l.id) } : null);
+  return { member: link(data?.member), viewer: link(data?.viewer) };
+}
+
+/**
+ * The trip's shared invite links (made when missing). Owners and editors.
+ * Backend: GET /api/trips/{tripId}/share-links
+ */
+export async function getShareLinks(tripId) {
+  const response = await authedFetch(`/trips/${encodeURIComponent(tripId)}/share-links`);
+  if (response.status === 403) throw new ForbiddenError('Only the owner and editors can invite people.');
+  if (!response.ok) throw await errorFrom(response, 'Could not load the invite links');
+  return withLinks(await response.json());
+}
+
+/**
+ * Replace one role's link with a new one; the old link stops working. Owner only.
+ * Backend: POST /api/trips/{tripId}/share-links/reset
+ */
+export async function resetShareLink(tripId, role) {
+  const response = await authedFetch(`/trips/${encodeURIComponent(tripId)}/share-links/reset`, {
+    method: 'POST',
+    body: JSON.stringify({ role }),
+  });
+  if (response.status === 403) throw new ForbiddenError('Only the trip owner can reset invite links.');
+  if (!response.ok) throw await errorFrom(response, 'Could not reset the link');
+  return withLinks(await response.json());
 }
 
 /**

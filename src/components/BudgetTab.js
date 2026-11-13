@@ -25,7 +25,7 @@ import {
 import { formatDay, dayCount } from '../utils/tripDates';
 import ExpenseSheet, { EXPENSE_CATEGORIES } from './ExpenseSheet';
 import { isoToDay, todayDay } from './DateRangeCalendar';
-import WayraaLoader from './WayraaLoader';
+import { BudgetSkeleton } from './skeletons';
 
 const CATEGORY_BY_KEY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 
@@ -148,7 +148,7 @@ function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
  * @param {boolean} [openBudgetSheet]  open the budget sheet on arrival (owners)
  * @param {() => void} [onBudgetSheetOpened]  called once it has been opened
  */
-export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetSheet, onBudgetSheetOpened }) {
+export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetSheet, onBudgetSheetOpened, liveKey = 0 }) {
   const [expenses, setExpenses] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [myUserId, setMyUserId] = useState(null);
@@ -179,6 +179,11 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
     load();
     getStoredUser().then((u) => setMyUserId(u?.id || null));
   }, [load]);
+
+  // A friend changed the trip (live update): reload quietly.
+  useEffect(() => {
+    if (liveKey) load();
+  }, [liveKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Arriving from the Overview "Set budget" card opens the sheet straight away.
   useEffect(() => {
@@ -246,6 +251,9 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
 
   const defaultPayerId = members.some((m) => m.userId === myUserId) ? myUserId : members[0]?.userId || null;
 
+  // Loading: placeholders shaped like the tab, so nothing jumps when it arrives.
+  if (status === 'loading') return <BudgetSkeleton />;
+
   return (
     <View>
       {/* Summary */}
@@ -271,9 +279,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
           )}
         </View>
 
-        {status === 'loading' ? (
-          <View style={[styles.loader, { alignItems: 'center' }]}><WayraaLoader size={64} /></View>
-        ) : status === 'error' ? (
+        {status === 'error' ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>Couldn't load expenses.</Text>
             <TouchableOpacity onPress={() => { setStatus('loading'); load(); }}>

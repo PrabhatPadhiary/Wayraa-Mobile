@@ -22,7 +22,7 @@ import {
 } from '../services';
 import { TRIP_CATEGORIES, toTripCategory, buildTripPlaceDto } from '../utils/tripPlaces';
 import { formatDateRange } from '../utils/tripDates';
-import WayraaLoader from './WayraaLoader';
+import { RowListSkeleton } from './skeletons';
 
 const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.86;
 
@@ -215,9 +215,7 @@ export default function AddToTripSheet({
   const renderBody = () => {
     if (status === 'loading') {
       return (
-        <View style={styles.center}>
-          <WayraaLoader size={72} />
-        </View>
+        <RowListSkeleton count={3} thumb={48} label="Loading your trips" />
       );
     }
 

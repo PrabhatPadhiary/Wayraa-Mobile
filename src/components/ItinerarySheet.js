@@ -33,7 +33,7 @@ import {
   minutesToTime,
   placeToItineraryCategory,
 } from '../utils/itinerary';
-import { showAlert } from './AppDialog';
+import { showAlert, AppDialogHost } from './AppDialog';
 
 const WINDOW_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = WINDOW_HEIGHT * 0.9;
@@ -494,6 +494,8 @@ export default function ItinerarySheet({
           </View>
         </View>
       </View>
+      {/* Alerts from this sheet open inside its modal (see AppDialog). */}
+      <AppDialogHost />
     </Modal>
   );
 }

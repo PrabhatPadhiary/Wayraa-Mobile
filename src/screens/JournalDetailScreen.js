@@ -33,7 +33,7 @@ import {
 import { showAlert } from '../components/AppDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { openStoryMenu, isMyStory, confirmBlock } from '../utils/storyActions';
-import WayraaLoader from '../components/WayraaLoader';
+import { JournalDetailSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const PHOTO_HEIGHT = 340;
@@ -198,21 +198,32 @@ export default function JournalDetailScreen({ navigation, route }) {
     </TouchableOpacity>
   );
 
-  if (loading || error || !journal) {
+  // Loading: placeholders shaped like the story (cover, title, author, text).
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" />
+        <JournalDetailSkeleton />
+        <TouchableOpacity
+          style={[styles.roundButton, styles.roundButtonDark, { top: insets.top + SIZES.spacing_sm, left: SIZES.spacing_base }]}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Go back"
+        >
+          <Feather name="chevron-left" size={22} color={COLORS.white} />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (error || !journal) {
     return (
       <View style={[styles.container, styles.center]}>
         <StatusBar barStyle="dark-content" />
-        {loading ? (
-          <WayraaLoader size={88} />
-        ) : (
-          <>
-            <Feather name="book-open" size={40} color={COLORS.textMuted} />
-            <Text style={styles.stateTitle}>{error || 'Story not found'}</Text>
-            <TouchableOpacity style={styles.retry} onPress={() => { setLoading(true); load(); }}>
-              <Text style={styles.retryText}>Retry</Text>
-            </TouchableOpacity>
-          </>
-        )}
+        <Feather name="book-open" size={40} color={COLORS.textMuted} />
+        <Text style={styles.stateTitle}>{error || 'Story not found'}</Text>
+        <TouchableOpacity style={styles.retry} onPress={() => { setLoading(true); load(); }}>
+          <Text style={styles.retryText}>Retry</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           style={[styles.roundButton, styles.roundButtonDark, { top: insets.top + SIZES.spacing_sm, left: SIZES.spacing_base }]}
           onPress={() => navigation.goBack()}
