@@ -19,6 +19,7 @@ import {
   NearbyPlacesScreen,
   MyStoriesScreen,
   BlockedPeopleScreen,
+  SettingsScreen,
 } from '../screens';
 
 const Tab = createBottomTabNavigator();
@@ -49,7 +50,9 @@ function ExploreStack({ route }) {
       <Stack.Screen name="Profile" component={ProfileScreen} />
       {/* Your stories (from Profile): everything you've shared, hidden ones too. */}
       <Stack.Screen name="MyStories" component={MyStoriesScreen} />
-      {/* Blocked people (from Profile): unblock. */}
+      {/* Settings (menu icon on Home, or Profile → Settings). */}
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+      {/* Blocked people (from Settings): unblock. */}
       <Stack.Screen name="BlockedPeople" component={BlockedPeopleScreen} />
     </Stack.Navigator>
   );

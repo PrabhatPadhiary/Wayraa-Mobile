@@ -66,6 +66,13 @@ export default function NextTripCard({ trip, imageUri, onPress, noMargin = false
   const destination = trip.primaryDestination || trip.name;
   const dates = formatDateRange(trip.startDate, trip.endDate) || 'Dates not set';
   const showImage = !!imageUri && !failed;
+  // Who's going and how much is planned: "2 travellers · 5 places saved".
+  const people = Math.max(trip.travelersCount || 0, trip.memberCount || 0);
+  const saved = Array.isArray(trip.placeIds) ? trip.placeIds.length : 0;
+  const plan = [
+    people > 1 ? `${people} travellers` : null,
+    saved > 0 ? `${saved} ${saved === 1 ? 'place' : 'places'} saved` : null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <TouchableOpacity
@@ -119,6 +126,12 @@ export default function NextTripCard({ trip, imageUri, onPress, noMargin = false
             <Ionicons name="calendar-outline" size={13} color="rgba(255,255,255,0.85)" />
             <Text style={styles.metaText} numberOfLines={1}>{dates}</Text>
           </View>
+          {!!plan && (
+            <View style={styles.metaRow}>
+              <Ionicons name="people-outline" size={13} color="rgba(255,255,255,0.85)" />
+              <Text style={styles.metaText} numberOfLines={1}>{plan}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.pill}>

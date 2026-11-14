@@ -12,12 +12,13 @@ import {
   TextInput,
   Platform,
   RefreshControl,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { LinearGradient } from 'expo-linear-gradient';
+import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H, sceneY } from '../components/ProfileScene';
 import { Feather } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt } from '../components';
@@ -27,26 +28,32 @@ import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import {
   getMyProfile,
   updateMyName,
-  signInMethods,
-  sendPasswordReset,
-  deleteMyAccount,
   uploadProfilePhoto,
   removeProfilePhoto,
   useMyPhoto,
   getMyTrips,
-  logoutUser,
   AuthRequiredError,
 } from '../services';
 import { pickNextTrip, formatDateRange, daysUntil } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
-import appConfig from '../../app.json';
 import { showAlert } from '../components/AppDialog';
-import { openPrivacyPolicy, openTerms } from '../utils/legal';
-import { LoaderOverlay } from '../components/WayraaLoader';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
 const MAX_NAME = 60;
+
+// Traveller titles, earned by the number of trips (shown big in the header).
+const LEVELS = [
+  { title: 'Wanderer', from: 0 },
+  { title: 'Explorer', from: 2 },
+  { title: 'Voyager', from: 6 },
+  { title: 'Globetrotter', from: 11 },
+];
+function levelFor(trips = 0) {
+  let i = 0;
+  LEVELS.forEach((l, idx) => { if (trips >= l.from) i = idx; });
+  return { ...LEVELS[i], next: LEVELS[i + 1] || null };
+}
 
 /** One row in a settings-style group. */
 function Row({ icon, label, value, onPress, danger, last }) {
@@ -71,10 +78,10 @@ function Row({ icon, label, value, onPress, danger, last }) {
 /**
  * ProfileScreen — opened from the avatar on Home.
  *
- * Header with photo/initials, name (editable), email and "exploring since";
- * travel stats from GET /api/users/me; the next trip; account actions
- * (name, password reset for email accounts, sign-in method); shortcuts
- * (join a trip, favourites); app version; log out.
+ * About you: header with photo/initials, name (editable), email and
+ * "exploring since"; travel stats from GET /api/users/me; the next trip; your
+ * stuff (my trips, join a trip, favourites, your stories). Account security,
+ * privacy, legal pages, log out and delete account are in Settings.
  */
 export default function ProfileScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -96,12 +103,6 @@ export default function ProfileScreen({ navigation }) {
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState('');
-  const [loggingOut, setLoggingOut] = useState(false);
-  // Delete account: typed confirmation sheet.
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteText, setDeleteText] = useState('');
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState('');
 
   const load = useCallback(async () => {
     setError('');
@@ -135,12 +136,29 @@ export default function ProfileScreen({ navigation }) {
   );
 
   const name = profile?.name || firebaseUser?.displayName || 'Traveller';
+  // The header scene is as wide as the screen; its height follows the scene.
+  const { width: windowWidth } = useWindowDimensions();
+  const sceneHeight = (windowWidth * SCENE_H) / SCENE_W;
   const email = profile?.email || firebaseUser?.email || '';
   const myPhoto = useMyPhoto(firebaseUser?.photoURL);
   const photo = !photoFailed ? myPhoto : null;
   const since = profile?.createdAt ? new Date(profile.createdAt) : null;
-  const methods = signInMethods();
   const stats = profile?.stats || {};
+  const level = levelFor(stats.trips || 0);
+  const showLevel = () => {
+    const n = stats.trips || 0;
+    const ladder = LEVELS.map((l, i) => {
+      const to = LEVELS[i + 1] ? `${l.from}–${LEVELS[i + 1].from - 1}` : `${l.from}+`;
+      return `${l.title === level.title ? '▸ ' : ''}${l.title}: ${to} trips`;
+    }).join('\n');
+    const left = level.next ? level.next.from - n : 0;
+    showAlert(
+      level.title,
+      `${level.next
+        ? `${left} more ${left === 1 ? 'trip' : 'trips'} to become a ${level.next.title}.`
+        : 'The top title. Safe travels!'}\n\n${ladder}`,
+    );
+  };
 
   // ── Profile photo ──
   const pickPhoto = async () => {
@@ -216,69 +234,6 @@ export default function ProfileScreen({ navigation }) {
     }
   };
 
-  const resetPassword = () => {
-    showAlert(
-      'Change password',
-      `We'll email a link to ${email} to set a new password.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Send link',
-          onPress: async () => {
-            try {
-              const to = await sendPasswordReset();
-              showAlert('Check your email', `A reset link is on its way to ${to}.`);
-            } catch (e) {
-              showAlert('Could not send the link', e?.message || 'Please try again later.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const logOut = () => {
-    showAlert('Log out?', 'You can sign back in any time.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Log out',
-        style: 'destructive',
-        onPress: async () => {
-          setLoggingOut(true);
-          await logoutUser();
-          resetToWelcome();
-        },
-      },
-    ]);
-  };
-
-  const resetToWelcome = () => {
-    let root = navigation;
-    while (root.getParent && root.getParent()) root = root.getParent();
-    root.reset({ index: 0, routes: [{ name: 'Welcome' }] });
-  };
-
-  const openDelete = () => {
-    setDeleteText('');
-    setDeleteError('');
-    setDeleteOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (deleteText.trim().toUpperCase() !== 'DELETE' || deleting) return;
-    setDeleting(true);
-    setDeleteError('');
-    try {
-      await deleteMyAccount();
-      setDeleteOpen(false);
-      resetToWelcome();
-      showAlert('Account deleted', 'Your account and data have been removed. Safe travels!');
-    } catch (e) {
-      setDeleteError(e?.message || 'Could not delete your account. Please try again.');
-      setDeleting(false);
-    }
-  };
-
   const openTrip = (trip) => navigation.navigate('MyTrips', {
     screen: 'TripDetail',
     params: { tripId: trip.id, tripName: trip.name },
@@ -320,7 +275,7 @@ export default function ProfileScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
@@ -328,71 +283,94 @@ export default function ProfileScreen({ navigation }) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); load(); }}
-            tintColor={COLORS.white}
+            tintColor={COLORS.primary}
           />
         )}
       >
-        {/* Header */}
-        <LinearGradient
-          colors={[COLORS.primary, '#34495C']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.header, { paddingTop: insets.top + SIZES.spacing_sm }]}
-        >
+        {/* Header: a drawn countryside with your first name big INSIDE it,
+            like the iPhone Lock Screen's depth effect: the sky and mountains
+            are behind the name, the hills and the windmill in front of it.
+            Your photo, full name, email and "exploring since" sit on the
+            front hills. */}
+        <View style={[styles.header, { height: sceneHeight }]}>
+          <ProfileSceneBack width={windowWidth} />
+          {/* Your traveller title, big (your name is just below). Tap: what
+              the titles are and how far the next one is. */}
+          {!loading && (
+            <TouchableOpacity
+              style={[styles.bigNameWrap, { top: sceneY(100, windowWidth) }]}
+              onPress={showLevel}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`Your traveller title: ${level.title}. What it means`}
+            >
+              <Text
+                style={[styles.bigName, { fontSize: sceneY(66, windowWidth), lineHeight: sceneY(80, windowWidth) }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.5}
+              >
+                {level.title}
+              </Text>
+            </TouchableOpacity>
+          )}
+          <ProfileSceneFront width={windowWidth} />
+
           <TouchableOpacity
-            style={styles.backButton}
+            style={[styles.backButton, { top: insets.top + SIZES.spacing_sm }]}
             onPress={() => navigation.goBack()}
             accessibilityLabel="Go back"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Feather name="chevron-left" size={22} color={COLORS.white} />
+            <Feather name="chevron-left" size={22} color={COLORS.primary} />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.avatarRing}
-            onPress={onAvatarPress}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel={photo ? 'Change or remove your profile photo' : 'Add a profile photo'}
-          >
-            {photo ? (
-              <Image source={{ uri: photo }} style={styles.avatar} onError={() => setPhotoFailed(true)} />
-            ) : (
-              <View style={[styles.avatar, { backgroundColor: avatarColorFor(name) }]}>
-                <Text style={styles.avatarText}>{initialsFor(name)}</Text>
+          {/* You, on the front hills */}
+          <View style={[styles.meRow, { top: sceneY(222, windowWidth) }]}>
+            <TouchableOpacity
+              style={styles.avatarRing}
+              onPress={onAvatarPress}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={photo ? 'Change or remove your profile photo' : 'Add a profile photo'}
+            >
+              {photo ? (
+                <Image source={{ uri: photo }} style={styles.avatar} onError={() => setPhotoFailed(true)} />
+              ) : (
+                <View style={[styles.avatar, { backgroundColor: avatarColorFor(name) }]}>
+                  <Text style={styles.avatarText}>{initialsFor(name)}</Text>
+                </View>
+              )}
+              {photoBusy && (
+                <View style={styles.avatarBusy}>
+                  <ActivityIndicator color={COLORS.white} />
+                </View>
+              )}
+              {/* Camera badge: this is where you change the photo. */}
+              <View style={styles.avatarBadge}>
+                <Feather name="camera" size={11} color={COLORS.primary} />
               </View>
-            )}
-            {photoBusy && (
-              <View style={styles.avatarBusy}>
-                <ActivityIndicator color={COLORS.white} />
-              </View>
-            )}
-            {/* Camera badge: this is where you change the photo. */}
-            <View style={styles.avatarBadge}>
-              <Feather name="camera" size={14} color={COLORS.primary} />
+            </TouchableOpacity>
+            <View style={styles.meText}>
+              <TouchableOpacity
+                style={styles.nameRow}
+                onPress={openNameEditor}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={`${name}. Edit name`}
+              >
+                <Text style={styles.name} numberOfLines={1}>{name}</Text>
+                <Feather name="edit-2" size={13} color="rgba(255,255,255,0.85)" />
+              </TouchableOpacity>
+              {!!email && <Text style={styles.email} numberOfLines={1}>{email}</Text>}
+              {!!since && (
+                <Text style={styles.sinceText} numberOfLines={1}>
+                  Exploring since {MONTHS[since.getMonth()]} {since.getFullYear()}
+                </Text>
+              )}
             </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.nameRow}
-            onPress={openNameEditor}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel={`${name}. Edit name`}
-          >
-            <Text style={styles.name} numberOfLines={1}>{name}</Text>
-            <Feather name="edit-2" size={15} color="rgba(255,255,255,0.8)" />
-          </TouchableOpacity>
-          {!!email && <Text style={styles.email} numberOfLines={1}>{email}</Text>}
-          {!!since && (
-            <View style={styles.sincePill}>
-              <Feather name="globe" size={12} color={COLORS.white} />
-              <Text style={styles.sinceText}>
-                Exploring since {MONTHS[since.getMonth()]} {since.getFullYear()}
-              </Text>
-            </View>
-          )}
-        </LinearGradient>
+          </View>
+        </View>
 
         {/* Stats: overlaps the header */}
         <View style={styles.statsCard}>
@@ -448,27 +426,9 @@ export default function ProfileScreen({ navigation }) {
           </View>
         )}
 
-        {/* Account */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <View style={styles.group}>
-            <Row icon="user" label="Name" value={name} onPress={openNameEditor} />
-            <Row icon="mail" label="Email" value={email} />
-            <Row
-              icon="log-in"
-              label="Signed in with"
-              value={methods.google && methods.password ? 'Google & email' : methods.google ? 'Google' : 'Email'}
-              last={!methods.password}
-            />
-            {methods.password && (
-              <Row icon="lock" label="Change password" onPress={resetPassword} last />
-            )}
-          </View>
-        </View>
-
         {/* Shortcuts */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Trips</Text>
+          <Text style={styles.sectionTitle}>Your travels</Text>
           <View style={styles.group}>
             <Row
               icon="briefcase"
@@ -490,102 +450,18 @@ export default function ProfileScreen({ navigation }) {
               icon="book-open"
               label="Your stories"
               onPress={() => navigation.navigate('MyStories')}
-            />
-            <Row
-              icon="slash"
-              label="Blocked people"
-              onPress={() => navigation.navigate('BlockedPeople')}
               last
             />
           </View>
         </View>
 
-        {/* About: the legal pages (also linked on Welcome and Sign up). */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
-          <View style={styles.group}>
-            <Row icon="shield" label="Privacy policy" onPress={openPrivacyPolicy} />
-            <Row icon="file-text" label="Terms of use" onPress={openTerms} last />
-          </View>
-        </View>
-
-        {/* Log out */}
+        {/* Account security, privacy, legal, log out: all in Settings. */}
         <View style={styles.section}>
           <View style={styles.group}>
-            {loggingOut ? (
-              <ActivityIndicator style={styles.row} color={COLORS.error} />
-            ) : (
-              <Row icon="log-out" label="Log out" onPress={logOut} danger last />
-            )}
+            <Row icon="settings" label="Settings" onPress={() => navigation.navigate('Settings')} last />
           </View>
-          <TouchableOpacity
-            style={styles.deleteLink}
-            onPress={openDelete}
-            accessibilityRole="button"
-            accessibilityLabel="Delete account"
-            hitSlop={8}
-          >
-            <Text style={styles.deleteLinkText}>Delete account</Text>
-          </TouchableOpacity>
-          <Text style={styles.version}>Wayraa {appConfig?.expo?.version ? `v${appConfig.expo.version}` : ''}</Text>
         </View>
       </ScrollView>
-
-      {/* Delete account: explains what happens, then needs "DELETE" typed. */}
-      <Modal visible={deleteOpen} transparent animationType="slide" onRequestClose={() => !deleting && setDeleteOpen(false)}>
-        <View style={styles.backdrop}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => !deleting && setDeleteOpen(false)} accessibilityLabel="Close" />
-          <View style={[styles.sheet, { marginBottom: keyboardHeight, paddingBottom: (keyboardHeight ? 0 : insets.bottom) + SIZES.spacing_lg }]}>
-            <View style={styles.grabber} />
-            <View style={styles.deleteIcon}>
-              <Feather name="alert-triangle" size={22} color={COLORS.error} />
-            </View>
-            <Text style={styles.sheetTitle}>Delete your account?</Text>
-            <Text style={styles.sheetHint}>This can't be undone. Here's what happens:</Text>
-            {[
-              'Your profile, sign-in, favourites and journals are deleted.',
-              'Trips only you are on are deleted.',
-              'Trips shared with friends stay with them; the longest-standing editor becomes the owner.',
-              'Expenses you paid on shared trips stay, shown as "Former traveller".',
-            ].map((line) => (
-              <View key={line} style={styles.deletePoint}>
-                <View style={styles.deleteBullet} />
-                <Text style={styles.deletePointText}>{line}</Text>
-              </View>
-            ))}
-            <Text style={styles.deleteType}>Type DELETE to confirm</Text>
-            <TextInput
-              style={styles.input}
-              value={deleteText}
-              onChangeText={(t) => { setDeleteText(t); setDeleteError(''); }}
-              placeholder="DELETE"
-              placeholderTextColor={COLORS.textMuted}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              editable={!deleting}
-              accessibilityLabel="Type DELETE to confirm"
-            />
-            {!!deleteError && <Text style={styles.nameError}>{deleteError}</Text>}
-            <TouchableOpacity
-              style={[styles.deleteButton, (deleting || deleteText.trim().toUpperCase() !== 'DELETE') && styles.saveButtonDisabled]}
-              onPress={confirmDelete}
-              disabled={deleting || deleteText.trim().toUpperCase() !== 'DELETE'}
-              activeOpacity={0.9}
-              accessibilityRole="button"
-            >
-              {deleting ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.saveText}>Delete my account</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setDeleteOpen(false)}
-              disabled={deleting}
-              accessibilityRole="button"
-            >
-              <Text style={styles.cancelText}>Keep my account</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Edit name */}
       <Modal visible={editingName} transparent animationType="slide" onRequestClose={() => setEditingName(false)}>
@@ -621,8 +497,6 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
       </Modal>
-      {/* Waiting: the animated logo over the page (which can't be touched meanwhile). */}
-      <LoaderOverlay visible={loggingOut} message="Logging out…" />
     </View>
   );
 }
@@ -634,80 +508,110 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    alignItems: 'center',
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingBottom: 56,
+    overflow: 'hidden',
     borderBottomLeftRadius: SIZES.radius_xl,
     borderBottomRightRadius: SIZES.radius_xl,
+    backgroundColor: '#D9F0FA',
   },
   backButton: {
-    alignSelf: 'flex-start',
+    position: 'absolute',
+    left: SIZES.spacing_lg,
     width: 38,
     height: 38,
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    marginBottom: SIZES.spacing_sm,
+    backgroundColor: 'rgba(255,255,255,0.75)',
   },
   avatarRing: {
-    padding: 4,
-    borderRadius: 52,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    padding: 3,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255,255,255,0.9)',
   },
   avatarBusy: {
     position: 'absolute',
-    top: 4,
-    left: 4,
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    top: 3,
+    left: 3,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   avatarBadge: {
     position: 'absolute',
-    right: 0,
-    bottom: 0,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    right: -2,
+    bottom: -2,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.white,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: COLORS.primary,
   },
   avatar: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: 32,
+    fontSize: 22,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
+  },
+  // Your first name, big, between the scene's layers.
+  bigNameWrap: {
+    position: 'absolute',
+    left: SIZES.spacing_lg,
+    right: SIZES.spacing_lg,
+    alignItems: 'center',
+  },
+  // Deep slate on the light sky (white got lost there), with a soft white
+  // glow so it also holds up where it crosses the mountains.
+  bigName: {
+    fontFamily: 'PlayfairDisplay_800ExtraBold',
+    color: '#1E3346',
+    letterSpacing: 0.5,
+    textShadowColor: 'rgba(255,255,255,0.55)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 12,
+  },
+  meRow: {
+    position: 'absolute',
+    left: SIZES.spacing_lg,
+    right: SIZES.spacing_lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+  },
+  meText: {
+    flex: 1,
+    minWidth: 0,
   },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_sm,
-    marginTop: SIZES.spacing_md,
+    gap: 6,
     maxWidth: '100%',
   },
   name: {
     flexShrink: 1,
-    fontSize: SIZES.xxl,
+    fontSize: SIZES.lg,
     fontFamily: 'Poppins_700Bold',
     color: COLORS.white,
+    textShadowColor: 'rgba(0,0,0,0.25)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   email: {
-    fontSize: SIZES.md,
+    fontSize: SIZES.sm,
     fontFamily: 'Poppins_400Regular',
-    color: 'rgba(255,255,255,0.8)',
+    color: 'rgba(255,255,255,0.9)',
   },
   sincePill: {
     flexDirection: 'row',
@@ -727,7 +631,7 @@ const styles = StyleSheet.create({
 
   statsCard: {
     flexDirection: 'row',
-    marginTop: -36,
+    marginTop: -28,
     marginHorizontal: SIZES.spacing_base,
     paddingVertical: SIZES.spacing_base,
     borderRadius: SIZES.radius_xl,

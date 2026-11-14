@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { getTripDrafts, clearTripDraft } from '../services/tripDraft';
@@ -10,52 +10,44 @@ import { showAlert } from './AppDialog';
 /**
  * Trips you started creating but didn't finish (see services/tripDraft): a
  * quiet card per trip (up to 3), side by side — swipe between them, with dots
- * under them. They slide on by themselves every few seconds (pausing for a
- * while after you swipe, and while the screen isn't in view). Renders nothing when there are none. Re-checks whenever its
- * screen comes back into view.
+ * under them. They don't slide by themselves (Popular destinations, right
+ * above on Home, already does). Renders nothing when there are none.
+ * Re-checks whenever its screen comes back into view.
  *
  *  - Tap a row: Create trip opens with that trip filled back in.
  *  - ✕: forgets that one (after "Discard this trip?").
  *
+ * Also takes your next trip (`upcoming`) as the first page, so Home shows one
+ * row for both: "3 days to Rameshwaram", then the unfinished ones.
+ *
  * @param {object} navigation
+ * @param {{ bold: string, rest: string, details?: string, label: string, onPress: () => void }} [upcoming]
  * @param {object} [style]
  * @param {(height: number) => void} [onHeight]  its height (0 when hidden), for
  *   screens that lay it over content
  */
-export default function UnfinishedTripCard({ navigation, style, onHeight }) {
+export default function UnfinishedTripCard({ navigation, upcoming, style, onHeight }) {
   const [drafts, setDrafts] = useState([]);
   const [width, setWidth] = useState(0); // one page = the full width
   const [page, setPage] = useState(0);
   const scrollRef = useRef(null);
-  const pausedUntil = useRef(0);
-  const isFocused = useIsFocused();
 
-  // Auto-slide to the next trip (back to the first after the last).
-  useEffect(() => {
-    if (!isFocused || drafts.length < 2 || !width) return undefined;
-    const timer = setInterval(() => {
-      if (Date.now() < pausedUntil.current) return;
-      setPage((p) => {
-        const next = (p + 1) % drafts.length;
-        scrollRef.current?.scrollTo({ x: next * width, animated: true });
-        return next;
-      });
-    }, AUTO_SLIDE_MS);
-    return () => clearInterval(timer);
-  }, [isFocused, drafts.length, width]);
+  // Pages: your next trip first (if any), then the unfinished ones.
+  const pageCount = drafts.length + (upcoming ? 1 : 0);
+
 
   useFocusEffect(useCallback(() => {
     let cancelled = false;
     getTripDrafts().then((list) => {
       if (cancelled) return;
       setDrafts(list);
-      if (!list.length) onHeight?.(0);
+      if (!list.length && !upcoming) onHeight?.(0);
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []));
 
-  if (!drafts.length) return null;
+  if (!pageCount) return null;
 
   const discard = (draft) => showAlert('Discard this trip?', `"${draft.tripName || 'Your trip'}" won't be saved.`, [
     { text: 'Keep it', style: 'cancel' },
@@ -66,11 +58,34 @@ export default function UnfinishedTripCard({ navigation, style, onHeight }) {
         await clearTripDraft(draft.id);
         const left = drafts.filter((d) => d.id !== draft.id);
         setDrafts(left);
-        setPage((p) => Math.min(p, Math.max(0, left.length - 1)));
-        if (!left.length) onHeight?.(0);
+        setPage((p) => Math.min(p, Math.max(0, left.length + (upcoming ? 1 : 0) - 1)));
+        if (!left.length && !upcoming) onHeight?.(0);
       },
     },
   ]);
+
+  const renderUpcoming = () => (
+    <TouchableOpacity
+      key="upcoming"
+      style={[styles.card, width ? { width } : null]}
+      onPress={upcoming.onPress}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={upcoming.label}
+    >
+      <View style={styles.icon}>
+        <Ionicons name="airplane" size={15} color={COLORS.accent} />
+      </View>
+      <View style={styles.body}>
+        <Text style={styles.title} numberOfLines={1}>
+          {upcoming.bold}
+          <Text style={styles.titleRest}>{upcoming.rest}</Text>
+        </Text>
+        {!!upcoming.details && <Text style={styles.details} numberOfLines={1}>{upcoming.details}</Text>}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} style={styles.chevron} />
+    </TouchableOpacity>
+  );
 
   const renderRow = (draft) => {
     const place = draft.dest?.name;
@@ -118,20 +133,20 @@ export default function UnfinishedTripCard({ navigation, style, onHeight }) {
         onHeight?.(e.nativeEvent.layout.height);
       }}
     >
-      {drafts.length === 1 ? renderRow(drafts[0]) : (
+      {pageCount === 1 ? (upcoming ? renderUpcoming() : renderRow(drafts[0])) : (
         <>
           <ScrollView
             ref={scrollRef}
-            onScrollBeginDrag={() => { pausedUntil.current = Date.now() + PAUSE_AFTER_SWIPE_MS; }}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
             onMomentumScrollEnd={(e) => width && setPage(Math.round(e.nativeEvent.contentOffset.x / width))}
           >
+            {upcoming && renderUpcoming()}
             {drafts.map(renderRow)}
           </ScrollView>
-          <View style={styles.dots} accessibilityLabel={`Unfinished trip ${page + 1} of ${drafts.length}`}>
-            {drafts.map((d, i) => <View key={d.id} style={[styles.dot, i === page && styles.dotOn]} />)}
+          <View style={styles.dots} accessibilityLabel={`Trip ${page + 1} of ${pageCount}`}>
+            {Array.from({ length: pageCount }, (_, i) => <View key={i} style={[styles.dot, i === page && styles.dotOn]} />)}
           </View>
         </>
       )}
@@ -139,8 +154,6 @@ export default function UnfinishedTripCard({ navigation, style, onHeight }) {
   );
 }
 
-const AUTO_SLIDE_MS = 4000;          // time on each trip
-const PAUSE_AFTER_SWIPE_MS = 8000;   // after you swipe, leave it be for a bit
 
 const styles = StyleSheet.create({
   card: {
@@ -187,6 +200,12 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md + 1,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
+  },
+  titleRest: {
+    fontFamily: 'Poppins_400Regular',
+  },
+  chevron: {
+    marginRight: 6,
   },
   details: {
     fontSize: SIZES.sm,

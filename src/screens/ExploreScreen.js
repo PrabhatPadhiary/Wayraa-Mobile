@@ -48,8 +48,9 @@ import { NEARBY_CARD_HEIGHT } from '../components/NearbyPlaceCard';
 import { peekPreloaded, takePreloaded } from '../services/homePreload';
 import { API_URL } from '../config';
 import useAuth from '../hooks/useAuth';
-import { pickActiveTrips, daysUntil, dayCount } from '../utils/tripDates';
+import { pickActiveTrips, daysUntil, dayCount, formatDateRange } from '../utils/tripDates';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { initialsFor } from '../components/TripStackCard';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { useBottomBar } from '../context/BottomBarContext';
@@ -259,6 +260,8 @@ export default function ExploreScreen({ route, navigation }) {
   useFocusEffect(useCallback(() => () => setTabBarHiddenOnce(false), [setTabBarHiddenOnce]));
 
   const [headerSolid, setHeaderSolid] = useState(false);
+  // The question's full height (measured), for its fold-away animation.
+  const [headlineHeight, setHeadlineHeight] = useState(80);
   const handleContentScroll = (e) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const y = contentOffset.y;
@@ -365,29 +368,22 @@ export default function ExploreScreen({ route, navigation }) {
     return trips ? pickActiveTrips(trips) : [];
   });
 
-  // Greeting subline about your next trip: "Kyoto in 9 days", "Day 3 in
-  // Osaka", "Goa starts today", else "Where to next?". Tapping it opens the trip.
-  // Uses the first active trip that has dates and isn't already over (a trip
-  // still marked ongoing after its end date, or a draft without dates, is
-  // skipped rather than hiding the line).
+  // Your next trip, for the row after the unfinished trips: "3 days to
+  // Rameshwaram", "Day 3 of 7 in Osaka", "Goa starts today". Uses the first
+  // active trip that has dates and isn't already over.
   const lineFor = (trip) => {
     if (!trip?.startDate) return null;
     const place = trip.primaryDestination || trip.name;
     const until = daysUntil(trip.startDate);
     if (until === null) return null;
-    // bold + rest: the chip's line, e.g. "3 days" + " to Rameshwaram".
     if (until > 0) {
-      return {
-        text: `${place} in ${until} ${until === 1 ? 'day' : 'days'}`,
-        bold: `${until} ${until === 1 ? 'day' : 'days'}`, rest: ` to ${place}`,
-        short: `${until}d`, place,
-      };
+      return { text: `${place} in ${until} ${until === 1 ? 'day' : 'days'}`, bold: `${until} ${until === 1 ? 'day' : 'days'}`, rest: ` to ${place}` };
     }
-    if (until === 0) return { text: `${place} starts today`, bold: place, rest: ' starts today', short: 'Today', place };
+    if (until === 0) return { text: `${place} starts today`, bold: place, rest: ' starts today' };
     const total = dayCount(trip.startDate, trip.endDate);
     const dayNo = 1 - until;
     if (!total || dayNo > total) return null; // over (or no end date to count from)
-    return { text: `Day ${dayNo} in ${place}`, bold: `Day ${dayNo}`, rest: ` of ${total} in ${place}`, short: `Day ${dayNo}`, place };
+    return { text: `Day ${dayNo} in ${place}`, bold: `Day ${dayNo}`, rest: ` of ${total} in ${place}` };
   };
   let headlineTrip = null;
   let tripLine = null;
@@ -395,6 +391,27 @@ export default function ExploreScreen({ route, navigation }) {
     const line = lineFor(trip);
     if (line) { headlineTrip = trip; tripLine = line; break; }
   }
+  // Its second line: dates, who's going, what's saved.
+  const tripDetails = headlineTrip ? [
+    formatDateRange(headlineTrip.startDate, headlineTrip.endDate),
+    (() => {
+      const n = Math.max(headlineTrip.travelersCount || 0, headlineTrip.memberCount || 0);
+      return n > 1 ? `${n} travellers` : null;
+    })(),
+    (() => {
+      const n = Array.isArray(headlineTrip.placeIds) ? headlineTrip.placeIds.length : 0;
+      return n > 0 ? `${n} ${n === 1 ? 'place' : 'places'} saved` : null;
+    })(),
+  ].filter(Boolean).join(' · ') : '';
+  const openHeadlineTrip = () => {
+    if (!headlineTrip) return;
+    navigation.navigate('MyTrips', {
+      screen: 'TripDetail',
+      params: { tripId: headlineTrip.id, tripName: headlineTrip.name },
+      initial: false,
+    });
+  };
+
   // Avatar used in the greeting row (48) and the collapsed bar (40): a thin
   // orange ring around your photo, or white initials on the brand navy
   // gradient. No shadow: on iOS a shadow on an image/clipped view is drawn
@@ -428,14 +445,7 @@ export default function ExploreScreen({ route, navigation }) {
     );
   };
 
-  const openHeadlineTrip = () => {
-    if (!headlineTrip) return;
-    navigation.navigate('MyTrips', {
-      screen: 'TripDetail',
-      params: { tripId: headlineTrip.id, tripName: headlineTrip.name },
-      initial: false,
-    });
-  };
+
   const [favourites, setFavourites] = useState(() => (peekPreloaded('favourites') || []).slice(0, 8));
   // True once each request has finished (success or failure) at least once,
   // so skeletons show only on the first load, not on every refocus refresh.
@@ -990,16 +1000,24 @@ export default function ExploreScreen({ route, navigation }) {
               if (page !== popularPage) setPopularPage(page);
             }}
           />
-          {/* Which card you're on. */}
-          <View style={styles.cardDots} accessibilityLabel={`Destination ${popularPage + 1} of ${POPULAR_DESTINATIONS.length}`}>
-            {POPULAR_DESTINATIONS.map((d, i) => (
-              <View key={d.id} style={[styles.cardDot, i === popularPage && styles.cardDotOn]} />
-            ))}
-          </View>
         </View>
 
-        {/* Trips you started creating but didn't finish, after the destinations. */}
-        {isAuthenticated && <UnfinishedTripCard navigation={navigation} style={styles.unfinishedTrip} />}
+        {/* One row for your next trip and the unfinished ones (swipe between
+            them). */}
+        {isAuthenticated && (
+          <UnfinishedTripCard
+            navigation={navigation}
+            style={styles.unfinishedTrip}
+            upcoming={tripLine ? {
+              bold: tripLine.bold,
+              rest: tripLine.rest,
+              details: tripDetails,
+              label: `${tripLine.text}${tripDetails ? `, ${tripDetails}` : ''}. Open trip`,
+              onPress: openHeadlineTrip,
+            } : undefined}
+          />
+        )}
+
 
         {/* From the community: real travellers' stories, early on the page. */}
         <View style={styles.section}>
@@ -1245,7 +1263,7 @@ export default function ExploreScreen({ route, navigation }) {
           a hairline under it once the page has scrolled. Rendered after the
           ScrollView so it floats on top. */}
       <View
-        style={[styles.searchContainer, headerSolid && styles.searchContainerSolid, headerCollapsed && styles.searchContainerPinned]}
+        style={styles.searchContainer}
         onLayout={(e) => {
           // Only capture the EXPANDED height (ignore shrinking frames while
           // collapsing) so the content's top padding stays stable and doesn't
@@ -1256,95 +1274,112 @@ export default function ExploreScreen({ route, navigation }) {
           }
         }}
       >
+        {/* Frosted glass once the page scrolls: the content passing under is
+            blurred, with a light white wash so the text stays readable.
+            Rounded at the bottom once the header has pinned. */}
+        {headerSolid && (
+          <View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.headerGlass, headerCollapsed && styles.headerGlassRound]}
+          >
+            <BlurView intensity={50} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={[StyleSheet.absoluteFill, styles.headerGlassFill]} />
+          </View>
+        )}
 
         {/* Foreground content (greeting, next trip, search). */}
         <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]}>
-          {/* Greeting row (text + profile) — collapses away on scroll down. */}
+          {/* Top bar, always shown (also once scrolled): your location, your
+              next trip and your profile. */}
+          <View style={styles.greetingRow}>
+            {/* Your photo first, your location right beside it (no gap). */}
+            <TouchableOpacity
+              style={styles.profileButton}
+              activeOpacity={0.85}
+              onPress={handleProfilePress}
+              accessibilityRole="button"
+              accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
+            >
+              {renderAvatar(42)}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.locationWrap}
+              onPress={() => setLocationSheetOpen(true)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={exploring
+                ? `Exploring ${exploring.name}. Change location`
+                : `Your location${nearbyLabel ? `, ${nearbyLabel}` : ''}. Change location`}
+            >
+              <View style={styles.locationText}>
+                <Text style={styles.locationKicker}>{exploring ? 'Exploring' : 'Your location'}</Text>
+                <View style={styles.locationRow}>
+                  <Ionicons name={exploring ? 'compass' : 'location'} size={13} color={COLORS.primaryLight} />
+                  <Text style={styles.locationName} numberOfLines={1}>
+                    {exploring ? exploring.name : (nearbyLabel || (locationDenied ? 'Turn on location' : 'Finding you…'))}
+                  </Text>
+                  <Ionicons name="chevron-down" size={13} color={COLORS.textSecondary} />
+                </View>
+              </View>
+            </TouchableOpacity>
+            {/* Exploring a city: × goes back to where you are. */}
+            {!!exploring && (
+              <TouchableOpacity
+                style={styles.exploreClear}
+                onPress={useCurrentLocation}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Stop exploring ${exploring.name}, use my location`}
+              >
+                <Ionicons name="close" size={14} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            )}
+
+            {/* Menu: Settings (account, privacy, about, log out), apart from
+                your profile (your photo, on the left). */}
+            <TouchableOpacity
+              style={styles.menuButton}
+              onPress={() => navigation.navigate('Settings')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Settings"
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="menu-outline" size={24} color={COLORS.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* The question, which slides away on scroll down (the rows above
+              and below stay). */}
+          {/* Only the box's height animates; the text inside is laid out at its
+              full size (absolutely placed, so the shrinking box never squeezes
+              it), which keeps it on two lines when it opens again. */}
           <Animated.View
             style={{
               opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
-              // Room for the greeting plus the countdown block; collapses to 0.
-              maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [150, 0] }),
-              marginBottom: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_base, 0] }),
-              transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }],
+              height: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [headlineHeight, 0] }),
+              marginBottom: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_xs, 0] }),
               overflow: 'hidden',
             }}
           >
-            {/* Top bar: your location (tap: places near you, or turn location
-                on), and your profile. */}
-            <View style={styles.greetingRow}>
-              <TouchableOpacity
-                style={styles.locationWrap}
-                onPress={() => setLocationSheetOpen(true)}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel={exploring
-                  ? `Exploring ${exploring.name}. Change location`
-                  : `Your location${nearbyLabel ? `, ${nearbyLabel}` : ''}. Change location`}
-              >
-                <View style={styles.glassCircle}>
-                  <Ionicons name="navigate-outline" size={16} color={COLORS.primaryLight} />
-                </View>
-                <View style={styles.locationText}>
-                  <Text style={styles.locationKicker}>{exploring ? 'Exploring' : 'Your location'}</Text>
-                  <View style={styles.locationRow}>
-                    <Ionicons name={exploring ? 'compass' : 'location'} size={13} color={COLORS.primaryLight} />
-                    <Text style={styles.locationName} numberOfLines={1}>
-                      {exploring ? exploring.name : (nearbyLabel || (locationDenied ? 'Turn on location' : 'Finding you…'))}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={13} color={COLORS.textSecondary} />
-                  </View>
-                </View>
-              </TouchableOpacity>
-              {/* Exploring a city: × goes back to where you are. */}
-              {!!exploring && (
-                <TouchableOpacity
-                  style={styles.exploreClear}
-                  onPress={useCurrentLocation}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Stop exploring ${exploring.name}, use my location`}
-                >
-                  <Ionicons name="close" size={14} color={COLORS.textSecondary} />
-                </TouchableOpacity>
-              )}
-
-              {/* Your next trip, compact: "✈ 3d · Rameshwaram". Tap opens it. */}
-              {tripLine && (
-                <TouchableOpacity
-                  style={styles.tripChip}
-                  onPress={openHeadlineTrip}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${tripLine.text}. Open trip`}
-                >
-                  <Ionicons name="airplane" size={11} color={COLORS.accent} />
-                  <Text style={styles.tripChipText} numberOfLines={1}>
-                    <Text style={styles.tripChipBold}>{tripLine.short}</Text>
-                    {` · ${tripLine.place}`}
-                  </Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity
-                style={[styles.profileButton, tripLine && styles.profileButtonAfterChip]}
-                activeOpacity={0.85}
-                onPress={handleProfilePress}
-                accessibilityRole="button"
-                accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
-              >
-                {renderAvatar(44)}
-              </TouchableOpacity>
-            </View>
-
-            {/* The question: "Hi Prabhat, where do you want to go today?" */}
-            <Text style={styles.headline} accessibilityRole="header">
-              Hi <Text style={styles.headlineName}>{(isAuthenticated && firstName) || 'traveller'}</Text>, where do you want to go today?
-            </Text>
+            <Animated.View
+              style={[
+                styles.headlineBox,
+                { transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }] },
+              ]}
+              onLayout={(e) => {
+                const h = Math.ceil(e.nativeEvent.layout.height);
+                if (h > 0 && h !== headlineHeight) setHeadlineHeight(h);
+              }}
+            >
+              {/* The question: "Hi Prabhat, where do you want to go today?" */}
+              <Text style={styles.headline} accessibilityRole="header">
+                Hi <Text style={styles.headlineName}>{(isAuthenticated && firstName) || 'traveller'}</Text>, where do you want to go today?
+              </Text>
+            </Animated.View>
           </Animated.View>
 
-          {/* Search row: slim pill, plus a small avatar that slides in when the
-              header collapses (so the profile stays one tap away). */}
+          {/* Search row: slim pill and New trip (pinned). */}
           <View style={styles.searchRow}>
             <TouchableOpacity
               style={styles.homeSearchBar}
@@ -1371,24 +1406,6 @@ export default function ExploreScreen({ route, navigation }) {
               <Ionicons name="add" size={18} color={COLORS.white} />
               <Text style={styles.newTripText}>New trip</Text>
             </TouchableOpacity>
-            <Animated.View
-              style={{
-                width: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 40] }),
-                marginLeft: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, SIZES.spacing_sm] }),
-                opacity: headerAnim.interpolate({ inputRange: [0.75, 1], outputRange: [0, 1], extrapolate: 'clamp' }),
-                overflow: 'hidden',
-              }}
-              pointerEvents={headerCollapsed ? 'auto' : 'none'}
-            >
-              <TouchableOpacity
-                onPress={handleProfilePress}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
-              >
-                {renderAvatar(40)}
-              </TouchableOpacity>
-            </Animated.View>
           </View>
 
         </View>
@@ -1430,55 +1447,53 @@ const styles = StyleSheet.create({
     // See-through while open, so the page's gradient runs behind it.
     backgroundColor: 'transparent',
   },
-  // Scrolled: the gradient's top colour, so content passes cleanly under it.
-  searchContainerSolid: {
-    backgroundColor: PAGE_GRADIENT[0],
+  // The frosted glass behind the header (once scrolled).
+  headerGlass: {
+    overflow: 'hidden',
+    // A thin slate edge marks where the glass ends (no shadow: on a
+    // see-through panel iOS would draw it around the text too).
+    borderBottomWidth: 1,
+    borderColor: 'rgba(63, 90, 115, 0.14)',
   },
-  // Pinned (collapsed): plus a hairline under the search pill.
-  searchContainerPinned: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
+  headerGlassRound: {
+    borderBottomLeftRadius: 40,
+    borderBottomRightRadius: 40,
+  },
+  headerGlassFill: {
+    // iOS blurs what's behind, so a light wash is enough; Android's blur is
+    // only see-through, so a denser frost keeps the content behind soft.
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 248, 250, 0.55)' : 'rgba(246, 248, 250, 0.94)',
   },
   // Carries the header's padding.
   headerForeground: {
     paddingTop: 0,
     paddingHorizontal: SIZES.spacing_lg,
-    paddingBottom: SIZES.spacing_md,
+    // The same space under the search row as between the two rows.
+    paddingBottom: SIZES.spacing_base,
   },
   // Greeting row: greeting text + profile avatar.
   greetingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: SIZES.spacing_md,
   },
   locationWrap: {
     flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_sm,
-    marginRight: SIZES.spacing_sm,
   },
-  // Round "glass" button: translucent white on the frost page.
-  glassCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+  // Quiet: just the icon, no circle behind it.
+  menuButton: {
+    width: 36,
+    height: 42,
+    marginLeft: 'auto',
     justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.75)',
-    borderWidth: 1,
-    borderColor: COLORS.white,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 1,
+    alignItems: 'flex-end',
   },
   exploreClear: {
     width: 26,
     height: 26,
     borderRadius: 13,
-    marginRight: SIZES.spacing_md,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(63, 90, 115, 0.1)',
@@ -1502,6 +1517,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
   },
+  // Absolutely placed in its folding box: always laid out at full size.
+  headlineBox: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
   headline: {
     marginTop: SIZES.spacing_base,
     fontSize: 24,
@@ -1512,10 +1534,12 @@ const styles = StyleSheet.create({
   headlineName: {
     fontFamily: 'Poppins_700Bold',
   },
-  // Search row: slim pill + compact avatar (shown when collapsed).
+  // Search row: slim pill + New trip.
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Always a gap under the top bar, also once the question has folded away.
+    marginTop: SIZES.spacing_base,
   },
   // Slim one-line search pill.
   // Same search pill as the destination page: soft grey fill, no shadow.
@@ -1538,13 +1562,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_base,
     gap: SIZES.spacing_sm,
   },
-  // With the trip chip before it, the chip takes the push to the right.
-  profileButtonAfterChip: {
-    marginLeft: SIZES.spacing_sm,
-  },
   // Greeting-row avatar button: just the tap target (renderAvatar draws it).
   profileButton: {
-    marginLeft: 'auto',
     flexShrink: 0,
     borderRadius: 24,
   },
@@ -1598,28 +1617,6 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
-  },
-  // Next-trip chip in the top bar, before your photo.
-  tripChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    maxWidth: 150,
-    marginLeft: 'auto',
-    paddingVertical: 4,
-    paddingHorizontal: 9,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(255,255,255,0.75)',
-  },
-  tripChipText: {
-    flexShrink: 1,
-    fontSize: 11,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
-  tripChipBold: {
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
   },
   // Nearby detected location chip (plain text).
   sectionTitleSub: {
@@ -1765,7 +1762,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Sections
   unfinishedTrip: {
     marginHorizontal: SIZES.spacing_lg,
     marginTop: SIZES.spacing_md,
@@ -1819,7 +1815,9 @@ const styles = StyleSheet.create({
 
   // Cards
   cardsContainer: {
-    paddingHorizontal: SIZES.spacing_lg,
+    paddingLeft: SIZES.spacing_lg,
+    // Room after the last card, so it can snap to the left edge like the others.
+    paddingRight: SCREEN_WIDTH - SIZES.spacing_lg - CARD_WIDTH,
     gap: CARD_GAP,
   },
   card: {
@@ -1845,22 +1843,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-  },
-  cardDots: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 5,
-    marginTop: SIZES.spacing_md,
-  },
-  cardDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.border,
-  },
-  cardDotOn: {
-    width: 18,
-    backgroundColor: COLORS.primaryLight,
   },
   cardLoadingOverlay: {
     position: 'absolute',
