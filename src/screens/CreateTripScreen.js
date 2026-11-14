@@ -20,8 +20,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt, DateRangeSheet, DateRangeField } from '../components';
 import TravellerStepper from '../components/TravellerStepper';
+import PlaceSearchField from '../components/PlaceSearchField';
+import TravelScene from '../components/TravelScene';
 import useAuth from '../hooks/useAuth';
-import { createTrip, AuthRequiredError } from '../services';
+import { createTrip, addPlaceToTrip, getPlaceDetails, placeCoords, findCityOf, AuthRequiredError } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { formatDateRange } from '../utils/tripDates';
 import { LoaderOverlay } from '../components/WayraaLoader';
@@ -41,10 +43,15 @@ const SHEET_OVERLAP = 24;
  *  - What's filled in is saved on the phone as you go; next time, an
  *    unfinished trip is offered back ("Continue your trip to Dubai?").
  *
- * Route params: { placeId, name, secondary, photoUrl, lat, lng }, or
- * { resumeDraftId } from an unfinished-trip row on Home / My Trips (fills
- * that one straight in).
+ * Route params: { placeId, name, secondary, photoUrl, lat, lng } (the
+ * destination, filled in; you can change it on the form), optionally
+ * `addPlace` (a trip-place DTO, from "Create a new trip" in Add to trip: that
+ * place is saved to the new trip once it's created) with `cityOf` (that place,
+ * whose city becomes the destination: looked up, or left empty), or { resumeDraftId } from
+ * an unfinished-trip row on Home / My Trips (fills that one straight in).
  */
+const defaultTripName = (destName) => (destName ? `Trip to ${destName}` : '');
+
 export default function CreateTripScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   // Scrolled past the photo: dark status bar on a white strip.
@@ -59,8 +66,21 @@ export default function CreateTripScreen({ navigation, route }) {
   });
   const { placeId, name, secondary, photoUrl, lat, lng } = dest;
   const { isAuthenticated, isAuthReady } = useAuth();
+  // What the form opened with, to tell whether anything has changed.
+  const initialPlaceId = useRef(dest.placeId);
+  // A place to save to the new trip (from Add to trip on a place page).
+  const [addPlace, setAddPlace] = useState(route.params?.addPlace || null);
+  // Choosing another destination: the search field is open.
+  const [changingDest, setChangingDest] = useState(!dest.placeId);
+  const latestPlaceId = useRef(dest.placeId);
+  latestPlaceId.current = dest.placeId;
+  // Looking up the city of the place you came from (cityOf).
+  const [findingCity, setFindingCity] = useState(!!route.params?.cityOf && !route.params?.resumeDraftId);
+  const [destMissing, setDestMissing] = useState(false);
+  // The picked destination's details (photo, coordinates) while they load.
+  const destDetails = useRef(null);
 
-  const [tripName, setTripName] = useState(name ? `Trip to ${name}` : '');
+  const [tripName, setTripName] = useState(defaultTripName(name));
   // ISO strings (UTC midnight) or null, chosen on the range calendar.
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
@@ -74,7 +94,8 @@ export default function CreateTripScreen({ navigation, route }) {
   const nameRef = useRef(null);
 
   // Anything changed from a fresh form? (Only then is there something to save or lose.)
-  const dirty = tripName.trim() !== (name ? `Trip to ${name}` : '')
+  const dirty = dest.placeId !== initialPlaceId.current
+    || tripName.trim() !== defaultTripName(name)
     || !!startDate || !!endDate || travelers !== 1 || !!description.trim();
 
   // ── Unfinished trip from before ──
@@ -86,7 +107,12 @@ export default function CreateTripScreen({ navigation, route }) {
   useEffect(() => {
     let cancelled = false;
     const restore = (draft) => {
-      if (draft.dest?.name) setDest(draft.dest);
+      if (draft.dest?.name) {
+        setDest(draft.dest);
+        initialPlaceId.current = draft.dest.placeId;
+        setChangingDest(false);
+      }
+      if (draft.addPlace) setAddPlace(draft.addPlace);
       setTripName(draft.tripName || '');
       setStartDate(draft.startDate || null);
       setEndDate(draft.endDate || null);
@@ -144,10 +170,10 @@ export default function CreateTripScreen({ navigation, route }) {
     if (!draftChecked) return undefined;
     if (!dest?.name) return undefined; // nothing to plan around yet
     const t = setTimeout(() => {
-      saveTripDraft({ id: draftId.current, dest, tripName, startDate, endDate, travelers, description });
+      saveTripDraft({ id: draftId.current, dest, tripName, startDate, endDate, travelers, description, addPlace });
     }, 400);
     return () => clearTimeout(t);
-  }, [draftChecked, dest, tripName, startDate, endDate, travelers, description]);
+  }, [draftChecked, dest, tripName, startDate, endDate, travelers, description, addPlace]);
 
   // ── Leaving with changes: ask first ──
   const allowLeave = useRef(false);
@@ -157,7 +183,7 @@ export default function CreateTripScreen({ navigation, route }) {
   submittingRef.current = submitting;
   // The form as it is now, for "Save for later" (the listener is set up once).
   const latest = useRef(null);
-  latest.current = { dest, tripName, startDate, endDate, travelers, description };
+  latest.current = { dest, tripName, startDate, endDate, travelers, description, addPlace };
   useEffect(() => navigation.addListener('beforeRemove', (e) => {
     if (allowLeave.current) return;
     // Mid-creation (e.g. Android back): stay until it's done.
@@ -185,7 +211,7 @@ export default function CreateTripScreen({ navigation, route }) {
         onPress: async () => {
           await saveTripDraft({
             id: draftId.current, dest: f.dest, tripName: f.tripName, startDate: f.startDate,
-            endDate: f.endDate, travelers: f.travelers, description: f.description,
+            endDate: f.endDate, travelers: f.travelers, description: f.description, addPlace: f.addPlace,
           });
           leave();
         },
@@ -205,10 +231,55 @@ export default function CreateTripScreen({ navigation, route }) {
 
   const close = useCallback(() => navigation.goBack(), [navigation]);
 
+  // A new destination from the search: shown straight away, with its photo
+  // and coordinates filled in when the details arrive. A trip name you
+  // haven't changed follows it ("Trip to Goa" -> "Trip to Jaipur").
+  const chooseDestination = (result) => {
+    const next = { placeId: result.placeId, name: result.name, secondary: result.secondary };
+    setTripName((t) => (t.trim() === defaultTripName(name) || !t.trim() ? defaultTripName(result.name) : t));
+    if (nameMissing) setNameMissing(false);
+    setDest(next);
+    setChangingDest(false);
+    setDestMissing(false);
+    const loading = getPlaceDetails(result.placeId).then((details) => {
+      const c = placeCoords(details);
+      const filled = { ...next, photoUrl: details?.photoUrl || undefined, lat: c?.lat, lng: c?.lng };
+      // Only if it's still the one chosen.
+      setDest((d) => (d.placeId === next.placeId ? filled : d));
+      return filled;
+    }).catch(() => next);
+    destDetails.current = { placeId: next.placeId, loading };
+  };
+
+  // From a place (Bangalore Palace): the trip is to its city (Bengaluru).
+  // Not found: the field stays empty for you to fill in.
+  useEffect(() => {
+    if (!findingCity) return undefined;
+    let cancelled = false;
+    findCityOf(route.params.cityOf)
+      .then((city) => {
+        if (cancelled || !city) return;
+        // Only if you haven't picked one meanwhile.
+        if (latestPlaceId.current) return;
+        initialPlaceId.current = city.placeId; // filled in for you, not a change
+        chooseDestination(city);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setFindingCity(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSubmit = async () => {
     setError('');
     Keyboard.dismiss();
 
+    if (!placeId) {
+      if (findingCity) return; // a moment more
+      setDestMissing(true);
+      setChangingDest(true);
+      return;
+    }
     if (!tripName.trim()) {
       setNameMissing(true);
       nameRef.current?.focus();
@@ -220,22 +291,34 @@ export default function CreateTripScreen({ navigation, route }) {
 
     setSubmitting(true);
     try {
+      // A just-picked destination: wait for its photo and coordinates.
+      let target = dest;
+      if (destDetails.current?.placeId === placeId) target = await destDetails.current.loading;
       const created = await createTrip({
         name: tripName.trim(),
         startDate: startIso,
         endDate: endIso,
         travelersCount: travelers,
         description: description.trim() || null,
-        primaryDestination: name,
-        coverPhotoUrl: photoUrl,
+        primaryDestination: target.name,
+        coverPhotoUrl: target.photoUrl,
         destination: {
-          googlePlaceId: placeId,
-          name,
-          latitude: lat,
-          longitude: lng,
-          photoUrl,
+          googlePlaceId: target.placeId,
+          name: target.name,
+          latitude: target.lat,
+          longitude: target.lng,
+          photoUrl: target.photoUrl,
         },
       });
+      // Came from "Add to trip" on a place: save that place to the new trip.
+      // The trip exists either way, so a failure here only gets a note.
+      if (addPlace && created?.id && created?.destination?.id) {
+        try {
+          await addPlaceToTrip(created.id, created.destination.id, addPlace);
+        } catch {
+          showAlert('Trip created', `We couldn't add ${addPlace.placeName || 'the place'} to it. Add it again from its page.`);
+        }
+      }
       // Created: nothing left to save or ask about. Going to Main closes this
       // form (it sits on top) and opens the new trip in My Trips;
       // `initial: false` keeps the My Trips list underneath, so back goes to
@@ -292,7 +375,8 @@ export default function CreateTripScreen({ navigation, route }) {
   return (
     <View style={styles.container}>
       <StatusBar
-        barStyle={pastHero ? 'dark-content' : 'light-content'}
+        // Dark over the drawn scene's light sky (and once scrolled past the top).
+        barStyle={pastHero || !photoUrl ? 'dark-content' : 'light-content'}
         translucent
         backgroundColor="transparent"
         animated
@@ -319,23 +403,29 @@ export default function CreateTripScreen({ navigation, route }) {
             accessibilityLabel={`Destination: ${[name, secondary].filter(Boolean).join(', ') || 'not set'}`}
           >
             {photoUrl ? (
-              <Image source={{ uri: photoUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <>
+                <Image source={{ uri: photoUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <LinearGradient
+                  colors={['rgba(0,0,0,0.25)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.7)']}
+                  locations={[0, 0.35, 1]}
+                  style={StyleSheet.absoluteFill}
+                />
+              </>
             ) : (
-              <LinearGradient
-                colors={[COLORS.primary, COLORS.primaryLight]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
+              // No destination (or no photo) yet: a drawn travel scene, with a
+              // soft fade at the bottom for the white text.
+              <>
+                <TravelScene style={StyleSheet.absoluteFill} />
+                <LinearGradient
+                  colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.45)']}
+                  locations={[0, 0.55, 1]}
+                  style={StyleSheet.absoluteFill}
+                />
+              </>
             )}
-            <LinearGradient
-              colors={['rgba(0,0,0,0.25)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.7)']}
-              locations={[0, 0.35, 1]}
-              style={StyleSheet.absoluteFill}
-            />
             <View style={styles.destinationText}>
-              <Text style={styles.destinationKicker}>Plan a trip to</Text>
-              <Text style={styles.destinationName} numberOfLines={1}>{name || 'Destination'}</Text>
+              <Text style={styles.destinationKicker}>{name ? 'Plan a trip to' : 'Plan a trip'}</Text>
+              <Text style={styles.destinationName} numberOfLines={1}>{name || 'Where to?'}</Text>
               {!!secondary && (
                 <View style={styles.destinationPlaceRow}>
                   <Ionicons name="location" size={14} color="rgba(255,255,255,0.9)" />
@@ -347,6 +437,70 @@ export default function CreateTripScreen({ navigation, route }) {
 
           {/* The form, on a white sheet that overlaps the photo. */}
           <View style={styles.formSheet}>
+
+          {/* Destination: filled in from where you came from, changeable. */}
+          <Text style={styles.fieldLabel}>Destination</Text>
+          {findingCity && !placeId ? (
+            <View style={styles.destRow} accessibilityLiveRegion="polite">
+              <View style={styles.destIcon}>
+                <ActivityIndicator size="small" color={COLORS.accentDeep} />
+              </View>
+              <Text style={[styles.destSecondary, styles.destText]}>Finding the city…</Text>
+            </View>
+          ) : changingDest ? (
+            <>
+              <PlaceSearchField
+                onSelect={chooseDestination}
+                placeholder="Where to? e.g. Goa, Kyoto, Iceland"
+                icon="map-pin"
+                regionsOnly
+                autoFocus={!!placeId || destMissing}
+              />
+              {destMissing ? (
+                <View style={styles.fieldError} accessibilityLiveRegion="polite">
+                  <Ionicons name="alert-circle" size={15} color={COLORS.error} />
+                  <Text style={styles.fieldErrorText}>Choose where you're going</Text>
+                </View>
+              ) : !!placeId && (
+                <TouchableOpacity onPress={() => setChangingDest(false)} style={styles.keepDest} accessibilityRole="button">
+                  <Text style={styles.keepDestText}>Keep {name}</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.destRow}
+              onPress={() => setChangingDest(true)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={`Destination: ${name}. Change`}
+            >
+              <View style={styles.destIcon}>
+                <Ionicons name="location" size={17} color={COLORS.accentDeep} />
+              </View>
+              <View style={styles.destText}>
+                <Text style={styles.destName} numberOfLines={1}>{name}</Text>
+                {!!secondary && <Text style={styles.destSecondary} numberOfLines={1}>{secondary}</Text>}
+              </View>
+              <Text style={styles.changeText}>Change</Text>
+            </TouchableOpacity>
+          )}
+          {!!addPlace && (
+            <View style={styles.addPlaceNote}>
+              <Ionicons name="bookmark" size={13} color={COLORS.textSecondary} />
+              <Text style={styles.addPlaceText} numberOfLines={2}>
+                {addPlace.placeName || 'This place'} will be saved to this trip
+              </Text>
+              <TouchableOpacity
+                onPress={() => setAddPlace(null)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Don't save ${addPlace.placeName || 'this place'} to the trip`}
+              >
+                <Ionicons name="close" size={15} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Trip name */}
           <Text style={styles.fieldLabel}>Trip name</Text>
@@ -500,6 +654,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_lg,
     paddingBottom: SIZES.spacing_xl + 24, // clears the sheet's rounded overlap
     backgroundColor: COLORS.primary,
+    overflow: 'hidden',
   },
   destinationText: {},
   destinationKicker: {
@@ -541,7 +696,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(4,50,71,0.55)',
+    backgroundColor: 'rgba(43, 63, 81, 0.55)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.35)',
   },
@@ -583,7 +738,7 @@ const styles = StyleSheet.create({
   inputError: {
     borderColor: COLORS.error,
     borderWidth: 1.5,
-    backgroundColor: '#fff6f6',
+    backgroundColor: '#FDF8F8',
   },
   fieldError: {
     flexDirection: 'row',
@@ -595,6 +750,66 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.error,
+  },
+  destRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md,
+    paddingVertical: 10,
+    paddingHorizontal: SIZES.spacing_md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: SIZES.radius_md,
+    backgroundColor: COLORS.white,
+  },
+  destIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FDEFEA',
+  },
+  destText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  destName: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  destSecondary: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  changeText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
+  keepDest: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingVertical: 2,
+  },
+  keepDestText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
+  addPlaceNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: SIZES.spacing_sm,
+  },
+  addPlaceText: {
+    flex: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
   },
   hint: {
     fontSize: SIZES.sm,

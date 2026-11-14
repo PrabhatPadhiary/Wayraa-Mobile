@@ -25,22 +25,22 @@ export function tripTiming(trip) {
   const total = dayCount(trip.startDate, trip.endDate);
 
   if (status === 'completed' || (left !== null && left < 0)) {
-    return { label: 'Completed', icon: 'checkmark-circle', color: '#64748b', tint: '#eef1f5' };
+    return { label: 'Completed', icon: 'checkmark-circle', color: '#64788B', tint: '#EEF2F5' };
   }
   if (until === null) {
-    return { label: 'No dates yet', icon: 'calendar-outline', color: COLORS.primaryLight, tint: '#e6f3fb' };
+    return { label: 'No dates yet', icon: 'calendar-outline', color: COLORS.primaryLight, tint: '#ECF1F5' };
   }
   if (until > 1) {
-    return { label: `In ${until} days`, icon: 'time-outline', color: COLORS.accentDeep, tint: '#fff0e6' };
+    return { label: `In ${until} days`, icon: 'time-outline', color: COLORS.accentDeep, tint: '#FCEDE8' };
   }
-  if (until === 1) return { label: 'Tomorrow', icon: 'airplane-outline', color: COLORS.accentDeep, tint: '#ffe6d6' };
-  if (until === 0) return { label: 'Starts today', icon: 'airplane', color: '#15803d', tint: '#e5f6ec' };
+  if (until === 1) return { label: 'Tomorrow', icon: 'airplane-outline', color: COLORS.accentDeep, tint: '#FBE2DA' };
+  if (until === 0) return { label: 'Starts today', icon: 'airplane', color: '#2B6A4B', tint: '#E6F5EE' };
   const dayNo = 1 - until;
   return {
     label: total ? `Day ${dayNo} of ${total}` : `Day ${dayNo}`,
     icon: 'sunny',
-    color: '#15803d',
-    tint: '#e5f6ec',
+    color: '#2B6A4B',
+    tint: '#E6F5EE',
     progress: total ? Math.min(1, dayNo / total) : null,
   };
 }
@@ -184,8 +184,8 @@ const styles = StyleSheet.create({
     // A real card: light border + shadow (not clipped, so the shadow shows).
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e3e9ef',
-    shadowColor: '#043247',
+    borderColor: '#E3E9EF',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.12,
     shadowRadius: 12,
@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#eef4f8',
+    backgroundColor: '#EFF3F7',
   },
   // Inset so it sits inside the rounded corners.
   progressTrack: {
@@ -316,11 +316,11 @@ const styles = StyleSheet.create({
     height: 3,
     borderRadius: 2,
     overflow: 'hidden',
-    backgroundColor: '#e5f6ec',
+    backgroundColor: '#E6F5EE',
   },
   progressFill: {
     height: '100%',
     borderRadius: 2,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#43A474',
   },
 });

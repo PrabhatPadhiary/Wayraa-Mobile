@@ -175,7 +175,7 @@ export default function JournalPreviewSheet({ journal, onClose, onToggleLike, on
               accessibilityState={{ selected: !!j.isLiked }}
               accessibilityLabel={j.isLiked ? 'Unlike' : 'Like'}
             >
-              <Ionicons name={j.isLiked ? 'heart' : 'heart-outline'} size={19} color={j.isLiked ? COLORS.white : '#e0245e'} />
+              <Ionicons name={j.isLiked ? 'heart' : 'heart-outline'} size={19} color={j.isLiked ? COLORS.white : '#E05024'} />
               <Text style={[styles.likeText, j.isLiked && styles.likeTextOn]}>{j.isLiked ? 'Liked' : 'Like'}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.openButton} onPress={onOpen} activeOpacity={0.9} accessibilityRole="button">
@@ -293,7 +293,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_sm,
     paddingVertical: 3,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   vibeText: {
     fontSize: SIZES.xs,
@@ -327,15 +327,15 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: SIZES.radius_full,
     borderWidth: 1.5,
-    borderColor: '#e0245e',
+    borderColor: '#E05024',
   },
   likeButtonOn: {
-    backgroundColor: '#e0245e',
+    backgroundColor: '#E05024',
   },
   likeText: {
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
-    color: '#e0245e',
+    color: '#E05024',
   },
   likeTextOn: {
     color: COLORS.white,

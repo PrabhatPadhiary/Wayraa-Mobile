@@ -174,7 +174,7 @@ export default function JoinTripScreen({ navigation, route }) {
 
           {!!error && (
             <View style={styles.errorBox}>
-              <Ionicons name="alert-circle-outline" size={18} color="#d32f2f" />
+              <Ionicons name="alert-circle-outline" size={18} color="#D33F2F" />
               <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
@@ -331,13 +331,13 @@ const styles = StyleSheet.create({
     marginTop: SIZES.spacing_lg,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
-    backgroundColor: '#fdecea',
+    backgroundColor: '#FBEEEC',
   },
   errorText: {
     flex: 1,
     fontSize: SIZES.md,
     fontFamily: 'Poppins_500Medium',
-    color: '#b71c1c',
+    color: '#AE3325',
   },
   tripCard: {
     marginTop: SIZES.spacing_lg,
@@ -345,7 +345,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   cover: {
     height: 180,

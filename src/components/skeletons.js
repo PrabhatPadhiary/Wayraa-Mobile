@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
     padding: SIZES.spacing_base,
     marginBottom: SIZES.spacing_md,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   headRow: {
     flexDirection: 'row',

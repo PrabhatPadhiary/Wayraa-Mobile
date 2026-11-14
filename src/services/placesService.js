@@ -1,4 +1,5 @@
 import { API_URL } from '../config';
+import { reverseGeocode } from './locationService';
 
 /**
  * Search for place predictions via the backend proxy (Google Places Autocomplete).
@@ -235,4 +236,56 @@ export async function getPlacesByTheme(theme, coords = null, near = null) {
     console.log('getPlacesByTheme error:', error);
     return [];
   }
+}
+
+/**
+ * Likely city names in a Google address, best first, for a city search to
+ * check: the part before the postcode ("…, Bengaluru, Karnataka 560052,
+ * India"), the postcode part without the postcode ("75007 Paris",
+ * "London NW1 6XE"), else the third part from the end. Parts are split on
+ * commas or " - " (as in Dubai addresses).
+ */
+export function cityFromAddress(address) {
+  const parts = (address || '').split(/,| - /).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return [];
+  const out = [];
+  const add = (c) => { if (c && !/\d/.test(c) && !out.includes(c)) out.push(c); };
+  const coded = parts.map((p, i) => (/\d{3,}|\b[A-Z]{1,2}\d/.test(p) ? i : -1)).filter((i) => i > 0);
+  const last = coded.length ? coded[coded.length - 1] : -1;
+  if (last > 0) {
+    add(parts[last - 1]);
+    add(parts[last].split(/\s+/).filter((w) => !/\d/.test(w)).join(' '));
+  }
+  if (parts.length >= 3) add(parts[parts.length - 3]);
+  add(parts[parts.length - 2]);
+  return out.slice(0, 2);
+}
+
+/**
+ * The city a place is in (Bangalore Palace -> Bengaluru), as a search result
+ * ({ placeId, name, secondary, types }), or null when it can't be told.
+ * The city's name comes from the phone's own geocoder (free), else from the
+ * address; one city search then finds it on Google, near the place.
+ *
+ * @param {{ name?: string, vicinity?: string, lat?: number, lng?: number }} place
+ */
+export async function findCityOf(place) {
+  const hasCoords = Number.isFinite(place?.lat) && Number.isFinite(place?.lng);
+  const names = [];
+  if (hasCoords) names.push(await reverseGeocode(place.lat, place.lng));
+  names.push(...cityFromAddress(place?.vicinity));
+  const tried = new Set();
+  for (const cityName of names) {
+    const key = (cityName || '').toLowerCase();
+    if (!key || tried.has(key)) continue;
+    tried.add(key);
+    // eslint-disable-next-line no-await-in-loop
+    const found = await searchAnyPlace(cityName, {
+      regionsOnly: true,
+      near: hasCoords ? { lat: place.lat, lng: place.lng, radius: 60000 } : null,
+    });
+    const city = found.find((r) => isRegionResult(r) && r.name?.toLowerCase() !== (place?.name || '').toLowerCase());
+    if (city) return city;
+  }
+  return null;
 }

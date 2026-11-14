@@ -73,17 +73,19 @@ export default function CategoryResultsScreen({ route, navigation }) {
   const loadNearby = useCallback(async () => {
     if (!hasNearby) return;
     setNearState('loading');
-    const loc = await getCurrentLocation();
+    // Exploring a city from Home: around it; else around where you are.
+    const chosen = route?.params?.near;
+    const loc = chosen ? { granted: true, lat: chosen.lat, lng: chosen.lng } : await getCurrentLocation();
     if (!loc?.granted) {
       setNearState('off');
       return;
     }
-    const label = await reverseGeocode(loc.lat, loc.lng);
+    const label = chosen?.label || await reverseGeocode(loc.lat, loc.lng);
     setCity(label);
     const places = await getPlacesByTheme(theme, { lat: loc.lat, lng: loc.lng }, label);
     setNearby(places);
     setNearState(places.length ? 'ready' : 'none');
-  }, [hasNearby, theme]);
+  }, [hasNearby, theme, route?.params?.near]);
 
   useEffect(() => {
     loadNearby();

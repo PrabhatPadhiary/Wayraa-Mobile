@@ -420,7 +420,7 @@ export default function CommunityScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f5f7',
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   list: {
     paddingHorizontal: SIZES.spacing_base,
@@ -457,9 +457,9 @@ const styles = StyleSheet.create({
     marginBottom: SIZES.spacing_md,
     // Fully rounded pill with a soft warm tint.
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff4ec',
+    backgroundColor: '#FDF1EE',
     borderWidth: 1,
-    borderColor: '#ffdcc6',
+    borderColor: '#F9D6CC',
   },
   // In the header: inset like the sort switch, a little gap above.
   shareRowInHeader: {
@@ -482,7 +482,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_full,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   searchInput: {
     flex: 1,
@@ -506,7 +506,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_full,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   vibeChipOn: {
     backgroundColor: COLORS.primary,

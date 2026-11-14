@@ -43,7 +43,7 @@ const styles = StyleSheet.create({
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: 'rgba(232, 93, 4, 0.10)',
+    backgroundColor: 'rgba(217, 72, 28, 0.10)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: SIZES.spacing_lg,

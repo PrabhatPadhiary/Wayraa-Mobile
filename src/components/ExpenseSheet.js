@@ -29,11 +29,11 @@ const KEYBOARD_ACCESSORY_ID = 'expense-sheet-keyboard';
 
 /** Backend expense categories. */
 export const EXPENSE_CATEGORIES = [
-  { key: 'stay', label: 'Stay', icon: 'bed', color: '#2563eb', tint: '#e8effd' },
-  { key: 'food', label: 'Food', icon: 'restaurant', color: '#dc2626', tint: '#fdecec' },
-  { key: 'activity', label: 'Activity', icon: 'ticket', color: '#16a34a', tint: '#e7f6ec' },
-  { key: 'transport', label: 'Transport', icon: 'car', color: '#7c3aed', tint: '#f1ebfd' },
-  { key: 'other', label: 'Other', icon: 'pricetag', color: '#6b7280', tint: '#eff0f2' },
+  { key: 'stay', label: 'Stay', icon: 'bed', color: '#6089B0', tint: '#EEF3F7' },
+  { key: 'food', label: 'Food', icon: 'restaurant', color: '#D33F2F', tint: '#FBEFEE' },
+  { key: 'activity', label: 'Activity', icon: 'ticket', color: '#36835D', tint: '#E8F5EE' },
+  { key: 'transport', label: 'Transport', icon: 'car', color: '#6F95B8', tint: '#F0F4F8' },
+  { key: 'other', label: 'Other', icon: 'pricetag', color: '#6B7980', tint: '#EFF1F2' },
 ];
 
 function dateLabel(iso) {
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     paddingHorizontal: SIZES.spacing_lg,
     paddingVertical: SIZES.spacing_sm,
-    backgroundColor: '#f1f2f4',
+    backgroundColor: '#F1F3F4',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
   },
@@ -587,7 +587,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#fff0f0',
+    backgroundColor: '#FCF4F3',
     justifyContent: 'center',
     alignItems: 'center',
   },

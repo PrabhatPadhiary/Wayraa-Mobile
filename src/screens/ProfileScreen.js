@@ -334,7 +334,7 @@ export default function ProfileScreen({ navigation }) {
       >
         {/* Header */}
         <LinearGradient
-          colors={[COLORS.primary, '#0a5274']}
+          colors={[COLORS.primary, '#34495C']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={[styles.header, { paddingTop: insets.top + SIZES.spacing_sm }]}
@@ -630,7 +630,7 @@ export default function ProfileScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f5f7',
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
 
   header: {
@@ -732,7 +732,7 @@ const styles = StyleSheet.create({
     paddingVertical: SIZES.spacing_base,
     borderRadius: SIZES.radius_xl,
     backgroundColor: COLORS.white,
-    shadowColor: '#043247',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
     shadowRadius: 14,
@@ -764,7 +764,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#d32f2f',
+    color: '#D33F2F',
   },
 
   section: {
@@ -788,7 +788,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_lg,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   nextCover: {
     width: 64,
@@ -820,7 +820,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_sm,
     paddingVertical: 2,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   nextPillText: {
     fontSize: SIZES.xs,
@@ -832,7 +832,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_lg,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
     overflow: 'hidden',
   },
   row: {
@@ -852,10 +852,10 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_sm,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   rowIconDanger: {
-    backgroundColor: '#fdecea',
+    backgroundColor: '#FBEEEC',
   },
   rowLabel: {
     flex: 1,
@@ -888,7 +888,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fdecea',
+    backgroundColor: '#FBEEEC',
     marginBottom: SIZES.spacing_md,
   },
   deletePoint: {
@@ -923,7 +923,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_full,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#c62828',
+    backgroundColor: '#C4392A',
   },
   cancelButton: {
     alignSelf: 'center',
@@ -988,7 +988,7 @@ const styles = StyleSheet.create({
     marginTop: SIZES.spacing_sm,
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#d32f2f',
+    color: '#D33F2F',
   },
   saveButton: {
     marginTop: SIZES.spacing_base,

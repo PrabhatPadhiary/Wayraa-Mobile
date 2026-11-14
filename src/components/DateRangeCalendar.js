@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   monthBarButtonOn: {
     backgroundColor: COLORS.accent,
@@ -372,7 +372,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0f2f5',
+    backgroundColor: '#F0F3F5',
   },
   yearText: {
     flex: 1,
@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 14,
-    backgroundColor: '#f6f7f9',
+    backgroundColor: '#F6F8F9',
   },
   monthChipOn: {
     backgroundColor: COLORS.accent,
@@ -407,7 +407,7 @@ const styles = StyleSheet.create({
     color: COLORS.white,
   },
   monthChipTextOff: {
-    color: '#c8c8c8',
+    color: '#C4C9CC',
   },
   weekdays: {
     flexDirection: 'row',
@@ -444,7 +444,7 @@ const styles = StyleSheet.create({
     bottom: 4,
     left: 0,
     right: 0,
-    backgroundColor: '#ffe6d5',
+    backgroundColor: '#FBE1D9',
   },
   bandStart: {
     left: '50%',
@@ -473,7 +473,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
   },
   dayTextDisabled: {
-    color: '#c8c8c8',
+    color: '#C4C9CC',
   },
   dayTextInRange: {
     color: COLORS.accentDeep,

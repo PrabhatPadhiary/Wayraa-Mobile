@@ -29,6 +29,7 @@ import { getFavourites, removeFavourite, addFavourite, AuthRequiredError } from 
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { cityOf, groupByCity, favouriteIcon } from '../utils/favourites';
 import useAuth from '../hooks/useAuth';
+import { createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
 
 /**
@@ -244,6 +245,7 @@ export default function FavoritesScreen({ navigation }) {
       category: item.category,
       rawPhotoUrl: item.photoUrl || null,
       previewUrl: photoFor(item, 200),
+      heroUrl: photoFor(item, 800), // for Create trip's photo
     });
   };
 
@@ -577,7 +579,12 @@ export default function FavoritesScreen({ navigation }) {
         place={tripPlace}
         onClose={() => setTripPlace(null)}
         onSignIn={() => { setTripPlace(null); navigation.navigate('Welcome'); }}
-        onCreateTrip={() => { setTripPlace(null); navigation.getParent()?.navigate('Explore'); }}
+        onCreateTrip={(category) => {
+          const params = createTripParamsForPlace(tripPlace, category);
+          setTripPlace(null);
+          // After the sheet has slid away (iOS can't open a screen over a closing modal).
+          setTimeout(() => navigation.navigate('CreateTrip', params), 350);
+        }}
         onViewTrip={openTripFromSheet}
       />
     </SafeAreaView>
@@ -587,13 +594,13 @@ export default function FavoritesScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   // Main view: like container, minus the Android status bar padding (the
   // floating header handles the top inset).
   screen: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   fill: {
     flex: 1,
@@ -810,7 +817,7 @@ const styles = StyleSheet.create({
   toastUndo: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_700Bold',
-    color: '#ffb27a',
+    color: '#F2A087',
   },
 
   // State (loading / empty / error)

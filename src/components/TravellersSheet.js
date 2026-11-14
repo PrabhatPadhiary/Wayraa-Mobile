@@ -32,9 +32,9 @@ const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.9;
 
 /** Role names as shown to people ("member" is called Editor, like the website). */
 export const ROLE_INFO = {
-  owner: { label: 'Owner', icon: 'star', hint: 'Created the trip', color: COLORS.accentDeep, bg: '#fff1e8' },
-  member: { label: 'Editor', icon: 'create-outline', hint: 'Can add and edit plans', color: COLORS.primary, bg: '#e6f4fb' },
-  viewer: { label: 'Viewer', icon: 'eye-outline', hint: 'Can only view the trip', color: COLORS.textSecondary, bg: '#eef1f3' },
+  owner: { label: 'Owner', icon: 'star', hint: 'Created the trip', color: COLORS.accentDeep, bg: '#FDEFEA' },
+  member: { label: 'Editor', icon: 'create-outline', hint: 'Can add and edit plans', color: COLORS.primary, bg: '#ECF1F5' },
+  viewer: { label: 'Viewer', icon: 'eye-outline', hint: 'Can only view the trip', color: COLORS.textSecondary, bg: '#EEF1F3' },
 };
 const roleInfo = (role) => ROLE_INFO[(role || '').toLowerCase()] || ROLE_INFO.member;
 
@@ -454,9 +454,9 @@ const styles = StyleSheet.create({
   inviteCard: {
     padding: SIZES.spacing_base,
     borderRadius: SIZES.radius_lg,
-    backgroundColor: '#fffaf6',
+    backgroundColor: '#FEF9F7',
     borderWidth: 1,
-    borderColor: '#ffe3d1',
+    borderColor: '#FADED6',
     marginBottom: SIZES.spacing_lg,
   },
   inviteTitle: {
@@ -548,7 +548,7 @@ const styles = StyleSheet.create({
     marginTop: SIZES.spacing_sm,
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#d32f2f',
+    color: '#D33F2F',
     textAlign: 'center',
   },
 
@@ -624,7 +624,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   inviteAction: {
     width: 34,

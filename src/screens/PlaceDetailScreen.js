@@ -34,7 +34,7 @@ import {
   journalCategoryFor,
   AuthRequiredError,
 } from '../services';
-import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+import { buildTripPlaceDto, toTripCategory, createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
 import { areaFromAddress as areaOf, formatCentreDistance } from '../utils/address';
 import { distanceKm } from '../utils/itinerary';
@@ -42,7 +42,7 @@ import { distanceKm } from '../utils/itinerary';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.5);
 // Same canvas as the trip page, so the two read as one app.
-const SHEET_BG = '#f3f5f7';
+const SHEET_BG = COLORS.backgroundWarm; // alpine frost (60%)
 const GRID_PHOTOS = 6;
 // The swipeable photos at the top show the first few; the Photos grid and
 // the full-screen viewer have the rest (Google gives up to 10).
@@ -456,7 +456,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
               ))}
             </ScrollView>
           ) : (
-            <LinearGradient colors={[COLORS.primary, '#0a5274']} style={styles.heroImage} />
+            <LinearGradient colors={[COLORS.primary, '#34495C']} style={styles.heroImage} />
           )}
           <LinearGradient colors={['rgba(0,0,0,0.4)', 'rgba(0,0,0,0)']} style={styles.heroTopShade} pointerEvents="none" />
           <LinearGradient
@@ -501,7 +501,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
               )}
               {displayOpenNow !== null && (
                 <View style={styles.heroChip} pointerEvents="none">
-                  <View style={[styles.openDot, { backgroundColor: displayOpenNow ? '#4ade80' : '#fb923c' }]} />
+                  <View style={[styles.openDot, { backgroundColor: displayOpenNow ? '#67C194' : '#EB714C' }]} />
                   <Text style={styles.heroChipText}>{displayOpenNow ? 'Open now' : 'Closed'}</Text>
                 </View>
               )}
@@ -537,7 +537,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
                   <ActivityIndicator color={isPicked ? COLORS.success : COLORS.white} />
                 ) : (
                   <>
-                    <Feather name={isPicked ? 'check' : 'plus'} size={18} color={isPicked ? '#1b7a3e' : COLORS.white} />
+                    <Feather name={isPicked ? 'check' : 'plus'} size={18} color={isPicked ? '#2B6A4B' : COLORS.white} />
                     <Text style={[styles.addButtonText, isPicked && styles.addButtonTextAdded]} numberOfLines={1}>
                       {isPicked ? 'Added to ' : 'Add to '}{pickForTrip.tripName || 'your trip'}
                     </Text>
@@ -585,7 +585,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
 
           {/* Good to know: address, hours, phone, website, map */}
           <View style={styles.card}>
-            <SectionTitle icon="info" tint="#e6f4fb" color={COLORS.primaryLight} title="Good to know" />
+            <SectionTitle icon="info" tint="#ECF1F5" color={COLORS.primaryLight} title="Good to know" />
 
             {!!displayAddress && (
               <View style={styles.infoRow} accessible accessibilityLabel={`Address: ${displayAddress}`}>
@@ -613,7 +613,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
                   <View style={styles.infoIcon}><Feather name="clock" size={16} color={COLORS.accentDeep} /></View>
                   <Text style={styles.infoText} numberOfLines={1}>
                     {displayOpenNow !== null && (
-                      <Text style={{ color: displayOpenNow ? '#2e9e57' : '#c2410c', fontFamily: 'Poppins_600SemiBold' }}>
+                      <Text style={{ color: displayOpenNow ? '#3B9166' : '#B93B15', fontFamily: 'Poppins_600SemiBold' }}>
                         {displayOpenNow ? 'Open now' : 'Closed'}
                       </Text>
                     )}
@@ -682,8 +682,8 @@ export default function PlaceDetailScreen({ navigation, route }) {
             <View style={styles.card}>
               <SectionTitle
                 icon="image"
-                tint="#e8f5e9"
-                color="#2e7d32"
+                tint="#E8F5EE"
+                color="#327956"
                 title="Photos"
                 right={<Text style={styles.sectionCount}>{displayPhotos.length}</Text>}
               />
@@ -718,8 +718,8 @@ export default function PlaceDetailScreen({ navigation, route }) {
             <View style={styles.card} onLayout={(e) => { reviewsY.current = e.nativeEvent.layout.y; }}>
               <SectionTitle
                 icon="message-square"
-                tint="#fff6e0"
-                color="#b7791f"
+                tint="#FCE9E3"
+                color="#B7421F"
                 title="Google reviews"
                 right={<RatingRow rating={displayRating} reviews={displayReviewCount} />}
               />
@@ -777,7 +777,12 @@ export default function PlaceDetailScreen({ navigation, route }) {
         preselect={pickForTrip}
         onClose={() => setTripSheetOpen(false)}
         onSignIn={() => { setTripSheetOpen(false); navigation.navigate('Welcome'); }}
-        onCreateTrip={() => { setTripSheetOpen(false); navigation.getParent()?.navigate('Explore'); }}
+        onCreateTrip={(category) => {
+          const params = createTripParamsForPlace(tripSheetPlace, category);
+          setTripSheetOpen(false);
+          // After the sheet has slid away (iOS can't open a screen over a closing modal).
+          setTimeout(() => navigation.navigate('CreateTrip', params), 350);
+        }}
         onViewTrip={openTripFromSheet}
       />
     </View>
@@ -954,8 +959,8 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_xl,
     padding: SIZES.spacing_base,
     borderWidth: 1,
-    borderColor: '#e9edf1',
-    shadowColor: '#043247',
+    borderColor: '#E9EDF1',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -1012,12 +1017,12 @@ const styles = StyleSheet.create({
   // Already on the trip stop: a calm green outline instead of the orange fill.
   addButtonAdded: {
     paddingHorizontal: SIZES.spacing_base,
-    backgroundColor: '#eaf6ee',
+    backgroundColor: '#EAF6F0',
     borderWidth: 1.5,
-    borderColor: '#9fd3b0',
+    borderColor: '#9FD3B9',
   },
   addButtonTextAdded: {
-    color: '#1b7a3e',
+    color: '#2B6A4B',
   },
   quickRow: {
     flexDirection: 'row',
@@ -1032,7 +1037,7 @@ const styles = StyleSheet.create({
     gap: 6,
     height: 44,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   quickText: {
     fontSize: SIZES.sm,
@@ -1058,7 +1063,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_sm,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   infoText: {
     flex: 1,
@@ -1157,7 +1162,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#d5dbe2',
+    backgroundColor: '#D5DCE2',
   },
   reviewDotOn: {
     width: 16,

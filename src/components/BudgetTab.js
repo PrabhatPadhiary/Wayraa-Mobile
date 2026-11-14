@@ -227,7 +227,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
   const left = budget - spent;
   const travellers = Math.max(1, trip.travelersCount || members.length || 1);
   const days = dayCount(trip.startDate, trip.endDate);
-  const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#d97706' : '#2e7d32';
+  const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#C94016' : '#327956';
 
   const byCategory = EXPENSE_CATEGORIES
     .map((c) => ({
@@ -260,8 +260,8 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
       <View style={styles.card}>
         <View style={styles.headerRow}>
           <View style={styles.titleRow}>
-            <View style={[styles.headerIcon, { backgroundColor: '#fff6e0' }]}>
-              <Ionicons name="wallet" size={16} color="#b7791f" />
+            <View style={[styles.headerIcon, { backgroundColor: '#FCE9E3' }]}>
+              <Ionicons name="wallet" size={16} color="#B7421F" />
             </View>
             <Text style={styles.title}>Budget</Text>
           </View>
@@ -454,8 +454,8 @@ const styles = StyleSheet.create({
     padding: SIZES.spacing_base,
     marginBottom: SIZES.spacing_md,
     borderWidth: 1,
-    borderColor: '#e9edf1',
-    shadowColor: '#043247',
+    borderColor: '#E9EDF1',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,

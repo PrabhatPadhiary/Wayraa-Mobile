@@ -132,7 +132,7 @@ export default function PlaceStories({ placeId, placeName, navigation, prefill }
                     />
                   )}
                   <View style={styles.likes}>
-                    <Ionicons name={j.isLiked ? 'heart' : 'heart-outline'} size={12} color={j.isLiked ? '#e0245e' : COLORS.textPrimary} />
+                    <Ionicons name={j.isLiked ? 'heart' : 'heart-outline'} size={12} color={j.isLiked ? '#E05024' : COLORS.textPrimary} />
                     <Text style={styles.likesText}>{j.likesCount || 0}</Text>
                   </View>
                 </View>
@@ -164,8 +164,8 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_xl,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#e9edf1',
-    shadowColor: '#043247',
+    borderColor: '#E9EDF1',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   header: {
     flexDirection: 'row',
@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 6,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   shareLinkText: {
     fontSize: SIZES.sm,
@@ -222,7 +222,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   cover: {
     height: 130,
@@ -291,9 +291,9 @@ const styles = StyleSheet.create({
     marginBottom: SIZES.spacing_base,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
-    backgroundColor: '#fff8f3',
+    backgroundColor: '#FEF6F4',
     borderWidth: 1,
-    borderColor: '#ffdcc6',
+    borderColor: '#F9D6CC',
   },
   emptyIcon: {
     width: 40,
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#ffe8d9',
+    backgroundColor: '#FBE4DD',
   },
   emptyText: {
     flex: 1,

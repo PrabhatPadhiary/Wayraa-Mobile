@@ -17,14 +17,14 @@ import { COLORS, SIZES } from '../constants';
 // Muted map look so the coloured pins stand out (Android / Google Maps; iOS
 // uses Apple's muted map type instead).
 const MUTED_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#f1f4f7' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#7b8794' }] },
+  { elementType: 'geometry', stylers: [{ color: '#F1F4F7' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#7B8C94' }] },
   { elementType: 'labels.text.stroke', stylers: [{ color: '#ffffff' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
   { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
   { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#cfe4f2' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#D6E1EB' }] },
 ];
 const mapLook = Platform.OS === 'ios'
   ? { mapType: 'mutedStandard' }
@@ -75,7 +75,7 @@ function Pins({ stops, extras, onPressStop, onPressExtra, selectedId }) {
           tracksViewChanges={false}
         >
           <View style={[styles.extraPin, selectedId === x.id && styles.extraPinOn]}>
-            <Ionicons name="bookmark" size={10} color={selectedId === x.id ? COLORS.white : '#8a97a5'} />
+            <Ionicons name="bookmark" size={10} color={selectedId === x.id ? COLORS.white : '#8A98A5'} />
           </View>
         </Marker>
       ))}
@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderWidth: 1.5,
-    borderColor: '#b9c4cf',
+    borderColor: '#B9C4CF',
   },
   extraPinOn: {
     backgroundColor: COLORS.accent,

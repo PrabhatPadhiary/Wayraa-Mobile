@@ -76,3 +76,28 @@ export function pickDoneLabel(pickedMap, initial) {
   ].filter(Boolean);
   return parts.length ? `Done · ${parts.join(', ')}` : 'Done';
 }
+
+/**
+ * Create trip's route params for "Create a new trip" from the Add to trip
+ * sheet. The destination is the city the place is in (Bangalore Palace ->
+ * Bengaluru), which Create trip looks up from `cityOf` (left empty if it
+ * can't tell); `addPlace` saves the place itself to the new trip once it's
+ * created.
+ *
+ * @param {object} place  as passed to AddToTripSheet
+ * @param {string|null} [category]  the category picked in the sheet
+ */
+export function createTripParamsForPlace(place, category) {
+  if (!place) return {};
+  const lat = place.geometry?.latitude ?? place.geometry?.location?.lat ?? place.latitude;
+  const lng = place.geometry?.longitude ?? place.geometry?.location?.lng ?? place.longitude;
+  return {
+    cityOf: {
+      name: place.name,
+      vicinity: place.vicinity || '',
+      lat: Number.isFinite(lat) ? lat : undefined,
+      lng: Number.isFinite(lng) ? lng : undefined,
+    },
+    addPlace: buildTripPlaceDto(place, category || toTripCategory(place.category) || 'activity'),
+  };
+}

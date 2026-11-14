@@ -968,7 +968,7 @@ export default function ItineraryTab({
   if (!days.length) {
     return wrap(
       <View style={[styles.card, styles.center]}>
-        <View style={[styles.bigIcon, { backgroundColor: '#e6f4fb' }]}>
+        <View style={[styles.bigIcon, { backgroundColor: '#ECF1F5' }]}>
           <Ionicons name="calendar" size={26} color={COLORS.primaryLight} />
         </View>
         <Text style={styles.stateTitle}>Set your trip dates to plan each day</Text>
@@ -1666,8 +1666,8 @@ const styles = StyleSheet.create({
     right: 0,
     borderTopLeftRadius: SIZES.radius_xl,
     borderTopRightRadius: SIZES.radius_xl,
-    backgroundColor: '#f3f5f7',
-    shadowColor: '#043247',
+    backgroundColor: '#F4F5F6',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.12,
     shadowRadius: 12,
@@ -1686,7 +1686,7 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 3,
     marginBottom: SIZES.spacing_sm,
-    backgroundColor: '#cfd6de',
+    backgroundColor: '#CFD7DE',
   },
   sheetTitleRow: {
     flexDirection: 'row',
@@ -1734,7 +1734,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: COLORS.white,
     zIndex: 5,
-    shadowColor: '#043247',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.18,
     shadowRadius: 10,
@@ -1763,7 +1763,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_sm,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#F2F5F7',
   },
   pinCardActions: {
     flexDirection: 'row',
@@ -1802,8 +1802,8 @@ const styles = StyleSheet.create({
     padding: SIZES.spacing_base,
     marginBottom: SIZES.spacing_md,
     borderWidth: 1,
-    borderColor: '#e9edf1',
-    shadowColor: '#043247',
+    borderColor: '#E9EDF1',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -1925,8 +1925,8 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#edf0f4',
-    shadowColor: '#043247',
+    borderColor: '#EDF1F4',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.06,
     shadowRadius: 6,
@@ -2010,7 +2010,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_lg,
     borderWidth: 1.5,
     borderColor: 'transparent',
-    backgroundColor: '#f6f8fb',
+    backgroundColor: '#F8F9F9',
     gap: 6,
   },
   slotHead: {
@@ -2026,12 +2026,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: '#dbe2ea',
+    borderColor: '#DBE3EA',
   },
   slotHover: {
     borderColor: COLORS.accent,
     borderStyle: 'dashed',
-    backgroundColor: '#fff6ef',
+    backgroundColor: '#FDF4F1',
   },
   slotAdd: {
     width: 26,
@@ -2041,11 +2041,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e2e8ee',
+    borderColor: '#E2E8EE',
   },
   slotEmptyHover: {
     borderColor: COLORS.accent,
-    backgroundColor: '#fff6ef',
+    backgroundColor: '#FDF4F1',
   },
   slotEmptyText: {
     fontSize: SIZES.sm,
@@ -2069,7 +2069,7 @@ const styles = StyleSheet.create({
     height: 16,
     borderRadius: 1,
     marginRight: 6,
-    backgroundColor: '#cfdae5',
+    backgroundColor: '#CFDAE5',
   },
   gapText: {
     flexShrink: 1,
@@ -2114,7 +2114,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#e6f1fa',
+    backgroundColor: '#EBF0F5',
   },
   timePillText: {
     fontSize: 11,
@@ -2198,7 +2198,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#f2f4f7',
+    backgroundColor: '#F2F5F7',
   },
   notePillText: {
     flexShrink: 1,
@@ -2212,15 +2212,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#eef1f5',
-    shadowColor: '#043247',
+    borderColor: '#EEF2F5',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.07,
     shadowRadius: 10,
     elevation: 3,
   },
   itemOpen: {
-    borderColor: '#d4e3f3',
+    borderColor: '#DAE4ED',
   },
   itemBar: {
     width: 4,
@@ -2361,7 +2361,7 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
     borderRadius: SIZES.radius_full,
     alignItems: 'center',
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   countBadgeText: {
     fontSize: SIZES.sm,
@@ -2396,7 +2396,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#eef1f5',
+    borderColor: '#EEF2F5',
   },
   trayRowPicked: {
     borderColor: COLORS.accent,
@@ -2431,7 +2431,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 7,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   planButtonOn: {
     backgroundColor: COLORS.accentDeep,
@@ -2449,7 +2449,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
-    backgroundColor: '#fff6ef',
+    backgroundColor: '#FDF4F1',
     gap: SIZES.spacing_sm,
   },
   thumbEmpty: {
@@ -2476,7 +2476,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_full,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#ffd9c2',
+    borderColor: '#F9D3C8',
   },
   pickChipText: {
     fontSize: SIZES.sm,
@@ -2511,7 +2511,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: COLORS.white,
-    shadowColor: '#043247',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.25,
     shadowRadius: 16,
@@ -2542,7 +2542,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: SIZES.spacing_base,
     right: SIZES.spacing_base,
-    shadowColor: '#043247',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.15,
     shadowRadius: 12,
@@ -2555,8 +2555,8 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_md,
     borderWidth: 1.5,
     borderStyle: 'dashed',
-    borderColor: '#f3b4b4',
-    backgroundColor: '#fff5f5',
+    borderColor: '#F0BDB7',
+    backgroundColor: '#FDF7F7',
   },
   dockBinOn: {
     backgroundColor: COLORS.error,
@@ -2595,6 +2595,6 @@ const styles = StyleSheet.create({
   toastUndo: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_700Bold',
-    color: '#ffb27a',
+    color: '#F2A087',
   },
 });

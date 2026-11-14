@@ -108,11 +108,11 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_lg,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   cardError: {
-    borderColor: '#f5c2c0',
-    backgroundColor: '#fffafa',
+    borderColor: '#F2C8C3',
+    backgroundColor: '#FEFBFB',
   },
   row: {
     flexDirection: 'row',
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   headlineError: {
-    color: '#c62828',
+    color: '#C4392A',
   },
   sub: {
     fontSize: SIZES.sm,
@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 6,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   viewText: {
     fontSize: SIZES.sm,
@@ -199,6 +199,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   },
   fillError: {
-    backgroundColor: '#e57373',
+    backgroundColor: '#E28176',
   },
 });

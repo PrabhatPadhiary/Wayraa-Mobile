@@ -42,7 +42,7 @@ function excerpt(body) {
 // Two taps on the photo within this window count as a double tap.
 const DOUBLE_TAP_MS = 260;
 // Same red as the liked heart button.
-const LIKE_RED = '#e0245e';
+const LIKE_RED = '#E05024';
 
 /**
  * Community feed card for a trip journal: cover photo (or a destination
@@ -218,7 +218,7 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
             <Ionicons
               name={journal.isLiked ? 'heart' : 'heart-outline'}
               size={19}
-              color={journal.isLiked ? '#e0245e' : COLORS.textSecondary}
+              color={journal.isLiked ? '#E05024' : COLORS.textSecondary}
             />
             <Text style={[styles.statText, journal.isLiked && styles.statTextLiked]}>{journal.likesCount || 0}</Text>
           </TouchableOpacity>
@@ -249,7 +249,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   cover: {
     height: 190,
@@ -343,7 +343,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_sm,
     paddingVertical: 3,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   vibeText: {
     fontSize: SIZES.xs,
@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   statTextLiked: {
-    color: '#e0245e',
+    color: '#E05024',
   },
   more: {
     width: 32,
@@ -411,7 +411,7 @@ const styles = StyleSheet.create({
     marginLeft: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0f2f5',
+    backgroundColor: '#F0F3F5',
   },
   badge: {
     position: 'absolute',
@@ -423,7 +423,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(4,50,71,0.85)',
+    backgroundColor: 'rgba(43, 63, 81, 0.85)',
   },
   badgeText: {
     fontSize: SIZES.xs + 1,

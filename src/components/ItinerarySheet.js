@@ -636,7 +636,7 @@ const styles = StyleSheet.create({
   },
   placeRowActive: {
     borderColor: COLORS.accent,
-    backgroundColor: '#fff8f3',
+    backgroundColor: '#FEF6F4',
   },
   placeThumb: {
     width: 40,
@@ -724,7 +724,7 @@ const styles = StyleSheet.create({
   },
   timeFieldActive: {
     borderColor: COLORS.accent,
-    backgroundColor: '#fff8f3',
+    backgroundColor: '#FEF6F4',
   },
   timeLabel: {
     fontSize: SIZES.xs,
@@ -782,7 +782,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#fff0f0',
+    backgroundColor: '#FCF4F3',
     justifyContent: 'center',
     alignItems: 'center',
   },

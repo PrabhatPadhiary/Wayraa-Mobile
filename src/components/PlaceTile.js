@@ -9,11 +9,11 @@ import RatingRow from './RatingRow';
 // Brand-toned gradients (navy, blue, orange, teal, sand) used when a place has
 // no photo (or it fails to load), so a missing image still looks intentional.
 const FALLBACK_GRADIENTS = [
-  ['#043247', '#0685c0'], // navy to blue
-  ['#c2410c', '#f48c06'], // deep orange to amber
-  ['#0d1b2a', '#415a77'], // midnight
-  ['#0b5563', '#3aa0a0'], // teal
-  ['#7a4a2b', '#d9a066'], // sand brown
+  ['#2B3F51', '#3F5A73'], // navy to blue
+  ['#B93B15', '#E14819'], // deep orange to amber
+  ['#121C25', '#415D77'], // midnight
+  ['#24384A', '#486E92'], // teal
+  ['#7A3D2B', '#D98166'], // sand brown
 ];
 
 /** Stable gradient for a name, so a tile keeps its colors between renders. */

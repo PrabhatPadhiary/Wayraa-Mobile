@@ -256,7 +256,7 @@ export default function DestinationSheet({
           .join(', ');
         return (
           <View style={styles.overlapNote} accessibilityRole="text">
-            <Ionicons name="information-circle-outline" size={16} color="#8a5a00" />
+            <Ionicons name="information-circle-outline" size={16} color="#7C280E" />
             <Text style={styles.overlapText}>
               Overlaps {names}. That's fine for a day trip or a side trip.
             </Text>
@@ -421,7 +421,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -451,7 +451,7 @@ const styles = StyleSheet.create({
     gap: SIZES.spacing_sm,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   pickedName: {
     flexShrink: 1,
@@ -477,14 +477,14 @@ const styles = StyleSheet.create({
     marginBottom: SIZES.spacing_sm,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
-    backgroundColor: '#fff8e6',
+    backgroundColor: '#FCEDE8',
   },
   overlapText: {
     flex: 1,
     fontSize: SIZES.sm,
     lineHeight: 19,
     fontFamily: 'Poppins_400Regular',
-    color: '#6b4a00',
+    color: '#601F0B',
   },
   hint: {
     marginTop: SIZES.spacing_sm,

@@ -16,7 +16,7 @@ const AVATAR = 28;
 const MAX_AVATARS = 3;
 
 // Solid avatar colors, picked per name so a person keeps their color.
-const AVATAR_COLORS = ['#e85d04', '#0685c0', '#2d6a4f', '#6a4c93', '#c0392b', '#415a77'];
+const AVATAR_COLORS = ['#D9481C', '#3F5A73', '#2D6A4C', '#4C7193', '#B53A16', '#415D77'];
 export function avatarColorFor(name) {
   const text = name || '?';
   let hash = 0;

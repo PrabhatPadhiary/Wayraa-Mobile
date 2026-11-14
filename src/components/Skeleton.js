@@ -58,7 +58,7 @@ export default function Skeleton({ width = '100%', height = 16, radius = SIZES.r
   return (
     <Animated.View
       style={[
-        { width, height, borderRadius: radius, backgroundColor: '#e4e7eb', opacity: pulse },
+        { width, height, borderRadius: radius, backgroundColor: '#E4E8EB', opacity: pulse },
         style,
       ]}
     />

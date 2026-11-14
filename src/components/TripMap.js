@@ -6,9 +6,9 @@ import { COLORS, SIZES } from '../constants';
 
 /** Pin colors by place kind, matching the website's trip map. */
 const KIND_META = {
-  stays: { label: 'Stays', color: '#2563eb' },
-  food: { label: 'Restaurants', color: '#dc2626' },
-  activities: { label: 'Activities', color: '#16a34a' },
+  stays: { label: 'Stays', color: '#6089B0' },
+  food: { label: 'Restaurants', color: '#D33F2F' },
+  activities: { label: 'Activities', color: '#36835D' },
 };
 
 const MAP_HEIGHT = 260;

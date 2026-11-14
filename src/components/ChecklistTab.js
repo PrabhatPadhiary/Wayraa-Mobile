@@ -23,12 +23,12 @@ import { ChecklistSkeleton } from './skeletons';
 
 /** Backend categories, with the website's colors. */
 export const CHECKLIST_CATEGORIES = [
-  { key: 'packing', label: 'Packing', icon: 'briefcase', color: '#2563eb', tint: '#e8effd' },
-  { key: 'bookings', label: 'Bookings', icon: 'calendar', color: '#7c3aed', tint: '#f1ebfd' },
-  { key: 'documents', label: 'Documents', icon: 'document-text', color: '#0891b2', tint: '#e3f5f9' },
-  { key: 'money', label: 'Money', icon: 'cash', color: '#d97706', tint: '#fdf3e3' },
-  { key: 'safety', label: 'Safety', icon: 'medkit', color: '#dc2626', tint: '#fdecec' },
-  { key: 'other', label: 'Other', icon: 'ellipsis-horizontal', color: '#6b7280', tint: '#eff0f2' },
+  { key: 'packing', label: 'Packing', icon: 'briefcase', color: '#6089B0', tint: '#EEF3F7' },
+  { key: 'bookings', label: 'Bookings', icon: 'calendar', color: '#6F95B8', tint: '#F0F4F8' },
+  { key: 'documents', label: 'Documents', icon: 'document-text', color: '#3D5E7D', tint: '#E8EEF4' },
+  { key: 'money', label: 'Money', icon: 'cash', color: '#C94016', tint: '#FCEAE4' },
+  { key: 'safety', label: 'Safety', icon: 'medkit', color: '#D33F2F', tint: '#FBEFEE' },
+  { key: 'other', label: 'Other', icon: 'ellipsis-horizontal', color: '#6B7980', tint: '#EFF1F2' },
 ];
 const CATEGORY_BY_KEY = Object.fromEntries(CHECKLIST_CATEGORIES.map((c) => [c.key, c]));
 
@@ -188,8 +188,8 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
       <View style={styles.card}>
         <View style={styles.headerRow}>
           <View style={styles.titleRow}>
-            <View style={[styles.headerIcon, { backgroundColor: '#e8f5e9' }]}>
-              <Ionicons name="checkbox" size={16} color="#2e7d32" />
+            <View style={[styles.headerIcon, { backgroundColor: '#E8F5EE' }]}>
+              <Ionicons name="checkbox" size={16} color="#327956" />
             </View>
             <Text style={styles.title}>Checklist</Text>
           </View>
@@ -384,8 +384,8 @@ const styles = StyleSheet.create({
     padding: SIZES.spacing_base,
     marginBottom: SIZES.spacing_md,
     borderWidth: 1,
-    borderColor: '#e9edf1',
-    shadowColor: '#043247',
+    borderColor: '#E9EDF1',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,
@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
   progressFill: {
     height: '100%',
     borderRadius: 4,
-    backgroundColor: '#2e7d32',
+    backgroundColor: '#327956',
   },
   progressText: {
     marginTop: SIZES.spacing_xs,

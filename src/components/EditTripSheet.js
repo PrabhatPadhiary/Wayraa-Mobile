@@ -363,7 +363,7 @@ const styles = StyleSheet.create({
     marginTop: SIZES.spacing_md,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md,
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   readOnlyNoteTitle: {
     fontSize: SIZES.md,

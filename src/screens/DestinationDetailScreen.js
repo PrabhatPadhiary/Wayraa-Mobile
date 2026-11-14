@@ -706,7 +706,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
 
   // Solid white header panel: carries the rounded corners + drop shadow.
@@ -866,8 +866,8 @@ const styles = StyleSheet.create({
     marginTop: SIZES.spacing_xs,
     borderRadius: SIZES.radius_full,
     borderWidth: 1.5,
-    borderColor: '#ffd9c2',
-    backgroundColor: '#fff8f3',
+    borderColor: '#F9D3C8',
+    backgroundColor: '#FEF6F4',
   },
   seeAllText: {
     flexShrink: 1,
@@ -922,7 +922,7 @@ const styles = StyleSheet.create({
   },
   filtersButtonOn: {
     borderColor: COLORS.accent,
-    backgroundColor: '#fff8f3',
+    backgroundColor: '#FEF6F4',
   },
   filtersDot: {
     position: 'absolute',

@@ -288,11 +288,11 @@ function Dialog({ dialog, onDone }) {
   );
 }
 
-const DESTRUCTIVE = '#d93025';
+const DESTRUCTIVE = '#D23D2C';
 
 const styles = StyleSheet.create({
   backdrop: {
-    backgroundColor: 'rgba(4, 22, 32, 0.5)',
+    backgroundColor: 'rgba(12, 18, 24, 0.5)',
   },
 
   // Card (one or two buttons)
@@ -321,7 +321,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#fdecea',
+    backgroundColor: '#FBEEEC',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: SIZES.spacing_md,
@@ -362,7 +362,7 @@ const styles = StyleSheet.create({
     backgroundColor: DESTRUCTIVE,
   },
   buttonSecondary: {
-    backgroundColor: '#f0f2f5',
+    backgroundColor: '#F0F3F5',
   },
   buttonText: {
     fontSize: SIZES.base,
@@ -422,12 +422,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#eef4f8',
+    backgroundColor: '#EFF3F7',
     justifyContent: 'center',
     alignItems: 'center',
   },
   sheetIconDanger: {
-    backgroundColor: '#fdecea',
+    backgroundColor: '#FBEEEC',
   },
   sheetRowText: {
     flex: 1,
@@ -444,7 +444,7 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f0f2f5',
+    backgroundColor: '#F0F3F5',
   },
   sheetCancelText: {
     fontSize: SIZES.base,

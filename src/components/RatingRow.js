@@ -14,13 +14,13 @@ export function compactCount(n) {
 
 // Trying a gold star everywhere (Google's). Set to null to go back to a star
 // the same colour as the number.
-const STAR_COLOR = '#FBBC04';
+const STAR_COLOR = '#D9481C';
 
 /** Badge colour by score: deep green 4.5+, green 4.0+, amber below. */
 function badgeColor(rating) {
-  if (rating >= 4.5) return '#1b7a3e';
-  if (rating >= 4.0) return '#2e9e57';
-  return '#c77c02';
+  if (rating >= 4.5) return '#2B6A4B';
+  if (rating >= 4.0) return '#3B9166';
+  return '#B53A14';
 }
 
 /**
@@ -77,7 +77,7 @@ function RatingBadge({ rating, score, reviews, soft, style }) {
   const main = soft ? COLORS.textPrimary : COLORS.white;
   return (
     <View
-      style={[styles.badge, { backgroundColor: soft ? '#f0f2f5' : badgeColor(rating) }, style]}
+      style={[styles.badge, { backgroundColor: soft ? '#F0F3F5' : badgeColor(rating) }, style]}
       accessible
       accessibilityLabel={`Rated ${score}${reviews ? `, ${reviews.toLocaleString()} reviews` : ''}`}
     >

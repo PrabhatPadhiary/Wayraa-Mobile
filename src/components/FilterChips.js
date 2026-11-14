@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
     // its real blur.
     backgroundColor: Platform.OS === 'android' ? 'rgba(255, 255, 255, 0.94)' : 'rgba(255, 255, 255, 0.15)',
     borderWidth: 1,
-    borderColor: Platform.OS === 'android' ? 'rgba(220, 225, 232, 0.9)' : 'rgba(255, 255, 255, 0.4)',
+    borderColor: Platform.OS === 'android' ? 'rgba(220, 226, 232, 0.9)' : 'rgba(255, 255, 255, 0.4)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
@@ -297,9 +297,9 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(232, 93, 4, 0.22)',
+    backgroundColor: 'rgba(217, 72, 28, 0.22)',
     borderWidth: 1.5,
-    borderColor: 'rgba(232, 93, 4, 0.55)',
+    borderColor: 'rgba(217, 72, 28, 0.55)',
   },
   item: {
     flex: 1,
@@ -374,8 +374,8 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   segmentTinted: {
-    backgroundColor: '#fff1e8',
-    borderColor: '#ffd9c2',
+    backgroundColor: '#FDEFEA',
+    borderColor: '#F9D3C8',
   },
   segmentLabelFull: {
     fontSize: 14,

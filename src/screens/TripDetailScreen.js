@@ -50,7 +50,7 @@ import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
 const HEADER_SHOW_AT = 60;
-const SHEET_BG = '#f3f5f7';
+const SHEET_BG = COLORS.backgroundWarm; // alpine frost (60%)
 /** Trip sections, shown in the bottom bar beside the Home circle. */
 // Feather line icons: one even stroke weight, so they stay crisp and calm
 // (the active tab is shown by color and the capsule, not a filled glyph).
@@ -130,22 +130,22 @@ function SectionTitle({ icon, tint, color, title }) {
 function statusStyle(status) {
   switch ((status || '').toLowerCase()) {
     case 'completed':
-      return { label: 'Completed', bg: '#eef1f3', color: COLORS.textSecondary };
+      return { label: 'Completed', bg: '#EEF1F3', color: COLORS.textSecondary };
     case 'in_progress':
-      return { label: 'Ongoing', bg: '#e8f5e9', color: COLORS.success };
+      return { label: 'Ongoing', bg: '#E8F5EE', color: COLORS.success };
     case 'planning':
-      return { label: 'Upcoming', bg: '#fff1e8', color: COLORS.accent };
+      return { label: 'Upcoming', bg: '#FDEFEA', color: COLORS.accent };
     case 'draft':
     default:
-      return { label: 'Draft', bg: '#eef3f7', color: COLORS.primaryLight };
+      return { label: 'Draft', bg: '#EEF3F7', color: COLORS.primaryLight };
   }
 }
 
 /** Icon colors for the countdown pill on the hero, by tone. */
 const COUNTDOWN_TONES = {
-  soon: { tint: '#fff1e8', color: COLORS.accent },
-  later: { tint: '#e6f4fb', color: COLORS.primaryLight },
-  done: { tint: '#e8f5e9', color: '#2e7d32' },
+  soon: { tint: '#FDEFEA', color: COLORS.accent },
+  later: { tint: '#ECF1F5', color: COLORS.primaryLight },
+  done: { tint: '#E8F5EE', color: '#327956' },
 };
 
 /**
@@ -1128,7 +1128,7 @@ export default function TripDetailScreen({ navigation, route }) {
               picks whose places the Places card below shows. */}
           <View style={styles.card}>
           <View style={styles.sectionHeaderRow}>
-            <SectionTitle icon="navigate" tint="#e6f4fb" color={COLORS.primaryLight} title="Destinations" />
+            <SectionTitle icon="navigate" tint="#ECF1F5" color={COLORS.primaryLight} title="Destinations" />
             {canEdit && (
               <TouchableOpacity
                 style={styles.addStopButton}
@@ -1209,7 +1209,7 @@ export default function TripDetailScreen({ navigation, route }) {
             <View style={styles.sectionHeaderRow}>
               <View style={styles.flexShrink}>
                 <View style={styles.placesTitleRow}>
-                  <SectionTitle icon="bookmark" tint="#fff1e8" color={COLORS.accent} title="Saved spots" />
+                  <SectionTitle icon="bookmark" tint="#FDEFEA" color={COLORS.accent} title="Saved spots" />
                   <Text style={styles.sectionCount}>{allPlaces.length}</Text>
                 </View>
                 {!!addTarget && (
@@ -1337,7 +1337,7 @@ export default function TripDetailScreen({ navigation, route }) {
               const total = trip.totalBudget || 0;
               const spent = spentTotal || 0;
               const ratio = total > 0 ? spent / total : 0;
-              const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#d97706' : '#2e7d32';
+              const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#C94016' : '#327956';
               const setUp = !total && isOwner;
               budgetTile = (
                 <TouchableOpacity
@@ -1351,7 +1351,7 @@ export default function TripDetailScreen({ navigation, route }) {
                   accessibilityLabel={setUp ? 'Set a budget for this trip' : 'Open budget'}
                 >
                   <View style={styles.tileHeader}>
-                    <SectionTitle icon="wallet" tint="#fff6e0" color="#b7791f" title="Budget" />
+                    <SectionTitle icon="wallet" tint="#FCE9E3" color="#B7421F" title="Budget" />
                   </View>
                   {setUp ? (
                     <>
@@ -1405,7 +1405,7 @@ export default function TripDetailScreen({ navigation, route }) {
                   accessibilityLabel={`Open itinerary, ${plannedDays} of ${planDays.length} days planned`}
                 >
                   <View style={styles.tileHeader}>
-                    <SectionTitle icon="calendar" tint="#e6f4fb" color={COLORS.primaryLight} title="Itinerary" />
+                    <SectionTitle icon="calendar" tint="#ECF1F5" color={COLORS.primaryLight} title="Itinerary" />
                   </View>
                   <Text style={styles.tileValue} numberOfLines={1}>
                     {plannedDays}<Text style={styles.tileValueOf}>{` / ${planDays.length}`}</Text>
@@ -1440,7 +1440,7 @@ export default function TripDetailScreen({ navigation, route }) {
           {mapPlaces.some((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude)) && (
             <View style={styles.card}>
               <View style={styles.sectionHeaderRow}>
-                <SectionTitle icon="map" tint="#e8f5e9" color="#2e7d32" title="On the map" />
+                <SectionTitle icon="map" tint="#E8F5EE" color="#327956" title="On the map" />
               </View>
               <TripMap places={mapPlaces} onPressPlace={(p) => openPlace(p.raw)} />
             </View>
@@ -1513,7 +1513,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   scrollContent: {
     flexGrow: 1,
@@ -1526,7 +1526,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: 'rgba(4,50,71,0.85)',
+    backgroundColor: 'rgba(43, 63, 81, 0.85)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.35)',
     shadowColor: '#000',
@@ -1599,7 +1599,7 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     borderWidth: 2,
     borderColor: COLORS.white,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#43A474',
   },
   hereRow: {
     flexDirection: 'row',
@@ -1610,13 +1610,13 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#43A474',
   },
   hereText: {
     flexShrink: 1,
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
-    color: '#15803d',
+    color: '#2B6A4B',
   },
   heroControls: {
     position: 'absolute',
@@ -1662,7 +1662,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_md,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   summaryDateText: {
     flex: 1,
@@ -1767,7 +1767,7 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.accentDeep,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   flex: {
     flex: 1,
@@ -1886,7 +1886,7 @@ const styles = StyleSheet.create({
   },
   timelineBodyActive: {
     borderColor: COLORS.accent,
-    backgroundColor: '#fff8f3',
+    backgroundColor: '#FEF6F4',
   },
   timelineText: {
     flex: 1,
@@ -1900,7 +1900,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 1,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   primaryBadgeText: {
     fontSize: SIZES.xs,
@@ -1938,7 +1938,7 @@ const styles = StyleSheet.create({
     paddingRight: SIZES.spacing_md,
     borderRadius: 26,
     borderWidth: 1,
-    borderColor: '#eef1f4',
+    borderColor: '#EEF1F4',
     backgroundColor: COLORS.white,
   },
   placeThumb: {
@@ -1965,7 +1965,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#fff0f0',
+    backgroundColor: '#FCF4F3',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2016,8 +2016,8 @@ const styles = StyleSheet.create({
     padding: SIZES.spacing_base,
     marginBottom: SIZES.spacing_md,
     borderWidth: 1,
-    borderColor: '#e9edf1',
-    shadowColor: '#043247',
+    borderColor: '#E9EDF1',
+    shadowColor: '#2B3F51',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 10,

@@ -17,6 +17,8 @@ export {
   placeCoords,
   searchInDestination,
   getPlaceDetails,
+  findCityOf,
+  cityFromAddress,
   getPlacesByCategory,
   getPlacesByFilter,
   getPlacesByTheme,

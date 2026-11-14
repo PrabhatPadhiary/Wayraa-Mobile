@@ -42,7 +42,8 @@ const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.86;
  * @param {{ tripId: string, destinationId?: string, tripName?: string }} [preselect]
  * @param {() => void} onClose
  * @param {() => void} [onSignIn]
- * @param {() => void} [onCreateTrip]
+ * @param {(category: string|null) => void} [onCreateTrip]  start a new trip
+ *   with this place (shown with or without existing trips)
  * @param {(tripId: string, tripName: string) => void} [onViewTrip]
  * @param {(result: object) => void} [onAdded]
  */
@@ -282,12 +283,28 @@ export default function AddToTripSheet({
       <>
         {!preTripId && (
           <>
-            <Text style={styles.sectionLabel}>Choose trip</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionLabel, styles.sectionLabelInRow]}>Choose trip</Text>
+              {/* With trips to choose from: a new one, right by the list. */}
+              {!!onCreateTrip && trips.length > 0 && (
+                <TouchableOpacity
+                  style={styles.newTripPill}
+                  onPress={() => onCreateTrip(category)}
+                  activeOpacity={0.8}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Create a new trip with this place"
+                >
+                  <Ionicons name="add" size={16} color={COLORS.accentDeep} />
+                  <Text style={styles.newTripText}>New trip</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {trips.length === 0 ? (
               <View style={styles.emptyTrips}>
                 <Text style={styles.stateText}>You don't have an active trip yet.</Text>
                 {!!onCreateTrip && (
-                  <TouchableOpacity style={styles.secondaryButton} onPress={onCreateTrip} activeOpacity={0.85}>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => onCreateTrip(category)} activeOpacity={0.85}>
                     <Text style={styles.secondaryButtonText}>Create a trip</Text>
                   </TouchableOpacity>
                 )}
@@ -573,7 +590,7 @@ const styles = StyleSheet.create({
   },
   tripRowSelected: {
     borderColor: COLORS.accent,
-    backgroundColor: 'rgba(232, 93, 4, 0.06)',
+    backgroundColor: 'rgba(217, 72, 28, 0.06)',
   },
   tripRowDisabled: {
     opacity: 0.55,
@@ -613,6 +630,32 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textSecondary,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: SIZES.spacing_md,
+    marginBottom: SIZES.spacing_sm,
+  },
+  sectionLabelInRow: {
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  newTripPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingLeft: 8,
+    paddingRight: 12,
+    paddingVertical: 5,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: '#FDEFEA',
+  },
+  newTripText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
   },
   emptyTrips: {
     alignItems: 'center',

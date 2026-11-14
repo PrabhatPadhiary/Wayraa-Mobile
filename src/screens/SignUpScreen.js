@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#d32f2f',
+    color: '#D33F2F',
     marginBottom: SIZES.spacing_base,
   },
   primaryButton: {

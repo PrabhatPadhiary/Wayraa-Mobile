@@ -191,6 +191,6 @@ const viewerStyles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 2,
     borderColor: COLORS.white,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#43A474',
   },
 });

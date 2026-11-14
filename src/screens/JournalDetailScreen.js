@@ -342,7 +342,7 @@ export default function JournalDetailScreen({ navigation, route }) {
             {!!journal.proTips && (
               <View style={styles.tips}>
                 <View style={styles.tipsHead}>
-                  <Feather name="zap" size={16} color="#b7791f" />
+                  <Feather name="zap" size={16} color="#B7421F" />
                   <Text style={styles.tipsTitle}>Pro tips</Text>
                 </View>
                 <Text style={styles.tipsText}>{journal.proTips}</Text>
@@ -391,7 +391,7 @@ export default function JournalDetailScreen({ navigation, route }) {
                 <Ionicons
                   name={journal.isLiked ? 'heart' : 'heart-outline'}
                   size={24}
-                  color={journal.isLiked ? '#e0245e' : COLORS.textPrimary}
+                  color={journal.isLiked ? '#E05024' : COLORS.textPrimary}
                 />
                 <Text style={styles.likeText}>{journal.likesCount || 0}</Text>
               </TouchableOpacity>
@@ -497,7 +497,7 @@ export default function JournalDetailScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   flex: {
     flex: 1,
@@ -525,7 +525,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#eef1f4',
+    backgroundColor: '#EEF1F4',
   },
   hiddenNoteText: {
     fontSize: SIZES.sm,
@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_sm,
     paddingVertical: 4,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   destText: {
     fontSize: SIZES.sm,
@@ -627,7 +627,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 6,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   factText: {
     fontSize: SIZES.sm,
@@ -645,7 +645,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: SIZES.radius_full,
     borderWidth: 1,
-    borderColor: '#ffd9c2',
+    borderColor: '#F9D3C8',
   },
   vibeText: {
     fontSize: SIZES.xs,
@@ -657,15 +657,15 @@ const styles = StyleSheet.create({
     fontSize: SIZES.base,
     lineHeight: 26,
     fontFamily: 'Poppins_400Regular',
-    color: '#333',
+    color: '#2F3437',
   },
   tips: {
     marginTop: SIZES.spacing_lg,
     padding: SIZES.spacing_base,
     borderRadius: SIZES.radius_lg,
-    backgroundColor: '#fff8e6',
+    backgroundColor: '#FCEDE8',
     borderLeftWidth: 3,
-    borderLeftColor: '#f0b429',
+    borderLeftColor: '#E85C31',
   },
   tipsHead: {
     flexDirection: 'row',
@@ -676,7 +676,7 @@ const styles = StyleSheet.create({
   tipsTitle: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
-    color: '#8a5a00',
+    color: '#7C280E',
   },
   tipsText: {
     fontSize: SIZES.md,
@@ -708,7 +708,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius_md,
     backgroundColor: COLORS.cardBackground,
     borderWidth: 1,
-    borderColor: '#e9edf1',
+    borderColor: '#E9EDF1',
   },
   placeText: {
     flexShrink: 1,

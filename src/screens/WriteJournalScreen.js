@@ -757,11 +757,11 @@ const styles = StyleSheet.create({
   form: { padding: SIZES.spacing_base },
   addPhotos: {
     alignItems: 'center', justifyContent: 'center', height: 150, borderRadius: SIZES.radius_xl,
-    borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#ffc8a8', backgroundColor: '#fff8f3',
+    borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#F6C1B1', backgroundColor: '#FEF6F4',
   },
   addPhotosIcon: {
     width: 48, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: '#ffe8d9', marginBottom: SIZES.spacing_sm,
+    backgroundColor: '#FBE4DD', marginBottom: SIZES.spacing_sm,
   },
   addPhotosTitle: { fontSize: SIZES.base, fontFamily: 'Poppins_600SemiBold', color: COLORS.textPrimary },
   addPhotosHint: { fontSize: SIZES.sm, fontFamily: 'Poppins_400Regular', color: COLORS.textSecondary },
@@ -770,8 +770,8 @@ const styles = StyleSheet.create({
   thumb: { width: 96, height: 120, borderRadius: SIZES.radius_md, overflow: 'hidden', backgroundColor: COLORS.cardBackground },
   thumbCover: { borderWidth: 3, borderColor: COLORS.accent },
   thumbAdd: {
-    justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff8f3',
-    borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#ffc8a8',
+    justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEF6F4',
+    borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#F6C1B1',
   },
   coverBadge: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingVertical: 2, backgroundColor: 'rgba(0,0,0,0.55)' },
   coverBadgeText: { textAlign: 'center', fontSize: 10, fontFamily: 'Poppins_600SemiBold', color: COLORS.white },
@@ -802,10 +802,10 @@ const styles = StyleSheet.create({
   whereCard: {
     flexDirection: 'row', alignItems: 'center', gap: SIZES.spacing_md, minHeight: 56,
     paddingHorizontal: SIZES.spacing_md, borderRadius: SIZES.radius_md,
-    borderWidth: 1, borderColor: '#ffd9c2', backgroundColor: '#fffaf6',
+    borderWidth: 1, borderColor: '#F9D3C8', backgroundColor: '#FEF9F7',
   },
   whereIcon: {
-    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', backgroundColor: '#ffe8d9',
+    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FBE4DD',
   },
   whereText: { flex: 1, minWidth: 0 },
   whereName: { fontSize: SIZES.md, fontFamily: 'Poppins_600SemiBold', color: COLORS.textPrimary },
@@ -814,7 +814,7 @@ const styles = StyleSheet.create({
   placeChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%',
     paddingLeft: SIZES.spacing_md, paddingRight: SIZES.spacing_sm, paddingVertical: 7,
-    borderRadius: SIZES.radius_full, backgroundColor: '#fff1e8',
+    borderRadius: SIZES.radius_full, backgroundColor: '#FDEFEA',
   },
   placeChipText: { flexShrink: 1, fontSize: SIZES.sm, fontFamily: 'Poppins_500Medium', color: COLORS.textPrimary },
   subLabel: { marginTop: SIZES.spacing_sm, fontSize: SIZES.sm, fontFamily: 'Poppins_400Regular', color: COLORS.textSecondary },
@@ -828,7 +828,7 @@ const styles = StyleSheet.create({
   chips: { gap: SIZES.spacing_sm, paddingHorizontal: SIZES.spacing_base },
   tripChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: 200,
-    paddingHorizontal: SIZES.spacing_md, paddingVertical: 7, borderRadius: SIZES.radius_full, backgroundColor: '#e6f4fb',
+    paddingHorizontal: SIZES.spacing_md, paddingVertical: 7, borderRadius: SIZES.radius_full, backgroundColor: '#ECF1F5',
   },
   tripChipOn: { backgroundColor: COLORS.primary },
   tripChipText: { flexShrink: 1, fontSize: SIZES.sm, fontFamily: 'Poppins_500Medium', color: COLORS.primary },
@@ -838,7 +838,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md, paddingVertical: 7, borderRadius: SIZES.radius_full,
     borderWidth: 1, borderColor: COLORS.border,
   },
-  vibeOn: { backgroundColor: '#fff1e8', borderColor: COLORS.accent },
+  vibeOn: { backgroundColor: '#FDEFEA', borderColor: COLORS.accent },
   vibeText: { fontSize: SIZES.sm, fontFamily: 'Poppins_500Medium', color: COLORS.textPrimary },
   vibeTextOn: { color: COLORS.accentDeep, fontFamily: 'Poppins_600SemiBold' },
   box: {
@@ -852,11 +852,11 @@ const styles = StyleSheet.create({
     flex: 1, flexDirection: 'row', alignItems: 'center', gap: SIZES.spacing_sm, padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_md, borderWidth: 1.5, borderColor: COLORS.border,
   },
-  audienceOptionOn: { borderColor: COLORS.accent, backgroundColor: '#fffaf6' },
+  audienceOptionOn: { borderColor: COLORS.accent, backgroundColor: '#FEF9F7' },
   audienceLabel: { fontSize: SIZES.md, fontFamily: 'Poppins_600SemiBold', color: COLORS.textPrimary },
   audienceLabelOn: { color: COLORS.accentDeep },
   audienceHint: { fontSize: SIZES.xs, fontFamily: 'Poppins_400Regular', color: COLORS.textSecondary },
-  error: { marginTop: SIZES.spacing_base, fontSize: SIZES.sm, fontFamily: 'Poppins_500Medium', color: '#d32f2f' },
+  error: { marginTop: SIZES.spacing_base, fontSize: SIZES.sm, fontFamily: 'Poppins_500Medium', color: '#D33F2F' },
   shareButton: {
     marginTop: SIZES.spacing_xl, height: 52, borderRadius: SIZES.radius_full,
     justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.accentDeep,

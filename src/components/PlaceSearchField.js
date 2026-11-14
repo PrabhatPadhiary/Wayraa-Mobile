@@ -24,6 +24,7 @@ export function placeIconFor(result) {
  * @param {boolean} [clearOnSelect]     empty the field after a pick (adding to a list)
  * @param {boolean} [regionsOnly]       suggest cities / regions only
  * @param {{ lat, lng, radius }} [near] only suggest places inside this area
+ * @param {boolean} [autoFocus]       focus the field (and open the keyboard) on mount
  */
 export default function PlaceSearchField({
   onSelect,
@@ -32,6 +33,7 @@ export default function PlaceSearchField({
   clearOnSelect = false,
   regionsOnly = false,
   near = null,
+  autoFocus = false,
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -78,6 +80,7 @@ export default function PlaceSearchField({
           placeholder={placeholder}
           placeholderTextColor={COLORS.textMuted}
           autoCorrect={false}
+          autoFocus={autoFocus}
           returnKeyType="search"
           accessibilityLabel={placeholder}
         />
@@ -158,7 +161,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   resultText: {
     flex: 1,

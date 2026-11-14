@@ -613,7 +613,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   header: {
     paddingHorizontal: SIZES.spacing_base,
@@ -717,7 +717,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#e6f4fb',
+    backgroundColor: '#ECF1F5',
   },
   suggestIconSearch: {
     backgroundColor: COLORS.accentDeep,
@@ -738,8 +738,8 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primaryLight,
   },
   suggestAdded: {
-    backgroundColor: '#1b7a3e',
-    borderColor: '#1b7a3e',
+    backgroundColor: '#2B6A4B',
+    borderColor: '#2B6A4B',
   },
   addingTo: {
     flexDirection: 'row',
@@ -750,7 +750,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 4,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   addingToText: {
     flexShrink: 1,
@@ -833,7 +833,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_md,
     paddingVertical: 8,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   ideaText: {
     fontSize: SIZES.sm,

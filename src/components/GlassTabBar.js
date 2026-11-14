@@ -145,9 +145,9 @@ const styles = StyleSheet.create({
     top: SIZES.spacing_sm,
     bottom: SIZES.spacing_sm,
     borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(232, 93, 4, 0.12)',
+    backgroundColor: 'rgba(217, 72, 28, 0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(232, 93, 4, 0.25)',
+    borderColor: 'rgba(217, 72, 28, 0.25)',
   },
   item: {
     flex: 1,

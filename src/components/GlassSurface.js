@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     // Slightly cool border so the edge is visible even on a white background.
     borderWidth: 1,
-    borderColor: 'rgba(190,196,208,0.9)',
+    borderColor: 'rgba(190, 199, 208, 0.9)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.16,
@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
     // Android: expo-blur doesn't blur there (it only draws a see-through
     // layer), so a much denser frost gives the same "content behind is soft"
     // look as iOS's real blur without its cost.
-    backgroundColor: Platform.OS === 'android' ? 'rgba(246,247,250,0.94)' : 'rgba(236,238,243,0.5)',
+    backgroundColor: Platform.OS === 'android' ? 'rgba(247, 248, 249, 0.94)' : 'rgba(236, 240, 243, 0.5)',
   },
   content: {
     zIndex: 2,

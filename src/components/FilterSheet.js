@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
   },
   optionOn: {
     borderColor: COLORS.accent,
-    backgroundColor: '#fff8f3',
+    backgroundColor: '#FEF6F4',
   },
   optionText: {
     fontSize: SIZES.md,

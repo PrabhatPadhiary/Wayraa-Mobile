@@ -199,7 +199,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 251, 248, 0.9)',
+    backgroundColor: 'rgba(238, 242, 244, 0.92)', // alpine frost veil
   },
   center: {
     alignItems: 'center',

@@ -24,8 +24,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // expo-image: shares the disk/memory cache the startup preload fills.
 import { Image } from 'expo-image';
-import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, SIZES, HEADER_TINT } from '../constants';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { COLORS, SIZES } from '../constants';
 import {
   PlaceTile,
   NextTripCarousel,
@@ -33,7 +33,6 @@ import {
   NextTripCardSkeleton,
   TileRowSkeleton,
   NearbyRowSkeleton,
-  JournalRowSkeleton,
 } from '../components';
 import {
   searchPlaces,
@@ -55,11 +54,24 @@ import { initialsFor } from '../components/TripStackCard';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { useBottomBar } from '../context/BottomBarContext';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
-import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
+import CommunityHighlights from '../components/CommunityHighlights';
+import LocationSheet from '../components/LocationSheet';
+import { getExploreCity, setExploreCity } from '../services/exploreCity';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.7;
-const CARD_HEIGHT = 320;
+// Home's background, top to bottom: a light slate tint, alpine frost, then
+// near white.
+const PAGE_GRADIENT = ['#E1E9F0', COLORS.backgroundWarm, '#FAFBFC'];
+
+// Popular destinations: wide landscape cards, one per swipe; they slide on
+// by themselves every few seconds, and wait a while after you swipe.
+const POPULAR_AUTO_SLIDE_MS = 4500;
+const POPULAR_PAUSE_MS = 9000;
+// As wide as the side padding, so the previous card is fully off screen.
+const CARD_GAP = SIZES.spacing_lg;
+// Narrow enough that the next card clearly peeks in (~24px), hinting at the swipe.
+const CARD_WIDTH = SCREEN_WIDTH - SIZES.spacing_lg * 2 - 36;
+const CARD_HEIGHT = Math.round(CARD_WIDTH * 0.6);
 
 const RECENT_SEARCHES_KEY = 'wayraa_recent_searches';
 // Scroll this far in one direction before the tab bar hides / returns.
@@ -118,7 +130,7 @@ const POPULAR_DESTINATIONS = [
     country: 'Indonesia',
     rating: 4.8,
     reviews: 256,
-    image: 'https://images.pexels.com/photos/2166559/pexels-photo-2166559.jpeg?auto=compress&cs=tinysrgb&w=600',
+    image: 'https://images.pexels.com/photos/2166559/pexels-photo-2166559.jpeg?auto=compress&cs=tinysrgb&w=1000',
   },
   {
     id: '2',
@@ -126,7 +138,7 @@ const POPULAR_DESTINATIONS = [
     country: 'Greece',
     rating: 5.0,
     reviews: 143,
-    image: 'https://images.pexels.com/photos/1010657/pexels-photo-1010657.jpeg?auto=compress&cs=tinysrgb&w=600',
+    image: 'https://images.pexels.com/photos/1010657/pexels-photo-1010657.jpeg?auto=compress&cs=tinysrgb&w=1000',
   },
   {
     id: '3',
@@ -134,7 +146,7 @@ const POPULAR_DESTINATIONS = [
     country: 'Japan',
     rating: 4.9,
     reviews: 198,
-    image: 'https://images.pexels.com/photos/1440476/pexels-photo-1440476.jpeg?auto=compress&cs=tinysrgb&w=600',
+    image: 'https://images.pexels.com/photos/1440476/pexels-photo-1440476.jpeg?auto=compress&cs=tinysrgb&w=1000',
   },
   {
     id: '4',
@@ -142,7 +154,7 @@ const POPULAR_DESTINATIONS = [
     country: 'Peru',
     rating: 4.9,
     reviews: 312,
-    image: 'https://images.pexels.com/photos/2929906/pexels-photo-2929906.jpeg?auto=compress&cs=tinysrgb&w=600',
+    image: 'https://images.pexels.com/photos/2929906/pexels-photo-2929906.jpeg?auto=compress&cs=tinysrgb&w=1000',
   },
   {
     id: '5',
@@ -150,7 +162,7 @@ const POPULAR_DESTINATIONS = [
     country: 'South Africa',
     rating: 4.7,
     reviews: 167,
-    image: 'https://images.pexels.com/photos/259447/pexels-photo-259447.jpeg?auto=compress&cs=tinysrgb&w=600',
+    image: 'https://images.pexels.com/photos/259447/pexels-photo-259447.jpeg?auto=compress&cs=tinysrgb&w=1000',
   },
 ];
 
@@ -202,13 +214,6 @@ export default function ExploreScreen({ route, navigation }) {
   const profileName = firebaseUser?.displayName || routeUser?.name || firebaseUser?.email || '';
 
 
-  // Time-aware greeting.
-  const greeting = (() => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 17) return 'Good afternoon';
-    return 'Good evening';
-  })();
   const firstName = (profileName || '').trim().split(' ')[0];
 
   // Slim search pill: the hint rotates through a few example searches.
@@ -253,9 +258,12 @@ export default function ExploreScreen({ route, navigation }) {
   // Always bring it back when leaving Home.
   useFocusEffect(useCallback(() => () => setTabBarHiddenOnce(false), [setTabBarHiddenOnce]));
 
+  const [headerSolid, setHeaderSolid] = useState(false);
   const handleContentScroll = (e) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const y = contentOffset.y;
+    // Header turns solid the moment content can slide under it.
+    if ((y > 2) !== headerSolid) setHeaderSolid(y > 2);
     // Collapse on scroll down; expand a bit before reaching the top so the
     // header is fully open before the content reaches its natural start position.
     if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
@@ -279,17 +287,25 @@ export default function ExploreScreen({ route, navigation }) {
   // Where "Near you" was looked up (passed on to its See all list).
   const [nearbyCoords, setNearbyCoords] = useState(() => peekPreloaded('nearby')?.loc || null);
 
-  // Use a location fix for both the "Near you" chip and the nearby places.
-  const applyLocation = useCallback(async (loc) => {
+  // A city chosen in the location sheet ("Exploring · Goa"), or null for
+  // where you really are; and the name of where you really are, for the sheet.
+  const [exploring, setExploring] = useState(null);
+  const [gpsLabel, setGpsLabel] = useState(() => peekPreloaded('nearby')?.label || null);
+  const [locationSheetOpen, setLocationSheetOpen] = useState(false);
+
+  // Load "Near you" around a point: your location fix, or a chosen city
+  // (`cityName` given: no need to look its name up).
+  const applyLocation = useCallback(async (loc, cityName = null) => {
     setNearbyLoading(true);
     setLocationDenied(false);
     setLocationBlocked(false);
     const [places, label] = await Promise.all([
       getNearbyPlaces(loc.lat, loc.lng),
-      reverseGeocode(loc.lat, loc.lng),
+      cityName ? Promise.resolve(cityName) : reverseGeocode(loc.lat, loc.lng),
     ]);
     setNearbyPlaces(places);
     if (label) setNearbyLabel(label);
+    if (label && !cityName) setGpsLabel(label);
     setNearbyCoords({ lat: loc.lat, lng: loc.lng });
     setNearbyLoading(false);
   }, []);
@@ -301,8 +317,15 @@ export default function ExploreScreen({ route, navigation }) {
     (async () => {
       // Already loaded during the logo screen: use it as is.
       const preloaded = takePreloaded('nearby');
-      const pre = preloaded ? await preloaded : null;
+      const [pre, city] = await Promise.all([preloaded || null, getExploreCity()]);
       if (cancelled) return;
+      // Exploring a city you picked before: Near you is around it.
+      if (city) {
+        if (pre?.label) setGpsLabel(pre.label);
+        setExploring(city);
+        applyLocation({ lat: city.lat, lng: city.lng }, city.name);
+        return;
+      }
       if (pre) {
         setNearbyPlaces(pre.places);
         if (pre.label) setNearbyLabel(pre.label);
@@ -352,14 +375,19 @@ export default function ExploreScreen({ route, navigation }) {
     const place = trip.primaryDestination || trip.name;
     const until = daysUntil(trip.startDate);
     if (until === null) return null;
+    // bold + rest: the chip's line, e.g. "3 days" + " to Rameshwaram".
     if (until > 0) {
-      return { icon: 'airplane', text: `${place} in ${until} ${until === 1 ? 'day' : 'days'}` };
+      return {
+        text: `${place} in ${until} ${until === 1 ? 'day' : 'days'}`,
+        bold: `${until} ${until === 1 ? 'day' : 'days'}`, rest: ` to ${place}`,
+        short: `${until}d`, place,
+      };
     }
-    if (until === 0) return { icon: 'airplane', text: `${place} starts today` };
+    if (until === 0) return { text: `${place} starts today`, bold: place, rest: ' starts today', short: 'Today', place };
     const total = dayCount(trip.startDate, trip.endDate);
     const dayNo = 1 - until;
     if (!total || dayNo > total) return null; // over (or no end date to count from)
-    return { icon: 'sunny', text: `Day ${dayNo} in ${place}` };
+    return { text: `Day ${dayNo} in ${place}`, bold: `Day ${dayNo}`, rest: ` of ${total} in ${place}`, short: `Day ${dayNo}`, place };
   };
   let headlineTrip = null;
   let tripLine = null;
@@ -605,6 +633,20 @@ export default function ExploreScreen({ route, navigation }) {
     await applyLocation(location);
   };
 
+  // Location sheet: back to where you are, or explore a city.
+  const useCurrentLocation = async () => {
+    setLocationSheetOpen(false);
+    setExploring(null);
+    await setExploreCity(null);
+    loadNearbyPlaces();
+  };
+  const exploreCity = async (city) => {
+    setLocationSheetOpen(false);
+    setExploring(city);
+    await setExploreCity(city);
+    applyLocation({ lat: city.lat, lng: city.lng }, city.name);
+  };
+
   const clearRecentSearches = async () => {
     setRecentSearches([]);
     await AsyncStorage.removeItem(RECENT_SEARCHES_KEY);
@@ -733,6 +775,25 @@ export default function ExploreScreen({ route, navigation }) {
     }
   };
 
+  const [popularPage, setPopularPage] = useState(0);
+  // Auto-slide: on to the next destination every few seconds (back to the
+  // first after the last). Pauses for a while after you swipe, and while Home
+  // isn't in view or search is open.
+  const popularRef = useRef(null);
+  const popularPausedUntil = useRef(0);
+  const homeFocused = useIsFocused();
+  useEffect(() => {
+    if (!homeFocused || isSearchActive) return undefined;
+    const timer = setInterval(() => {
+      if (Date.now() < popularPausedUntil.current) return;
+      setPopularPage((p) => {
+        const next = (p + 1) % POPULAR_DESTINATIONS.length;
+        popularRef.current?.scrollToOffset({ offset: next * (CARD_WIDTH + CARD_GAP), animated: true });
+        return next;
+      });
+    }, POPULAR_AUTO_SLIDE_MS);
+    return () => clearInterval(timer);
+  }, [homeFocused, isSearchActive]);
   const renderPlaceCard = ({ item }) => {
     const isResolving = resolvingCardId === item.id;
     return (
@@ -744,10 +805,20 @@ export default function ExploreScreen({ route, navigation }) {
         accessibilityRole="button"
         accessibilityLabel={`Explore ${item.name}, ${item.country}`}
       >
-        <Image source={{ uri: item.image }} style={styles.cardImage} />
+        <Image source={{ uri: item.image }} style={styles.cardImage} contentFit="cover" transition={200} />
+        {/* A soft fade at the bottom for the name (no hard bar). */}
+        <LinearGradient
+          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.65)']}
+          locations={[0, 0.5, 1]}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
         <View style={styles.cardOverlay}>
-          <Text style={styles.cardCountry}>{item.country}</Text>
-          <Text style={styles.cardName}>{item.name}</Text>
+          <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
+          <View style={styles.cardPlaceRow}>
+            <Ionicons name="location" size={13} color="rgba(255,255,255,0.9)" />
+            <Text style={styles.cardCountry} numberOfLines={1}>{item.country}</Text>
+          </View>
         </View>
         {isResolving && (
           <View style={styles.cardLoadingOverlay}>
@@ -758,34 +829,12 @@ export default function ExploreScreen({ route, navigation }) {
     );
   };
 
-  const renderJournalCard = ({ item }) => {
-    const coverPhoto = cloudinarySized(item.photos?.[0]?.url || null, IMAGE_WIDTH.COVER);
-    return (
-      <TouchableOpacity
-        style={styles.journalCard}
-        activeOpacity={0.9}
-        onPress={() => navigation.navigate('JournalDetail', { journalId: item.id, title: item.title })}
-        accessibilityRole="button"
-        accessibilityLabel={`${item.title}, by ${item.author?.name || 'Anonymous'}`}
-      >
-        {coverPhoto ? (
-          <Image source={{ uri: coverPhoto }} style={styles.journalImage} />
-        ) : (
-          <View style={[styles.journalImage, { backgroundColor: COLORS.sand, justifyContent: 'center', alignItems: 'center' }]}>
-            <Ionicons name="document-text-outline" size={28} color={COLORS.textMuted} />
-          </View>
-        )}
-        <View style={styles.journalContent}>
-          <Text style={styles.journalTitle} numberOfLines={2}>{item.title}</Text>
-          <Text style={styles.journalMeta}>{item.author?.name || 'Anonymous'} • {item.destination || ''}</Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
+      <StatusBar barStyle="dark-content" backgroundColor={PAGE_GRADIENT[0]} />
+      {/* The page: a soft slate-to-white wash from top to bottom (stays put
+          while the content scrolls over it). */}
+      <LinearGradient colors={PAGE_GRADIENT} locations={[0, 0.45, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
 
       {/* Full Screen Search Modal */}
       <Modal
@@ -865,7 +914,7 @@ export default function ExploreScreen({ route, navigation }) {
                 <>
                   <Text style={styles.suggestionsTitle}>Suggested destinations</Text>
                   <TouchableOpacity style={styles.suggestionItem}>
-                    <View style={[styles.suggestionIcon, { backgroundColor: 'rgba(6, 133, 192, 0.12)' }]}>
+                    <View style={[styles.suggestionIcon, { backgroundColor: 'rgba(63, 90, 115, 0.12)' }]}>
                       <Ionicons name="navigate" size={20} color={COLORS.primaryLight} />
                     </View>
                     <View style={styles.suggestionInfo}>
@@ -921,28 +970,61 @@ export default function ExploreScreen({ route, navigation }) {
         onScroll={handleContentScroll}
         scrollEventThrottle={16}
       >
-        {/* A trip you started creating but didn't finish: first thing on Home. */}
-        {isAuthenticated && <UnfinishedTripCard navigation={navigation} style={styles.unfinishedTrip} />}
-
         {/* Popular Destinations */}
         <View style={[styles.section, styles.sectionFirst]}>
           <Text style={styles.sectionTitle}>Popular destinations</Text>
           <FlatList
+            ref={popularRef}
+            onScrollBeginDrag={() => { popularPausedUntil.current = Date.now() + POPULAR_PAUSE_MS; }}
             data={POPULAR_DESTINATIONS}
             renderItem={renderPlaceCard}
             keyExtractor={(item) => item.id}
             horizontal
             showsHorizontalScrollIndicator={false}
-            snapToInterval={CARD_WIDTH + 16}
+            snapToInterval={CARD_WIDTH + CARD_GAP}
             decelerationRate="fast"
             contentContainerStyle={styles.cardsContainer}
+            scrollEventThrottle={32}
+            onScroll={(e) => {
+              const page = Math.round(e.nativeEvent.contentOffset.x / (CARD_WIDTH + CARD_GAP));
+              if (page !== popularPage) setPopularPage(page);
+            }}
           />
+          {/* Which card you're on. */}
+          <View style={styles.cardDots} accessibilityLabel={`Destination ${popularPage + 1} of ${POPULAR_DESTINATIONS.length}`}>
+            {POPULAR_DESTINATIONS.map((d, i) => (
+              <View key={d.id} style={[styles.cardDot, i === popularPage && styles.cardDotOn]} />
+            ))}
+          </View>
+        </View>
+
+        {/* Trips you started creating but didn't finish, after the destinations. */}
+        {isAuthenticated && <UnfinishedTripCard navigation={navigation} style={styles.unfinishedTrip} />}
+
+        {/* From the community: real travellers' stories, early on the page. */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.communityHeading}>
+              <Text style={styles.sectionHeaderTitle}>From the community</Text>
+              <Text style={styles.communitySub}>Real trips from Wayraa travellers</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Community', { screen: 'CommunityHome' })}
+              accessibilityRole="button"
+              accessibilityLabel="See all community stories"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.seeAllText}>See all</Text>
+            </TouchableOpacity>
+          </View>
+          <CommunityHighlights journals={journals} loading={journalsLoading} navigation={navigation} />
         </View>
 
         {/* Near You */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle} numberOfLines={1}>
-            Near you{nearbyLabel ? <Text style={styles.sectionTitleSub}>{`  ·  ${nearbyLabel}`}</Text> : null}
+            {exploring ? `Around ${exploring.name}` : 'Near you'}
+            {!exploring && nearbyLabel ? <Text style={styles.sectionTitleSub}>{`  ·  ${nearbyLabel}`}</Text> : null}
           </Text>
           {nearbyPlaces.length > 0 ? (
             <FlatList
@@ -971,7 +1053,7 @@ export default function ExploreScreen({ route, navigation }) {
                         ))}
                       </View>
                       <LinearGradient
-                        colors={['rgba(4,50,71,0.55)', 'rgba(4,50,71,0.85)']}
+                        colors={['rgba(43, 63, 81, 0.55)', 'rgba(43, 63, 81, 0.85)']}
                         style={StyleSheet.absoluteFill}
                       />
                       <View style={styles.showAllBody}>
@@ -1033,6 +1115,8 @@ export default function ExploreScreen({ route, navigation }) {
                   navigation.navigate('CategoryResults', {
                     theme: category.theme,
                     title: category.name,
+                    // Exploring a city: its "near you" row is around that city.
+                    near: exploring ? { lat: exploring.lat, lng: exploring.lng, label: exploring.name } : undefined,
                   })
                 }
                 accessibilityRole="button"
@@ -1152,44 +1236,16 @@ export default function ExploreScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* From the Community */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionHeaderTitle}>From the community</Text>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('Community', { screen: 'CommunityHome' })}
-              accessibilityRole="button"
-              accessibilityLabel="See all community stories"
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={styles.seeAllText}>See all</Text>
-            </TouchableOpacity>
-          </View>
-          {journalsLoading ? (
-            <JournalRowSkeleton />
-          ) : (
-          <FlatList
-            data={journals}
-            renderItem={renderJournalCard}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.journalsContainer}
-            ListEmptyComponent={
-              <Text style={{ paddingHorizontal: SIZES.spacing_lg, color: COLORS.textMuted, fontFamily: 'Poppins_400Regular' }}>No journals yet. Be the first to share!</Text>
-            }
-          />
-          )}
-        </View>
-
         {/* Bottom spacing */}
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Header: the same solid white panel as the other tabs (rounded
-          bottom, soft shadow). Rendered after the ScrollView so it floats on top. */}
+      {/* Header: open, straight on the frost page (no panel or shadow). The
+          greeting scrolls away; the search pill stays pinned at the top, with
+          a hairline under it once the page has scrolled. Rendered after the
+          ScrollView so it floats on top. */}
       <View
-        style={styles.searchContainer}
+        style={[styles.searchContainer, headerSolid && styles.searchContainerSolid, headerCollapsed && styles.searchContainerPinned]}
         onLayout={(e) => {
           // Only capture the EXPANDED height (ignore shrinking frames while
           // collapsing) so the content's top padding stays stable and doesn't
@@ -1201,62 +1257,90 @@ export default function ExploreScreen({ route, navigation }) {
         }}
       >
 
-        {/* Soft blue wash, the same on every tab's header. */}
-        <LinearGradient
-          colors={HEADER_TINT}
-          locations={[0, 0.55, 1]}
-          style={styles.headerTint}
-          pointerEvents="none"
-        />
-
         {/* Foreground content (greeting, next trip, search). */}
         <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]}>
           {/* Greeting row (text + profile) — collapses away on scroll down. */}
           <Animated.View
             style={{
               opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
-              // Room for the greeting plus the trip pill (~72px); collapses to 0.
-              maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [90, 0] }),
+              // Room for the greeting plus the countdown block; collapses to 0.
+              maxHeight: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [150, 0] }),
               marginBottom: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_base, 0] }),
               transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }],
               overflow: 'hidden',
             }}
           >
+            {/* Top bar: your location (tap: places near you, or turn location
+                on), and your profile. */}
             <View style={styles.greetingRow}>
-              <View style={styles.greetingText}>
-                <Text style={styles.greeting}>
-                  {greeting}{isAuthenticated && firstName ? ',' : ''}
-                  {isAuthenticated && firstName ? <Text style={styles.greetingName}>{` ${firstName}`}</Text> : null}
-                </Text>
-                {tripLine ? (
-                  // Your next trip as a quiet subtitle line (tap to open it).
-                  <TouchableOpacity
-                    style={styles.tripLine}
-                    onPress={openHeadlineTrip}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${tripLine.text}. Open trip`}
-                    hitSlop={{ top: 6, bottom: 6 }}
-                  >
-                    <Ionicons name={tripLine.icon} size={13} color={COLORS.accent} />
-                    <Text style={styles.tripLineText} numberOfLines={1}>{tripLine.text}</Text>
-                    <Ionicons name="chevron-forward" size={13} color={COLORS.accent} />
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={styles.greetingSub}>Where to next?</Text>
-                )}
-              </View>
+              <TouchableOpacity
+                style={styles.locationWrap}
+                onPress={() => setLocationSheetOpen(true)}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel={exploring
+                  ? `Exploring ${exploring.name}. Change location`
+                  : `Your location${nearbyLabel ? `, ${nearbyLabel}` : ''}. Change location`}
+              >
+                <View style={styles.glassCircle}>
+                  <Ionicons name="navigate-outline" size={16} color={COLORS.primaryLight} />
+                </View>
+                <View style={styles.locationText}>
+                  <Text style={styles.locationKicker}>{exploring ? 'Exploring' : 'Your location'}</Text>
+                  <View style={styles.locationRow}>
+                    <Ionicons name={exploring ? 'compass' : 'location'} size={13} color={COLORS.primaryLight} />
+                    <Text style={styles.locationName} numberOfLines={1}>
+                      {exploring ? exploring.name : (nearbyLabel || (locationDenied ? 'Turn on location' : 'Finding you…'))}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={13} color={COLORS.textSecondary} />
+                  </View>
+                </View>
+              </TouchableOpacity>
+              {/* Exploring a city: × goes back to where you are. */}
+              {!!exploring && (
+                <TouchableOpacity
+                  style={styles.exploreClear}
+                  onPress={useCurrentLocation}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Stop exploring ${exploring.name}, use my location`}
+                >
+                  <Ionicons name="close" size={14} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              )}
+
+              {/* Your next trip, compact: "✈ 3d · Rameshwaram". Tap opens it. */}
+              {tripLine && (
+                <TouchableOpacity
+                  style={styles.tripChip}
+                  onPress={openHeadlineTrip}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${tripLine.text}. Open trip`}
+                >
+                  <Ionicons name="airplane" size={11} color={COLORS.accent} />
+                  <Text style={styles.tripChipText} numberOfLines={1}>
+                    <Text style={styles.tripChipBold}>{tripLine.short}</Text>
+                    {` · ${tripLine.place}`}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
-                style={styles.profileButton}
+                style={[styles.profileButton, tripLine && styles.profileButtonAfterChip]}
                 activeOpacity={0.85}
                 onPress={handleProfilePress}
                 accessibilityRole="button"
                 accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
               >
-                {renderAvatar(48)}
+                {renderAvatar(44)}
               </TouchableOpacity>
             </View>
+
+            {/* The question: "Hi Prabhat, where do you want to go today?" */}
+            <Text style={styles.headline} accessibilityRole="header">
+              Hi <Text style={styles.headlineName}>{(isAuthenticated && firstName) || 'traveller'}</Text>, where do you want to go today?
+            </Text>
           </Animated.View>
 
           {/* Search row: slim pill, plus a small avatar that slides in when the
@@ -1269,10 +1353,23 @@ export default function ExploreScreen({ route, navigation }) {
               accessibilityRole="search"
               accessibilityLabel="Search destinations, stays and more"
             >
-              <Ionicons name="search" size={19} color={COLORS.accent} />
+              <Ionicons name="search" size={19} color={COLORS.primaryLight} />
               <Animated.Text style={[styles.searchHint, { opacity: hintFade }]} numberOfLines={1}>
                 {SEARCH_HINTS[hintIndex]}
               </Animated.Text>
+            </TouchableOpacity>
+            {/* Plan a new trip: always one tap away (pinned with the search).
+                Create trip opens with a destination to search for. */}
+            <TouchableOpacity
+              style={styles.newTripButton}
+              onPress={() => navigation.navigate('CreateTrip')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Plan a new trip"
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+            >
+              <Ionicons name="add" size={18} color={COLORS.white} />
+              <Text style={styles.newTripText}>New trip</Text>
             </TouchableOpacity>
             <Animated.View
               style={{
@@ -1297,6 +1394,14 @@ export default function ExploreScreen({ route, navigation }) {
         </View>
       </View>
 
+      <LocationSheet
+        visible={locationSheetOpen}
+        currentLabel={gpsLabel}
+        exploring={exploring}
+        onUseCurrent={useCurrentLocation}
+        onPickCity={exploreCity}
+        onClose={() => setLocationSheetOpen(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -1304,7 +1409,7 @@ export default function ExploreScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%), under the gradient
   },
   scrollView: {
     flex: 1,
@@ -1322,15 +1427,17 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 20,
-    // Same panel as ScreenHeader (My Trips, Favorites, Community).
-    backgroundColor: COLORS.white,
-    borderBottomLeftRadius: SIZES.radius_xl,
-    borderBottomRightRadius: SIZES.radius_xl,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.14,
-    shadowRadius: 12,
-    elevation: 8,
+    // See-through while open, so the page's gradient runs behind it.
+    backgroundColor: 'transparent',
+  },
+  // Scrolled: the gradient's top colour, so content passes cleanly under it.
+  searchContainerSolid: {
+    backgroundColor: PAGE_GRADIENT[0],
+  },
+  // Pinned (collapsed): plus a hairline under the search pill.
+  searchContainerPinned: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
   },
   // Carries the header's padding.
   headerForeground: {
@@ -1344,28 +1451,66 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  greetingText: {
-    flex: 1,
+  locationWrap: {
+    flexShrink: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
     marginRight: SIZES.spacing_sm,
   },
-  greeting: {
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.primary,
+  // Round "glass" button: translucent white on the frost page.
+  glassCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.75)',
+    borderWidth: 1,
+    borderColor: COLORS.white,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 1,
   },
-  greetingName: {
-    color: COLORS.accent,
+  exploreClear: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    marginRight: SIZES.spacing_md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(63, 90, 115, 0.1)',
   },
-  headerTint: {
-    ...StyleSheet.absoluteFill,
-    borderBottomLeftRadius: SIZES.radius_xl,
-    borderBottomRightRadius: SIZES.radius_xl,
+  locationText: {
+    flexShrink: 1,
   },
-  greetingSub: {
-    fontSize: SIZES.md,
+  locationKicker: {
+    fontSize: 11,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
-    marginTop: 2,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  locationName: {
+    flexShrink: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  headline: {
+    marginTop: SIZES.spacing_base,
+    fontSize: 24,
+    lineHeight: 32,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textPrimary,
+  },
+  headlineName: {
+    fontFamily: 'Poppins_700Bold',
   },
   // Search row: slim pill + compact avatar (shown when collapsed).
   searchRow: {
@@ -1379,16 +1524,28 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    height: 46,
+    height: 48,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#cfe6f7',
+    borderColor: COLORS.border,
     borderRadius: SIZES.radius_full,
+    // A soft lift off the frost page.
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.07,
+    shadowRadius: 8,
+    elevation: 2,
     paddingHorizontal: SIZES.spacing_base,
     gap: SIZES.spacing_sm,
   },
+  // With the trip chip before it, the chip takes the push to the right.
+  profileButtonAfterChip: {
+    marginLeft: SIZES.spacing_sm,
+  },
   // Greeting-row avatar button: just the tap target (renderAvatar draws it).
   profileButton: {
+    marginLeft: 'auto',
+    flexShrink: 0,
     borderRadius: 24,
   },
   // Avatar: thin orange ring (white gap inside) around photo / initials.
@@ -1419,23 +1576,50 @@ const styles = StyleSheet.create({
   },
   // Greeting subline about the next trip (tappable).
   // Next trip: a light orange pill.
-  tripLine: {
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
+  // Plan a new trip: round orange + beside the search pill.
+  newTripButton: {
+    flexDirection: 'row',
+    gap: 2,
+    height: 48,
+    paddingLeft: 12,
+    paddingRight: 16,
+    borderRadius: 24,
+    marginLeft: SIZES.spacing_sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  newTripText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+  // Next-trip chip in the top bar, before your photo.
+  tripChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    marginTop: 6,
-    paddingHorizontal: SIZES.spacing_md,
+    gap: 4,
+    maxWidth: 150,
+    marginLeft: 'auto',
     paddingVertical: 4,
+    paddingHorizontal: 9,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#ffe9db',
+    backgroundColor: 'rgba(255,255,255,0.75)',
   },
-  tripLineText: {
+  tripChipText: {
     flexShrink: 1,
-    fontSize: SIZES.sm,
+    fontSize: 11,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  tripChipBold: {
     fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.accentDeep,
+    color: COLORS.textPrimary,
   },
   // Nearby detected location chip (plain text).
   sectionTitleSub: {
@@ -1593,6 +1777,15 @@ const styles = StyleSheet.create({
   sectionFirst: {
     marginTop: SIZES.spacing_md,
   },
+  communityHeading: {
+    flex: 1,
+    minWidth: 0,
+  },
+  communitySub: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1601,8 +1794,8 @@ const styles = StyleSheet.create({
     marginBottom: SIZES.spacing_base,
   },
   sectionTitle: {
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_700Bold',
+    fontSize: SIZES.lg + 1,
+    fontFamily: 'Poppins_600SemiBold',
     color: COLORS.primary,
     paddingHorizontal: SIZES.spacing_lg,
     marginBottom: SIZES.spacing_base,
@@ -1613,8 +1806,8 @@ const styles = StyleSheet.create({
     color: COLORS.accentDeep,
   },
   sectionHeaderTitle: {
-    fontSize: SIZES.xl,
-    fontFamily: 'Poppins_700Bold',
+    fontSize: SIZES.lg + 1,
+    fontFamily: 'Poppins_600SemiBold',
     color: COLORS.primary,
   },
 
@@ -1627,12 +1820,12 @@ const styles = StyleSheet.create({
   // Cards
   cardsContainer: {
     paddingHorizontal: SIZES.spacing_lg,
-    gap: 16,
+    gap: CARD_GAP,
   },
   card: {
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
-    borderRadius: SIZES.radius_lg,
+    borderRadius: 22,
     overflow: 'hidden',
     backgroundColor: COLORS.sand,
   },
@@ -1647,8 +1840,27 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: SIZES.spacing_base,
-    paddingTop: SIZES.spacing_xl,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  cardPlaceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  cardDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: SIZES.spacing_md,
+  },
+  cardDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.border,
+  },
+  cardDotOn: {
+    width: 18,
+    backgroundColor: COLORS.primaryLight,
   },
   cardLoadingOverlay: {
     position: 'absolute',
@@ -1661,15 +1873,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardCountry: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: 'rgba(255,255,255,0.8)',
+    flexShrink: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: 'rgba(255,255,255,0.9)',
   },
   cardName: {
     fontSize: SIZES.xl,
     fontFamily: 'Poppins_700Bold',
     color: COLORS.white,
-    marginBottom: SIZES.spacing_xs,
   },
   cardRating: {
     flexDirection: 'row',
@@ -1802,34 +2014,6 @@ const styles = StyleSheet.create({
   },
 
   // Journals
-  journalsContainer: {
-    paddingHorizontal: SIZES.spacing_lg,
-    gap: 14,
-  },
-  journalCard: {
-    width: 200,
-    borderRadius: SIZES.radius_md,
-    overflow: 'hidden',
-    backgroundColor: COLORS.sand,
-  },
-  journalImage: {
-    width: '100%',
-    height: 120,
-  },
-  journalContent: {
-    padding: SIZES.spacing_md,
-  },
-  journalTitle: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-    marginBottom: SIZES.spacing_xs,
-  },
-  journalMeta: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textMuted,
-  },
 
   // Bottom Nav
 });

@@ -34,7 +34,7 @@ export default function PickToggle({ picked, pending, onPress, label }) {
       <Animated.View style={[styles.pickToggleInner, { transform: [{ scale }] }]}>
         {picked ? (
           <LinearGradient
-            colors={['#2a9157', '#126b37']}
+            colors={['#36855E', '#24593F']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={[styles.pickBadge, styles.pickBadgeAdded]}
@@ -80,7 +80,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pickBadgeAdded: {
-    shadowColor: '#126b37',
+    shadowColor: '#24593F',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.45,
     shadowRadius: 5,

@@ -12,11 +12,11 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 export const ITINERARY_CATEGORIES = [
   // `bar`: the card's side colour, same as the website (activity blue, food
   // amber, stay green, transport purple, other slate); `color` for icons/text.
-  { key: 'activity', label: 'Activity', icon: 'walk', color: '#2563eb', bar: '#60a5fa', tint: '#e8f1fe' },
-  { key: 'food', label: 'Food', icon: 'restaurant', color: '#b45309', bar: '#fbbf24', tint: '#fef6e0' },
-  { key: 'stay', label: 'Stay', icon: 'bed', color: '#15803d', bar: '#4ade80', tint: '#e7f8ee' },
-  { key: 'transport', label: 'Transport', icon: 'train', color: '#7c3aed', bar: '#a78bfa', tint: '#f1ebfd' },
-  { key: 'custom', label: 'Other', icon: 'bookmark', color: '#475569', bar: '#94a3b8', tint: '#eff1f4' },
+  { key: 'activity', label: 'Activity', icon: 'walk', color: '#6089B0', bar: '#91AEC9', tint: '#EFF3F7' },
+  { key: 'food', label: 'Food', icon: 'restaurant', color: '#AA3613', bar: '#E96036', tint: '#FCE8E2' },
+  { key: 'stay', label: 'Stay', icon: 'bed', color: '#2B6A4B', bar: '#67C194', tint: '#E9F6F0' },
+  { key: 'transport', label: 'Transport', icon: 'train', color: '#6F95B8', bar: '#AEC3D7', tint: '#F0F4F8' },
+  { key: 'custom', label: 'Other', icon: 'bookmark', color: '#475969', bar: '#94A7B8', tint: '#EFF2F4' },
 ];
 export const ITINERARY_CATEGORY = Object.fromEntries(ITINERARY_CATEGORIES.map((c) => [c.key, c]));
 
@@ -90,7 +90,7 @@ export function timeLabel(time) {
 }
 
 /** Colors for stops, by stop order (same palette as the website). */
-export const STOP_COLORS = ['#4ade80', '#f97316', '#818cf8', '#f472b6', '#facc15', '#22d3ee'];
+export const STOP_COLORS = ['#67C194', '#E75528', '#A6BDD3', '#99B4CD', '#E75528', '#6089B0'];
 
 export function isoToDay(iso) {
   if (!iso) return null;

@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#d5dbe2',
+    backgroundColor: '#D5DCE2',
   },
   dotOn: {
     width: 16,
@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff1e8',
+    backgroundColor: '#FDEFEA',
   },
   body: {
     flex: 1,

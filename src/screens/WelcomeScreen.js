@@ -335,7 +335,7 @@ export default function WelcomeScreen({ navigation }) {
       />
       <LinearGradient
         pointerEvents="none"
-        colors={[`${NAVY}0)`, `${NAVY}0.55)`, `${NAVY}0.92)`, 'rgba(2,28,40,0.98)']}
+        colors={[`${NAVY}0)`, `${NAVY}0.55)`, `${NAVY}0.92)`, 'rgba(14, 21, 28, 0.98)']}
         locations={[0, 0.3, 0.65, 1]}
         style={styles.bottomShade}
       />
@@ -668,7 +668,7 @@ const styles = StyleSheet.create({
     lineHeight: 40,
   },
   headlineAccent: {
-    color: '#ff8a3d',
+    color: '#EC7550',
   },
   subline: {
     fontSize: 15,
@@ -833,7 +833,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#272B2D',
     borderRadius: SIZES.radius_full,
     paddingVertical: SIZES.spacing_base,
     marginBottom: SIZES.spacing_md,
@@ -874,7 +874,7 @@ const styles = StyleSheet.create({
   toast: {
     position: 'absolute',
     alignSelf: 'center',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#1C2833',
     paddingVertical: SIZES.spacing_sm,
     paddingHorizontal: SIZES.spacing_lg,
     borderRadius: SIZES.radius_full,

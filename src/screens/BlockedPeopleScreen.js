@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: SIZES.radius_full,
-    backgroundColor: '#f0f2f5',
+    backgroundColor: '#F0F3F5',
   },
   unblockText: {
     fontSize: SIZES.md,

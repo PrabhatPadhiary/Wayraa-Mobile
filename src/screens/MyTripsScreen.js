@@ -227,10 +227,10 @@ export default function MyTripsScreen({ navigation }) {
   // group keeping the list's sort order.
   const listSections = (() => {
     const groups = [
-      { key: 'now', label: 'Happening now', color: '#22c55e', match: (t) => tripTiming(t).progress != null || tripTiming(t).label === 'Starts today' },
+      { key: 'now', label: 'Happening now', color: '#43A474', match: (t) => tripTiming(t).progress != null || tripTiming(t).label === 'Starts today' },
       { key: 'upcoming', label: 'Upcoming', color: COLORS.accent, match: (t) => /^(In |Tomorrow)/.test(tripTiming(t).label) },
       { key: 'draft', label: 'No dates yet', color: COLORS.primaryLight, match: (t) => tripTiming(t).label === 'No dates yet' },
-      { key: 'past', label: 'Past trips', color: '#94a3b8', match: () => true },
+      { key: 'past', label: 'Past trips', color: '#94A7B8', match: () => true },
     ];
     const used = new Set();
     const out = [];
@@ -270,7 +270,7 @@ export default function MyTripsScreen({ navigation }) {
           })}
         </View>
         <LinearGradient
-          colors={['rgba(4,30,44,0.85)', 'rgba(4,30,44,0.35)', 'rgba(4,30,44,0.15)']}
+          colors={['rgba(16, 24, 32, 0.85)', 'rgba(16, 24, 32, 0.35)', 'rgba(16, 24, 32, 0.15)']}
           style={StyleSheet.absoluteFill}
         />
         <View style={styles.moreTop}>
@@ -495,13 +495,13 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   // Main list view: same as container but without the Android status bar
   // padding (the floating header handles that).
   screen: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
   },
   listWrap: {
     flex: 1,
@@ -605,7 +605,7 @@ const styles = StyleSheet.create({
   moreSub: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#ffd3b5',
+    color: '#F8CABC',
   },
   moreGo: {
     width: 36,

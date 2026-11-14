@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#d32f2f',
+    color: '#D33F2F',
     marginBottom: SIZES.spacing_base,
   },
   primaryButton: {
@@ -249,7 +249,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#272B2D',
     borderRadius: SIZES.radius_full,
     paddingVertical: SIZES.spacing_base,
     gap: SIZES.spacing_sm,

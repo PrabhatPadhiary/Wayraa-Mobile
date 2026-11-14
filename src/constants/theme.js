@@ -1,46 +1,70 @@
 /**
  * Centralized theme constants for the Wayraa Mobile app.
- * Colors derived from the web app's landing page v2 palette.
+ *
+ * Three colours, used 60 / 30 / 10 (shades of each count as the same colour):
+ *   60%  Alpine frost  #EEF2F4  page backgrounds, sheets, quiet fills
+ *   30%  Slate blue    #3F5A73  text (its darkest shade), icons, headings,
+ *                               borders (its lightest), secondary surfaces
+ *   10%  Blood orange  #D9481C  main buttons, active states, likes, stars
+ * White cards sit on the frost. Error red and success green are kept muted
+ * and only for their meaning. The logo keeps its own colours.
  */
 
+/** The palette: each colour and its shades. Use COLORS (below) in screens. */
+export const PALETTE = {
+  frost: '#EEF2F4',
+  frostDeep: '#E3E9ED',
+  frostLight: '#F6F8F9',
+
+  slate: '#3F5A73',
+  slateLight: '#5E7A93',
+  slatePale: '#DCE3E8',
+  slateDark: '#2B3F51',
+  slateInk: '#1C2833',
+
+  orange: '#D9481C',
+  orangeDeep: '#A8360F', // small text and labels: 4.5:1+ on white and frost
+  orangeDark: '#B53A16',
+  orangeTint: '#FDEFEA',
+};
+
 export const COLORS = {
-  // Primary brand colors (from hero gradient)
-  primary: '#043247', // Deep navy-teal
-  primaryLight: '#0685c0', // Lighter teal-blue
+  // 30%: slate blue
+  primary: PALETTE.slateDark,
+  primaryLight: PALETTE.slate,
 
-  // Accent/CTA colors
-  accent: '#e85d04', // Orange from search/CTA buttons
-  accentHover: '#c0392b', // Darker orange-red
-  // Deeper orange for SMALL text and white-on-orange labels. The bright accent
-  // is only ~3.5:1 on white; this stays above 4.5:1 on the page, on white and on
-  // white and on light surfaces, so it is readable at small sizes.
-  accentDeep: '#b3380a',
+  // 10%: blood orange
+  accent: PALETTE.orange,
+  accentHover: PALETTE.orangeDark,
+  // Deeper orange for SMALL text and white-on-orange labels (the bright one is
+  // too light for small text on white).
+  accentDeep: PALETTE.orangeDeep,
 
-  // Background colors
-  backgroundDark: '#0d1b2a', // Dark navy for dark theme
-  backgroundWarm: '#fffbf8', // Warm white from hero
+  // 60%: alpine frost
+  backgroundDark: '#121C25',
+  backgroundWarm: PALETTE.frost,
   backgroundLight: '#ffffff',
-  cardBackground: '#f8f9fa',
-  // Warm sand for image placeholders and soft card fills on warm pages.
-  sand: '#f5ede4',
+  cardBackground: PALETTE.frostLight,
+  // Image placeholders and soft card fills.
+  sand: PALETTE.frostDeep,
 
-  // Text colors
-  textPrimary: '#1a1a1a',
-  textSecondary: '#666666',
-  textMuted: '#999999',
-  textLight: '#aaaaaa',
+  // Text: shades of slate
+  textPrimary: PALETTE.slateInk,
+  textSecondary: '#4F6070',
+  textMuted: '#7F8D99',
+  textLight: '#94A1AC',
   textWhite: '#ffffff',
 
   // Utility colors
   white: '#ffffff',
   black: '#000000',
-  error: '#ff4444',
-  success: '#4CAF50',
-  warning: '#FFC107',
+  error: '#C8352B',
+  success: '#3E8E63',
+  warning: PALETTE.orange,
 
-  // Border colors
-  border: '#e8e8e8',
-  borderLight: '#f0f0f0',
+  // Border colors: palest slate
+  border: PALETTE.slatePale,
+  borderLight: '#E8EDF0',
 };
 
 export const FONTS = {
