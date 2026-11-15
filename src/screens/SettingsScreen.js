@@ -10,6 +10,9 @@ import {
   Modal,
   Pressable,
   TextInput,
+  Linking,
+  Platform,
+  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -27,7 +30,7 @@ import {
 } from '../services';
 import appConfig from '../../app.json';
 import { showAlert } from '../components/AppDialog';
-import { openPrivacyPolicy, openTerms } from '../utils/legal';
+import { openPrivacyPolicy, openTerms, openAbout, DOWNLOAD_URL, SUPPORT_EMAIL } from '../utils/legal';
 import { LoaderOverlay } from '../components/WayraaLoader';
 
 /** One row in a settings-style group. */
@@ -100,6 +103,28 @@ export default function SettingsScreen({ navigation }) {
         },
       ]
     );
+  };
+
+  // Feedback goes straight to Prabhat, with the version and phone filled in (handy in the beta).
+  const sendFeedback = async () => {
+    const version = appConfig?.expo?.version || '';
+    const device = Platform.OS === 'android'
+      ? `Android ${Platform.Version}${Platform.constants?.Model ? ` · ${Platform.constants.Model}` : ''}`
+      : `iOS ${Platform.Version}`;
+    const subject = encodeURIComponent(`Wayraa feedback (v${version})`);
+    const body = encodeURIComponent(`\n\n\n—\nWayraa v${version} · ${device}`);
+    const url = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      showAlert('No email app found', `You can write to ${SUPPORT_EMAIL} from any email app.`);
+    }
+  };
+
+  const shareApp = () => {
+    Share.share({
+      message: `I plan my trips with Wayraa: find places, plan every day and plan it together with friends. Get it here: ${DOWNLOAD_URL}`,
+    }).catch(() => {});
   };
 
   const logOut = () => {
@@ -204,10 +229,13 @@ export default function SettingsScreen({ navigation }) {
           </>
         )}
 
-        {/* About: the legal pages (also linked on Welcome and Sign up). */}
+        {/* About: the story, feedback, sharing and the legal pages (also linked on Welcome and Sign up). */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.group}>
+            <Row icon="heart" label="About Wayraa" onPress={openAbout} />
+            <Row icon="message-circle" label="Send feedback" onPress={sendFeedback} />
+            <Row icon="share-2" label="Share Wayraa" onPress={shareApp} />
             <Row icon="shield" label="Privacy policy" onPress={openPrivacyPolicy} />
             <Row icon="file-text" label="Terms of use" onPress={openTerms} />
             <Row icon="info" label="Version" value={appConfig?.expo?.version ? `v${appConfig.expo.version}` : '—'} last />

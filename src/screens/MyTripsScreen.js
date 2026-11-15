@@ -16,6 +16,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
 import { TRIP_CARD_HEIGHT } from '../components/TripStackCard';
 import { tripTiming } from '../components/TripListRow';
@@ -56,6 +57,8 @@ const MORE_TRIPS_ITEM = { id: '__more-trips__', isMoreCard: true };
  * MyTripsScreen - lists the signed-in user's trips fetched from the backend.
  */
 export default function MyTripsScreen({ navigation }) {
+  // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
+  const onBarScroll = useHideTabBarOnScroll();
   const { isAuthenticated, isAuthReady } = useAuth();
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -417,6 +420,8 @@ export default function MyTripsScreen({ navigation }) {
                 contentContainerStyle={[styles.listContent, { paddingTop: topInset + SIZES.spacing_sm }]}
                 showsVerticalScrollIndicator={false}
                 onScrollBeginDrag={() => setOpenSwipeId(null)}
+                onScroll={onBarScroll}
+                scrollEventThrottle={16}
                 refreshControl={<RefreshControl {...refreshControlProps} />}
               />
             ) : (
@@ -428,6 +433,7 @@ export default function MyTripsScreen({ navigation }) {
                 topInset={topInset + SIZES.spacing_sm}
                 bottomInset={FAN_BOTTOM_INSET}
                 onScrollBeginDrag={() => setOpenSwipeId(null)}
+                onScrollEvent={onBarScroll}
                 refreshControlProps={refreshControlProps}
               />
             )

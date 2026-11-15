@@ -170,6 +170,25 @@ export async function sendPasswordReset() {
 }
 
 /**
+ * Signed out: email a password-reset link to this address (the sign-in screen's
+ * "Forgot password?"). Returns a friendly error message, or null when sent.
+ * Firebase doesn't say whether the address has an account, so neither do we.
+ */
+export async function sendPasswordResetTo(email) {
+  try {
+    await sendPasswordResetEmail(auth, (email || '').trim());
+    return null;
+  } catch (e) {
+    const code = e?.code || '';
+    if (code === 'auth/invalid-email' || code === 'auth/missing-email') return 'That email address doesn\'t look right.';
+    if (code === 'auth/too-many-requests') return 'Too many tries. Please wait a few minutes and try again.';
+    if (code === 'auth/network-request-failed') return 'No internet connection. Check it and try again.';
+    if (code === 'auth/user-not-found') return null;   // don't reveal whether an account exists
+    return 'Could not send the link. Please try again.';
+  }
+}
+
+/**
  * Permanently delete the account and its data, then sign out locally.
  * Backend: DELETE /api/users/me — hands shared trips to another member,
  * deletes solo trips, journals, favourites, and the Firebase login.

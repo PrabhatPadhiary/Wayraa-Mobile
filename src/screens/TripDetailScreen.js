@@ -22,6 +22,7 @@ import { avatarColorFor, initialsFor } from '../components/TripStackCard';
 import TripHero from '../components/TripHero';
 import { showTripActionMenu, confirmDeleteTrip } from '../utils/tripActions';
 import { useBottomBar } from '../context/BottomBarContext';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import useAuth from '../hooks/useAuth';
 import {
   getTripById,
@@ -212,6 +213,8 @@ export default function TripDetailScreen({ navigation, route }) {
 
   // ── Section tabs in the bottom bar ─────────────────────────────────────
   const [activeTab, setActiveTab] = useState('overview');
+  // The trip's tab bar hides while you scroll down and returns on scroll up; a new section starts with it showing.
+  const onBarScroll = useHideTabBarOnScroll(activeTab);
   // Itinerary drag and drop: a layer above the page (drag card, drop bar,
   // undo toast) and the page frozen while dragging.
   const [tabOverlay, setTabOverlay] = useState(null);
@@ -812,6 +815,7 @@ export default function TripDetailScreen({ navigation, route }) {
   });
   // Flip the status bar to dark text once the light header is mostly in.
   const onOverviewScroll = (e) => {
+    onBarScroll(e);   // the trip's tab bar hides on scroll down, returns on scroll up
     const dark = e.nativeEvent.contentOffset.y > HEADER_SHOW_AT - 20;
     if (dark !== darkStatusBarRef.current) {
       darkStatusBarRef.current = dark;
@@ -891,6 +895,7 @@ export default function TripDetailScreen({ navigation, route }) {
           onSetTripDates={handleSetTripDates}
           renderOverlay={setTabOverlay}
           sheet
+          onSheetScroll={onBarScroll}
           heroControls={(
             <View style={[styles.heroControls, { top: insets.top + SIZES.spacing_sm }]} pointerEvents="box-none">
               {heroRoundButton('chevron-back', () => selectTab('overview'), 'Back to overview')}
@@ -919,7 +924,7 @@ export default function TripDetailScreen({ navigation, route }) {
           showsVerticalScrollIndicator={false}
           scrollEnabled={!tabScrollLocked}
           scrollEventThrottle={16}
-          onScroll={(e) => { tabScrollPos.current.y = e.nativeEvent.contentOffset.y; }}
+          onScroll={(e) => { tabScrollPos.current.y = e.nativeEvent.contentOffset.y; onBarScroll(e); }}
           onLayout={(e) => {
             const p = tabScrollPos.current;
             p.viewH = e.nativeEvent.layout.height;

@@ -4,10 +4,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import useFloatingBarBottom from '../hooks/useFloatingBarBottom';
 import { COLORS, SIZES } from '../constants';
 import GlassSurface from './GlassSurface';
 
@@ -22,6 +22,7 @@ import GlassSurface from './GlassSurface';
  * @param {(key: string) => void} onTabPress
  */
 export default function GlassTabBar({ items, activeKey, onTabPress }) {
+  const barBottom = useFloatingBarBottom();
   // Measured layout (x + width) of each tab, keyed by tab key.
   const [layouts, setLayouts] = useState({});
   const capsuleX = useRef(new Animated.Value(0)).current;
@@ -71,7 +72,7 @@ export default function GlassTabBar({ items, activeKey, onTabPress }) {
   };
 
   return (
-    <View style={styles.wrapper} pointerEvents="box-none">
+    <View style={[styles.wrapper, { paddingBottom: barBottom }]} pointerEvents="box-none">
       {/* Shares the exact glass treatment (blur + gradient rim + gloss + lift)
           used by the top search pill / profile circle, so the whole app's
           glass surfaces look uniform. */}
@@ -123,7 +124,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     paddingHorizontal: SIZES.spacing_lg,
-    paddingBottom: Platform.OS === 'ios' ? 28 : SIZES.spacing_lg,
   },
   // Outer GlassSurface stretches to fill the wrapper width.
   barGlass: {

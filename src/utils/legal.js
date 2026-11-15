@@ -17,5 +17,11 @@ export async function openLegalPage(url) {
   }
 }
 
+export const ABOUT_URL = 'https://wayraa.com/about';
+export const DOWNLOAD_URL = 'https://wayraa.com/download';
+export const SUPPORT_EMAIL = 'support@wayraa.com';
+
 export const openPrivacyPolicy = () => openLegalPage(PRIVACY_URL);
+/** The story behind Wayraa (the website's About page, in the in-app browser). */
+export const openAbout = () => openLegalPage(ABOUT_URL);
 export const openTerms = () => openLegalPage(TERMS_URL);

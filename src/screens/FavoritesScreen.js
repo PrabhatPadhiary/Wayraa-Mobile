@@ -18,6 +18,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ratingText } from '../components/RatingRow';
 import { COLORS, SIZES } from '../constants';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import {
   FilterChips,
   SignInPrompt,
@@ -86,6 +87,8 @@ function toMasonry(items) {
  * Removing shows an Undo toast.
  */
 export default function FavoritesScreen({ navigation }) {
+  // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
+  const onBarScroll = useHideTabBarOnScroll();
   const { isAuthenticated, isAuthReady } = useAuth();
   const [favourites, setFavourites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -433,6 +436,8 @@ export default function FavoritesScreen({ navigation }) {
           <ScrollView
             contentContainerStyle={[styles.scrollContent, { paddingTop: headerHeight + SIZES.spacing_md }]}
             showsVerticalScrollIndicator={false}
+            onScroll={onBarScroll}
+            scrollEventThrottle={16}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -496,7 +501,7 @@ export default function FavoritesScreen({ navigation }) {
   ), [
     headerHeight, refreshing, favourites, error, showCollections, collections, activeCity,
     activeCollection, listOpacity, visibleFavourites, columns, brokenImages,
-    activeFilter,
+    activeFilter, onBarScroll,
   ]);
 
   // Guest: show the sign-in gate instead of an empty list + header.

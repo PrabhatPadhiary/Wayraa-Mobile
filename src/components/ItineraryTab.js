@@ -21,6 +21,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { ratingText } from './RatingRow';
 import { COLORS, SIZES } from '../constants';
+import useFloatingBarBottom from '../hooks/useFloatingBarBottom';
 import {
   getItinerary,
   createItineraryItem,
@@ -67,7 +68,6 @@ const SCREEN_H = Dimensions.get('window').height;
 const PAGE_TOP_ZONE = 170;
 const UNPLANNED_HEIGHT = 250; // the unplanned list scrolls inside its card
 // The floating tab bar: 64 tall plus its bottom padding (see AppTabBar).
-const TAB_BAR_SPACE = (Platform.OS === 'ios' ? 28 : SIZES.spacing_lg) + 64 + SIZES.spacing_sm;
 const SLOT_LABEL = Object.fromEntries(DAY_SLOTS.map((s) => [s.key, s.label]));
 // "Not planned yet" groups, by the itinerary type a saved place maps to.
 const TRAY_GROUPS = [
@@ -136,7 +136,10 @@ export default function ItineraryTab({
   onPageScrollBy,
   sheet = false,
   heroControls = null,
+  onSheetScroll,
 }) {
+  // Room for the floating tab bar (higher on Android with the three-button navigation bar).
+  const TAB_BAR_SPACE = useFloatingBarBottom() + 64 + SIZES.spacing_sm;
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [selectedDay, setSelectedDay] = useState(null);
@@ -927,7 +930,7 @@ export default function ItineraryTab({
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
             scrollEventThrottle={16}
-            onScroll={(e) => { sheetScroll.current.y = e.nativeEvent.contentOffset.y; }}
+            onScroll={(e) => { sheetScroll.current.y = e.nativeEvent.contentOffset.y; onSheetScroll?.(e); }}
             onLayout={(e) => { sheetScroll.current.viewH = e.nativeEvent.layout.height; }}
             onContentSizeChange={(_, h) => {
               const p = sheetScroll.current;

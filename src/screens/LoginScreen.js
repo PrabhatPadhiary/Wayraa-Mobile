@@ -13,7 +13,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { signInWithEmail } from '../services';
+import { signInWithEmail, sendPasswordResetTo } from '../services';
+import { showAlert } from '../components/AppDialog';
 import useGoogleAuth from '../hooks/useGoogleAuth';
 import { LoaderOverlay } from '../components/WayraaLoader';
 
@@ -54,6 +55,35 @@ export default function LoginScreen({ navigation, route }) {
     } else {
       setError(result.error);
     }
+  };
+
+  // Forgot password: email a reset link to this address, after a quick confirm.
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const handleForgotPassword = () => {
+    setError(null);
+    showAlert(
+      'Reset your password?',
+      `We'll email a link to ${email} to set a new password.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send link',
+          onPress: async () => {
+            setIsSendingReset(true);
+            const problem = await sendPasswordResetTo(email);
+            setIsSendingReset(false);
+            if (problem) {
+              showAlert('Could not send the link', problem);
+            } else {
+              showAlert(
+                'Check your email',
+                `If ${email} has a Wayraa account, a reset link is on its way. It can take a minute; check your spam folder too.`
+              );
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleGoogleLogin = async () => {
@@ -147,8 +177,18 @@ export default function LoginScreen({ navigation, route }) {
             </TouchableOpacity>
 
             {/* Forgot Password */}
-            <TouchableOpacity style={styles.forgotButton}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
+            <TouchableOpacity
+              style={styles.forgotButton}
+              onPress={handleForgotPassword}
+              disabled={isSendingReset || isLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Forgot password? Email me a reset link"
+            >
+              {isSendingReset ? (
+                <ActivityIndicator color={COLORS.textMuted} />
+              ) : (
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              )}
             </TouchableOpacity>
           </>
         )}
@@ -233,6 +273,7 @@ const styles = StyleSheet.create({
   },
   forgotButton: {
     alignItems: 'center',
+    paddingVertical: 10,   // a comfortable tap target
   },
   forgotText: {
     fontSize: SIZES.md,

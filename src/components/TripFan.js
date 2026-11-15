@@ -41,6 +41,7 @@ function peekFor(n) {
  * @param {number} bottomInset  clears the tab bar
  * @param {object} [refreshControlProps]
  * @param {(y:number) => void} [onScrollY]
+ * @param {(e) => void} [onScrollEvent]  the raw scroll event (e.g. to hide the tab bar)
  * @param {boolean} [scrollEnabled]  false while a card is being swiped sideways
  * @param {() => void} [onScrollBeginDrag]
  * @param {React.ReactNode} [footer]  shown under the last card (e.g. "See all")
@@ -55,6 +56,7 @@ export default function TripFan({
   bottomInset = 120,
   refreshControlProps,
   onScrollY,
+  onScrollEvent,
   scrollEnabled = true,
   onScrollBeginDrag,
   footer,
@@ -102,7 +104,9 @@ export default function TripFan({
         [{ nativeEvent: { contentOffset: { y: scrollY } } }],
         {
           useNativeDriver: true,
-          listener: onScrollY ? (e) => onScrollY(e.nativeEvent.contentOffset.y) : undefined,
+          listener: (onScrollY || onScrollEvent)
+            ? (e) => { onScrollY?.(e.nativeEvent.contentOffset.y); onScrollEvent?.(e); }
+            : undefined,
         }
       )}
       refreshControl={

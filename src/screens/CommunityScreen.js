@@ -25,6 +25,7 @@ import {
   dismissStoryUpload,
 } from '../services/storyUpload';
 import { COLORS, SIZES } from '../constants';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import { ScreenHeader, FilterChips, Skeleton, JournalCard } from '../components';
 import { getJournalFeed, peekJournalFeed, toggleJournalLike, vibeLabel, AuthRequiredError, getStoredUser } from '../services';
 import { openStoryMenu, isMyStory } from '../utils/storyActions';
@@ -71,7 +72,9 @@ export default function CommunityScreen({ navigation }) {
       useNativeDriver: false, // animating height
     }).start();
   }, [headerCollapsed, collapseAnim]);
+  const onBarScroll = useHideTabBarOnScroll();
   const onListScroll = (e) => {
+    onBarScroll(e);   // the tab bar hides on scroll down, returns on scroll up
     const y = e.nativeEvent.contentOffset.y;
     if (y > 40 && !headerCollapsed) setHeaderCollapsed(true);
     else if (y < 15 && headerCollapsed) setHeaderCollapsed(false);

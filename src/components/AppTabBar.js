@@ -4,11 +4,11 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   Animated,
   Easing,
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
+import useFloatingBarBottom from '../hooks/useFloatingBarBottom';
 import { COLORS, SIZES, MAIN_TABS } from '../constants';
 import GlassSurface from './GlassSurface';
 import { useBottomBar } from '../context/BottomBarContext';
@@ -105,6 +105,8 @@ function SectionTabs({ tabs, width }) {
 
 export default function AppTabBar({ state, navigation }) {
   const { collapsed, cta, tabs, hidden } = useBottomBar();
+  // Above Android's three-button navigation bar when it's on; as before otherwise.
+  const barBottom = useFloatingBarBottom();
 
   // Slide the whole bar down off screen while `hidden` (and back up).
   const [barHeight, setBarHeight] = useState(110);
@@ -199,7 +201,7 @@ export default function AppTabBar({ state, navigation }) {
       style={[
         styles.wrapper,
         {
-          paddingBottom: Platform.OS === 'ios' ? 28 : SIZES.spacing_lg,
+          paddingBottom: barBottom,
           transform: [{
             translateY: hideAnim.interpolate({ inputRange: [0, 1], outputRange: [0, barHeight + 12] }),
           }],

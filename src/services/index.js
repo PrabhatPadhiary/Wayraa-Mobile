@@ -74,7 +74,7 @@ export {
   changeMemberRole,
   removeMember,
 } from './invitationsService';
-export { getMyProfile, updateMyName, signInMethods, sendPasswordReset, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto } from './profileService';
+export { getMyProfile, updateMyName, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto } from './profileService';
 export {
   JOURNAL_VIBES,
   vibeLabel,
