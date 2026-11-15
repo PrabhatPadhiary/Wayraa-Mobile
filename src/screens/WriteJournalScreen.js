@@ -222,11 +222,7 @@ export default function WriteJournalScreen({ navigation, route }) {
       showAlert('That\'s the limit', `A story can have up to ${MAX_PHOTOS} photos.`);
       return;
     }
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      showAlert('Photos access needed', 'Allow access to your photos in Settings to add them to your story.');
-      return;
-    }
+    // The system photo picker needs no permission (Android and iOS), so we don't ask for photo access.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,

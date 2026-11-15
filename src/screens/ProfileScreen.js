@@ -162,11 +162,7 @@ export default function ProfileScreen({ navigation }) {
 
   // ── Profile photo ──
   const pickPhoto = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      showAlert('Photos access needed', 'Allow access to your photos in Settings to choose a profile photo.');
-      return;
-    }
+    // The system photo picker needs no permission (Android and iOS), so we don't ask for photo access.
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true, // square crop
