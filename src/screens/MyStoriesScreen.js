@@ -7,6 +7,7 @@ import { ScreenHeader, JournalCard } from '../components';
 import { getMyJournals, toggleJournalLike } from '../services';
 import { openStoryMenu } from '../utils/storyActions';
 import { RowListSkeleton } from '../components/skeletons';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 /**
  * Your stories: everything you've posted, including ones hidden from
@@ -105,6 +106,8 @@ export default function MyStoriesScreen({ navigation }) {
         )}
       />
 
+      {/* iPhone: the refresh spinner, below the header (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={headerHeight} />
       <ScreenHeader
         title="Your stories"
         subtitle={stories.length ? `${stories.length} ${stories.length === 1 ? 'story' : 'stories'}` : 'Trips you\'ve shared'}

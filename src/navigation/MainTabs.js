@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AppTabBar } from '../components';
@@ -20,7 +20,9 @@ import {
   MyStoriesScreen,
   BlockedPeopleScreen,
   SettingsScreen,
+  NotificationsScreen,
 } from '../screens';
+import { registerForPushNotifications, watchPushToken } from '../services';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -52,6 +54,8 @@ function ExploreStack({ route }) {
       <Stack.Screen name="MyStories" component={MyStoriesScreen} />
       {/* Settings (menu icon on Home, or Profile → Settings). */}
       <Stack.Screen name="Settings" component={SettingsScreen} />
+      {/* The bell on Home: your notifications. */}
+      <Stack.Screen name="Notifications" component={NotificationsScreen} />
       {/* Blocked people (from Settings): unblock. */}
       <Stack.Screen name="BlockedPeople" component={BlockedPeopleScreen} />
     </Stack.Navigator>
@@ -114,6 +118,13 @@ const STACKS = {
  */
 export default function MainTabs({ route }) {
   const user = route?.params?.user;
+
+  // Signed in (fresh sign-in or app start): ask for notifications the first
+  // time, and register this phone for trip updates.
+  useEffect(() => {
+    registerForPushNotifications();
+    return watchPushToken();
+  }, []);
 
   return (
     <Tab.Navigator

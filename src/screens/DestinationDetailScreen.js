@@ -31,6 +31,7 @@ import {
   removeTripPlace,
   placeCoords,
   AuthRequiredError,
+  peekFavourites,
 } from '../services';
 import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
@@ -376,7 +377,8 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
   // Favourites: set of placeIds currently favourited, plus a per-place pending
   // flag so the heart can't be double-tapped mid-request.
-  const [favedIds, setFavedIds] = useState(() => new Set());
+  // Hearts start from your favourites as last loaded, then refresh.
+  const [favedIds, setFavedIds] = useState(() => new Set((peekFavourites() || []).map((f) => f.placeId)));
   const [favPending, setFavPending] = useState(() => new Set());
 
   // Load the user's existing favourites so hearts reflect the real state.

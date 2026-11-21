@@ -33,10 +33,13 @@ import {
   useMyPhoto,
   getMyTrips,
   AuthRequiredError,
+  peekMyProfile,
+  peekMyTrips,
 } from '../services';
 import { pickNextTrip, formatDateRange, daysUntil } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { showAlert } from '../components/AppDialog';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
@@ -90,9 +93,10 @@ export default function ProfileScreen({ navigation }) {
   // resized for the keyboard and the sheet has to make room itself.
   const keyboardHeight = useKeyboardHeight();
 
-  const [profile, setProfile] = useState(null);
-  const [nextTrip, setNextTrip] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Profile and next trip as last loaded, at once; fresh ones load behind them.
+  const [profile, setProfile] = useState(() => peekMyProfile() || null);
+  const [nextTrip, setNextTrip] = useState(() => pickNextTrip(peekMyTrips() || []));
+  const [loading, setLoading] = useState(() => !peekMyProfile());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [needsAuth, setNeedsAuth] = useState(false);
@@ -279,7 +283,9 @@ export default function ProfileScreen({ navigation }) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => { setRefreshing(true); load(); }}
-            tintColor={COLORS.primary}
+            tintColor={COLORS.accent}
+            colors={[COLORS.accent]}
+            progressViewOffset={insets.top}
           />
         )}
       >
@@ -493,6 +499,9 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      {/* iPhone: the refresh spinner, below the status bar (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={insets.top} />
     </View>
   );
 }

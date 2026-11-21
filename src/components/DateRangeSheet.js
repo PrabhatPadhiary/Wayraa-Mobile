@@ -108,7 +108,16 @@ export default function DateRangeSheet({
   onApply,
 }) {
   const insets = useSafeAreaInsets();
-  const [range, setRange] = useState({ startDate: null, endDate: null });
+  const [range, setRange] = useState({ startDate: startDate || null, endDate: endDate || null });
+
+  // Seed the range during render when the sheet opens, not in an effect:
+  // the calendar picks its opening month on mount, so it has to see the
+  // existing dates on its very first render to open on their month.
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) setRange({ startDate: startDate || null, endDate: endDate || null });
+  }
 
   useEffect(() => {
     if (visible) setRange({ startDate: startDate || null, endDate: endDate || null });

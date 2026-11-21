@@ -13,6 +13,7 @@ import {
   Dimensions,
   useWindowDimensions,
   Linking,
+  RefreshControl,
 } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,7 +31,9 @@ import {
   deleteItineraryOutsideRange,
   arrangeItinerary,
   AuthRequiredError,
+  peekItinerary,
 } from '../services';
+import { setCache, CacheKeys } from '../services/cache';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import {
   ITINERARY_CATEGORIES,
@@ -124,6 +127,8 @@ function animateNext() {
  * @param {boolean} [sheet]  the day's map fills the screen and the plan sits
  *   in a bottom sheet you drag between peek, half and full
  * @param {React.ReactNode} [heroControls]  drawn over the map (back / menu)
+ * @param {number|null} [initialDay]  open on this day (a whole-day number),
+ *   e.g. from a day tapped in the Overview's "Trip at a glance"
  */
 export default function ItineraryTab({
   trip,
@@ -137,11 +142,18 @@ export default function ItineraryTab({
   sheet = false,
   heroControls = null,
   onSheetScroll,
+  initialDay = null,
 }) {
   // Room for the floating tab bar (higher on Android with the three-button navigation bar).
   const TAB_BAR_SPACE = useFloatingBarBottom() + 64 + SIZES.spacing_sm;
-  const [items, setItems] = useState([]);
-  const [status, setStatus] = useState('loading'); // loading | ready | error
+  // As last loaded for this trip, at once (switching tabs is instant); the
+  // fresh copy loads behind it.
+  const [items, setItems] = useState(() => peekItinerary(trip.id) || []);
+  const [status, setStatus] = useState(() => (peekItinerary(trip.id) ? 'ready' : 'loading')); // loading | ready | error
+  // What you see is what the next visit starts from (your own edits too).
+  useEffect(() => {
+    if (status === 'ready') setCache(CacheKeys.itinerary(trip.id), items);
+  }, [status, items, trip.id]);
   const [selectedDay, setSelectedDay] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
   const [trayPick, setTrayPick] = useState(null); // tray place waiting for a slot
@@ -222,6 +234,13 @@ export default function ItineraryTab({
   const days = useMemo(() => tripDays(trip, sortedDests), [trip, sortedDests]);
   const daySet = useMemo(() => new Set(days.map((d) => d.day)), [days]);
 
+  // Pull down on the plan to reload it (friends' changes also come in live).
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    setRefreshing(true);
+    load().finally(() => setRefreshing(false));
+  };
+
   const load = useCallback(async () => {
     try {
       const data = await getItinerary(trip.id);
@@ -233,7 +252,7 @@ export default function ItineraryTab({
   }, [trip.id]);
 
   useEffect(() => {
-    setStatus('loading');
+    if (!peekItinerary(trip.id)) setStatus('loading');
     load();
   }, [load]);
 
@@ -257,6 +276,7 @@ export default function ItineraryTab({
     if (!days.length) { setSelectedDay(null); return; }
     setSelectedDay((current) => {
       if (current != null && daySet.has(current)) return current;
+      if (initialDay != null && daySet.has(initialDay)) return initialDay;
       const today = todayDay();
       return daySet.has(today) ? today : days[0].day;
     });
@@ -267,7 +287,7 @@ export default function ItineraryTab({
     const idx = days.findIndex((d) => d.day === selectedDay);
     if (idx > 2) dayStripRef.current?.scrollTo({ x: (idx - 1) * 72, animated: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days.length]);
+  }, [days.length, selectedDay != null]);
 
   useEffect(() => () => {
     clearTimeout(toastTimer.current);
@@ -938,6 +958,15 @@ export default function ItineraryTab({
             }}
             // The part of the sheet below the screen edge stays reachable.
             contentContainerStyle={[styles.sheetContent, { paddingBottom: sheetTop - SNAP_FULL + TAB_BAR_SPACE + SIZES.spacing_base }]}
+            refreshControl={(
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={refresh}
+                enabled={!drag}
+                tintColor={COLORS.accent}
+                colors={[COLORS.accent]}
+              />
+            )}
           >
             {content}
           </ScrollView>

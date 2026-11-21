@@ -16,7 +16,9 @@ import {
   toggleChecklistItem,
   deleteChecklistItem,
   AuthRequiredError,
+  peekChecklist,
 } from '../services';
+import { setCache, CacheKeys } from '../services/cache';
 import { formatDay } from '../utils/tripDates';
 import { showAlert } from './AppDialog';
 import { ChecklistSkeleton } from './skeletons';
@@ -57,8 +59,14 @@ function errorMessage(e) {
  * @param {boolean} canEdit  owners and editors; viewers only see the list
  */
 export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
-  const [items, setItems] = useState([]);
-  const [status, setStatus] = useState('loading'); // loading | ready | error
+  // As last loaded for this trip, at once (switching tabs is instant); the
+  // fresh copy loads behind it.
+  const [items, setItems] = useState(() => peekChecklist(tripId) || []);
+  const [status, setStatus] = useState(() => (peekChecklist(tripId) ? 'ready' : 'loading')); // loading | ready | error
+  // What you see is what the next visit starts from (your own edits too).
+  useEffect(() => {
+    if (status === 'ready') setCache(CacheKeys.checklist(tripId), items);
+  }, [status, items, tripId]);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('packing');
   const [adding, setAdding] = useState(false);
@@ -76,7 +84,7 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
   }, [tripId]);
 
   useEffect(() => {
-    setStatus('loading');
+    if (!peekChecklist(tripId)) setStatus('loading');
     load();
   }, [load]);
 

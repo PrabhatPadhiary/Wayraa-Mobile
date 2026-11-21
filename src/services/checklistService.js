@@ -1,5 +1,6 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
+import { cachedFetch, peekCache, CacheKeys } from './cache';
 import { AuthRequiredError, ForbiddenError } from './errors';
 
 /**
@@ -36,7 +37,16 @@ async function toError(response, fallback) {
 }
 
 /** All checklist items for a trip, in display order. */
-export async function getChecklist(tripId) {
+export function getChecklist(tripId) {
+  return cachedFetch(CacheKeys.checklist(tripId), () => fetchChecklist(tripId));
+}
+
+/** As last loaded for this trip (instant), or undefined. */
+export function peekChecklist(tripId) {
+  return peekCache(CacheKeys.checklist(tripId));
+}
+
+async function fetchChecklist(tripId) {
   const response = await fetch(base(tripId), { headers: await authHeaders() });
   if (!response.ok) throw await toError(response, 'Could not load the checklist.');
   const data = await response.json();

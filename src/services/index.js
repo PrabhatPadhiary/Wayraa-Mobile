@@ -36,10 +36,14 @@ export {
   setPrimaryDestination,
   updateTrip,
   deleteTrip,
+  peekMyTrips,
+  peekTrip,
+  forgetTrip,
 } from './tripsService';
-export { getFavourites, addFavourite, removeFavourite } from './favouritesService';
+export { getFavourites, peekFavourites, addFavourite, removeFavourite } from './favouritesService';
 export {
   getItinerary,
+  peekItinerary,
   createItineraryItem,
   updateItineraryItem,
   deleteItineraryItem,
@@ -48,6 +52,7 @@ export {
 } from './itineraryService';
 export {
   getExpenses,
+  peekExpenses,
   createExpense,
   updateExpense,
   deleteExpense,
@@ -55,11 +60,19 @@ export {
 } from './budgetService';
 export {
   getChecklist,
+  peekChecklist,
   createChecklistItem,
   toggleChecklistItem,
   deleteChecklistItem,
 } from './checklistService';
 export { AuthRequiredError, ForbiddenError } from './errors';
+export {
+  setupNotificationHandler,
+  registerForPushNotifications,
+  watchPushToken,
+  onNotificationOpened,
+  getNotificationPermission,
+} from './notificationsService';
 export {
   INVITE_WEB_BASE,
   inviteLinkFor,
@@ -74,7 +87,7 @@ export {
   changeMemberRole,
   removeMember,
 } from './invitationsService';
-export { getMyProfile, updateMyName, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto } from './profileService';
+export { getMyProfile, peekMyProfile, updateMyName, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto } from './profileService';
 export {
   JOURNAL_VIBES,
   vibeLabel,

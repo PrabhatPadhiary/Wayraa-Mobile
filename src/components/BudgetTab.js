@@ -21,7 +21,9 @@ import {
   deleteExpense,
   setTripBudget,
   getStoredUser,
+  peekExpenses,
 } from '../services';
+import { setCache, CacheKeys } from '../services/cache';
 import { formatDay, dayCount } from '../utils/tripDates';
 import ExpenseSheet, { EXPENSE_CATEGORIES } from './ExpenseSheet';
 import { isoToDay, todayDay } from './DateRangeCalendar';
@@ -149,8 +151,14 @@ function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
  * @param {() => void} [onBudgetSheetOpened]  called once it has been opened
  */
 export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetSheet, onBudgetSheetOpened, liveKey = 0 }) {
-  const [expenses, setExpenses] = useState([]);
-  const [status, setStatus] = useState('loading'); // loading | ready | error
+  // As last loaded for this trip, at once (switching tabs is instant); the
+  // fresh copy loads behind it.
+  const [expenses, setExpenses] = useState(() => peekExpenses(trip.id) || []);
+  const [status, setStatus] = useState(() => (peekExpenses(trip.id) ? 'ready' : 'loading')); // loading | ready | error
+  // What you see is what the next visit starts from (your own edits too).
+  useEffect(() => {
+    if (status === 'ready') setCache(CacheKeys.expenses(trip.id), expenses);
+  }, [status, expenses, trip.id]);
   const [myUserId, setMyUserId] = useState(null);
   const [sheet, setSheet] = useState(null); // null | { expense: object|null }
   const [budgetOpen, setBudgetOpen] = useState(false);
@@ -175,7 +183,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
   }, [trip.id]);
 
   useEffect(() => {
-    setStatus('loading');
+    if (!peekExpenses(trip.id)) setStatus('loading');
     load();
     getStoredUser().then((u) => setMyUserId(u?.id || null));
   }, [load]);

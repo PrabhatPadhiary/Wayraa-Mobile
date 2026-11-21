@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -35,6 +36,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { openStoryMenu, isMyStory, confirmBlock } from '../utils/storyActions';
 import { JournalDetailSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
@@ -70,6 +72,13 @@ export default function JournalDetailScreen({ navigation, route }) {
   const [deletingId, setDeletingId] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(null);
   const likeBusy = useRef(false);
+
+  // Pull down for new likes and comments.
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    setRefreshing(true);
+    load().finally(() => setRefreshing(false));
+  };
 
   const load = useCallback(async () => {
     setError('');
@@ -249,7 +258,20 @@ export default function JournalDetailScreen({ navigation, route }) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView style={styles.flex} behavior="padding">
-        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 140 }}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 140 }}
+          refreshControl={(
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={refresh}
+              tintColor={COLORS.accent}
+              colors={[COLORS.accent]}
+              progressViewOffset={insets.top}
+            />
+          )}
+        >
           {/* Photos */}
           <View style={{ height: PHOTO_HEIGHT }}>
             {photos.length > 0 ? (
@@ -490,6 +512,8 @@ export default function JournalDetailScreen({ navigation, route }) {
         initialIndex={viewerIndex || 0}
         onClose={() => setViewerIndex(null)}
       />
+      {/* iPhone: the refresh spinner, below the status bar (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={insets.top} />
     </View>
   );
 }

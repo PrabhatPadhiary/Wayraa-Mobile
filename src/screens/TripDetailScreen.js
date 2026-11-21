@@ -14,12 +14,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import RatingRow from '../components/RatingRow';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
-import { SignInPrompt, TripDetailSkeleton, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet } from '../components';
+import { SignInPrompt, TripDetailSkeleton, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet, DateRangeSheet } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
 import TripHero from '../components/TripHero';
+import AnnouncementsCard from '../components/AnnouncementsCard';
 import { showTripActionMenu, confirmDeleteTrip } from '../utils/tripActions';
 import { useBottomBar } from '../context/BottomBarContext';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
@@ -37,16 +38,20 @@ import {
   updateDestinationDates,
   setPrimaryDestination,
   AuthRequiredError,
+  peekTrip,
 } from '../services';
+import { setCache, CacheKeys } from '../services/cache';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { formatDateRange, dayCount, daysUntil, formatDay } from '../utils/tripDates';
 import { areaFromAddress, formatCentreDistance, cityCentre } from '../utils/address';
+import { summarizePlan, nightsLabel } from '../utils/planSummary';
 import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinDayLabel, compareByTime, distanceKm } from '../utils/itinerary';
 import { showAlert } from '../components/AppDialog';
 import { LoaderOverlay } from '../components/WayraaLoader';
 import LiveToast, { describeTripChange, ViewerFaces } from '../components/LiveToast';
 import useTripLive from '../hooks/useTripLive';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
@@ -204,7 +209,13 @@ export default function TripDetailScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const { isAuthenticated, isAuthReady } = useAuth();
 
-  const [trip, setTrip] = useState(null);
+  // The trip as last loaded, at once (going back to it is instant); the
+  // fresh copy loads behind it. A failed refresh keeps showing this one.
+  const [trip, setTrip] = useState(() => peekTrip(tripId) || null);
+  // What you see is what the next visit starts from (your own edits too).
+  useEffect(() => {
+    if (trip && trip.id === tripId) setCache(CacheKeys.trip(tripId), trip);
+  }, [trip, tripId]);
   // Vertical scroll offset, drives the frosted header bar's fade-in.
   const scrollY = useRef(new Animated.Value(0)).current;
   // Dark status bar text once the frosted (light) header covers the photo.
@@ -236,13 +247,25 @@ export default function TripDetailScreen({ navigation, route }) {
   const tabsOwner = useRef(`trip-${tripId}-${Math.random().toString(36).slice(2)}`).current;
 
   // Overview and the other tabs use different layouts (cover photo vs plain
-  // header), so each switch starts at the top with the header bar reset.
+  // header). The other tabs start at the top; coming back to Overview returns
+  // to where you were on it (e.g. after opening a day from "Trip at a glance"),
+  // with the header bar and status bar to match.
+  // A day tapped in "Trip at a glance": the Itinerary tab opens on it.
+  const [itinStartDay, setItinStartDay] = useState(null);
+  const [glanceAll, setGlanceAll] = useState(false);
+  const overviewScrollRef = useRef(null);
+  const overviewYRef = useRef(0);        // last scroll position on Overview
+  const restoreOverviewYRef = useRef(null); // scroll back here once its content is laid out
+
   const selectTab = useCallback((key) => {
+    if (key !== 'itinerary') setItinStartDay(null);
     setActiveTab(key);
-    scrollY.setValue(0);
-    // Overview reopens at the top, under the photo: light status bar again.
-    darkStatusBarRef.current = false;
-    setDarkStatusBar(false);
+    const y = key === 'overview' ? overviewYRef.current : 0;
+    restoreOverviewYRef.current = key === 'overview' && y > 0 ? y : null;
+    scrollY.setValue(y);
+    const dark = key === 'overview' && y > HEADER_SHOW_AT - 20;
+    darkStatusBarRef.current = dark;
+    setDarkStatusBar(dark);
   }, [scrollY]);
 
   // Budget / Itinerary / Checklist are sections of this screen, not screens of
@@ -279,7 +302,7 @@ export default function TripDetailScreen({ navigation, route }) {
   const [removingPlaceId, setRemovingPlaceId] = useState('');
   // Saved-place ids whose thumbnail failed to load (shows the placeholder).
   const [brokenPlaceImages, setBrokenPlaceImages] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !peekTrip(tripId));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null); // null | 'load' | 'notFound'
 
@@ -300,6 +323,7 @@ export default function TripDetailScreen({ navigation, route }) {
       if (e instanceof AuthRequiredError) {
         // Handled by the signed-out gate below once auth state updates.
       } else if (e?.status === 404) {
+        setTrip(null); // deleted, or you're no longer on it: drop the saved copy
         setError('notFound');
       } else {
         setError('load');
@@ -369,6 +393,7 @@ export default function TripDetailScreen({ navigation, route }) {
   const [openBudgetSheet, setOpenBudgetSheet] = useState(false);
   // Owner trip actions (⋯ menu): edit sheet + delete.
   const [editOpen, setEditOpen] = useState(false);
+  const [tripDatesOpen, setTripDatesOpen] = useState(false);
   // Travellers sheet: who's on the trip, and inviting friends.
   const [travellersOpen, setTravellersOpen] = useState(false);
   const [deletingTrip, setDeletingTrip] = useState(false);
@@ -555,6 +580,49 @@ export default function TripDetailScreen({ navigation, route }) {
     await loadTrip();
   };
 
+  // Tapping the dates on the Overview summary. Single-stop trips edit the
+  // trip's dates right there (by dating its one stop); on multi-stop trips
+  // dates belong to each stop, so pick which stop to change.
+  const openTripDates = () => {
+    if (!canEdit) return;
+    if (sortedDestinations.length > 1) {
+      showAlert(
+        trip.startDate ? 'Change dates' : 'Set dates',
+        'Each stop has its own dates. Which one?',
+        [
+          ...sortedDestinations.map((d) => ({
+            text: d.name,
+            icon: 'calendar-outline',
+            onPress: () => setDestSheet({ mode: 'edit', dest: d }),
+          })),
+          { text: 'Cancel', style: 'cancel' },
+        ],
+        { sheet: true }
+      );
+      return;
+    }
+    if (!primaryDestination) {
+      setEditOpen(true);
+      return;
+    }
+    setTripDatesOpen(true);
+  };
+
+  const applyTripDates = async (range) => {
+    setTripDatesOpen(false);
+    if (!range.startDate) {
+      if (trip.startDate) showAlert("Dates can't be removed", 'You can change them, but a dated trip keeps its dates.');
+      return;
+    }
+    const endDate = range.endDate || range.startDate;
+    if (range.startDate === trip.startDate && endDate === trip.endDate) return;
+    try {
+      await handleSetTripDates({ startDate: range.startDate, endDate });
+    } catch (e) {
+      showAlert('Could not save dates', e?.message || 'Please try again.');
+    }
+  };
+
   const handleEditDates = async ({ startDate, endDate }) => {
     const dest = destSheet?.dest;
     if (!dest) return;
@@ -644,7 +712,11 @@ export default function TripDetailScreen({ navigation, route }) {
     if (!isPrimary) {
       buttons.push({ text: 'Make primary destination', onPress: () => makePrimary(dest) });
     }
-    buttons.push({ text: 'Edit dates', onPress: () => setDestSheet({ mode: 'edit', dest }) });
+    // A lone undated stop shows the trip's dates, so start its editor there too.
+    const datedDest = sortedDestinations.length === 1 && !dest.startDate && !dest.endDate
+      ? { ...dest, startDate: trip.startDate || null, endDate: trip.endDate || null }
+      : dest;
+    buttons.push({ text: 'Edit dates', onPress: () => setDestSheet({ mode: 'edit', dest: datedDest }) });
     // The primary destination stays; make another stop primary to remove it.
     if (!isPrimary) {
       buttons.push({ text: 'Remove', style: 'destructive', onPress: () => confirmRemoveDestination(dest) });
@@ -816,6 +888,7 @@ export default function TripDetailScreen({ navigation, route }) {
   // Flip the status bar to dark text once the light header is mostly in.
   const onOverviewScroll = (e) => {
     onBarScroll(e);   // the trip's tab bar hides on scroll down, returns on scroll up
+    overviewYRef.current = e.nativeEvent.contentOffset.y;
     const dark = e.nativeEvent.contentOffset.y > HEADER_SHOW_AT - 20;
     if (dark !== darkStatusBarRef.current) {
       darkStatusBarRef.current = dark;
@@ -893,6 +966,7 @@ export default function TripDetailScreen({ navigation, route }) {
           sortedDests={sortedDestinations}
           canEdit={canEdit}
           onSetTripDates={handleSetTripDates}
+          initialDay={itinStartDay}
           renderOverlay={setTabOverlay}
           sheet
           onSheetScroll={onBarScroll}
@@ -940,6 +1014,8 @@ export default function TripDetailScreen({ navigation, route }) {
               refreshing={refreshing}
               onRefresh={() => { setTabRefreshKey((k) => k + 1); onRefresh(); }}
               progressViewOffset={tabHeaderHeight}
+              tintColor={COLORS.accent}
+              colors={[COLORS.accent]}
             />
           }
         >
@@ -966,6 +1042,8 @@ export default function TripDetailScreen({ navigation, route }) {
           subtitle={trip.name}
           onLayout={(e) => setTabHeaderHeight(e.nativeEvent.layout.height)}
         />
+        {/* iPhone: the refresh spinner, below the header (see RefreshSpinner). */}
+        <RefreshSpinner refreshing={refreshing} top={tabHeaderHeight} />
 
         {/* Back button sits on the white header, beside the title. */}
         <TouchableOpacity
@@ -993,15 +1071,23 @@ export default function TripDetailScreen({ navigation, route }) {
       <StatusBar barStyle={darkStatusBar ? 'dark-content' : 'light-content'} animated />
 
       <Animated.ScrollView
+        ref={overviewScrollRef}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: true,
           listener: onOverviewScroll,
         })}
+        // Back on Overview: return to where you were once the page is tall enough.
+        onContentSizeChange={(w, h) => {
+          const y = restoreOverviewYRef.current;
+          if (y == null || h < y) return;
+          restoreOverviewYRef.current = null;
+          overviewScrollRef.current?.scrollTo({ y, animated: false });
+        }}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.white} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.accent} colors={[COLORS.accent]} progressViewOffset={insets.top} />
         }
       >
         {/* Hero: stop photos (swipe), title and countdown; scrolls with the page. */}
@@ -1034,12 +1120,24 @@ export default function TripDetailScreen({ navigation, route }) {
               <View style={styles.summaryDateIcon}>
                 <Ionicons name="calendar" size={18} color={COLORS.accent} />
               </View>
-              <View style={styles.summaryDateText}>
-                <Text style={styles.summaryDates} numberOfLines={1}>{dateRange || 'Dates not set'}</Text>
+              <TouchableOpacity
+                style={styles.summaryDateText}
+                onPress={openTripDates}
+                disabled={!canEdit}
+                activeOpacity={0.6}
+                accessibilityRole={canEdit ? 'button' : undefined}
+                accessibilityLabel={canEdit
+                  ? `${dateRange || 'Dates not set'}. Tap to ${dateRange ? 'change' : 'set'} dates.`
+                  : undefined}
+              >
+                <View style={styles.summaryDatesRow}>
+                  <Text style={[styles.summaryDates, styles.summaryDatesShrink]} numberOfLines={1}>{dateRange || 'Dates not set'}</Text>
+                  {canEdit && <MaterialCommunityIcons name="pencil" size={14} color={COLORS.accent} style={styles.summaryDatesPencil} />}
+                </View>
                 <Text style={styles.summaryDatesSub} numberOfLines={1}>
-                  {days ? `${days} ${days === 1 ? 'day' : 'days'}` : 'Add dates to plan each day'}
+                  {days ? `${days} ${days === 1 ? 'day' : 'days'}` : (canEdit ? 'Tap to add dates and plan each day' : 'Add dates to plan each day')}
                 </Text>
-              </View>
+              </TouchableOpacity>
               <View style={[styles.statusBadge, styles.statusBadgeInline, { backgroundColor: badge.bg }]}>
                 <View style={[styles.statusDot, { backgroundColor: badge.color }]} />
                 <Text style={[styles.statusText, { color: badge.color }]}>{badge.label}</Text>
@@ -1129,6 +1227,10 @@ export default function TripDetailScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
 
+          {/* Announcements from the owner (flight details, meeting points...).
+              Owner: post / edit / delete. Others: shown once there's one. */}
+          <AnnouncementsCard tripId={trip.id} isOwner={isOwner} liveKey={liveKey} />
+
           {/* Destinations card: the trip's stops. On multi-stop trips, tapping a stop
               picks whose places the Places card below shows. */}
           <View style={styles.card}>
@@ -1149,9 +1251,14 @@ export default function TripDetailScreen({ navigation, route }) {
           </View>
           <View style={styles.timeline}>
             {sortedDestinations.map((d, i) => {
-              const range = formatDateRange(d.startDate, d.endDate);
-              const count = (d.places || []).length;
               const multi = sortedDestinations.length > 1;
+              // A single stop saved without its own dates (trips created
+              // before stops were dated) shows the trip's dates.
+              const undated = !d.startDate && !d.endDate;
+              const range = !multi && undated
+                ? formatDateRange(trip.startDate, trip.endDate)
+                : formatDateRange(d.startDate, d.endDate);
+              const count = (d.places || []).length;
               const active = multi && addTarget?.id === d.id;
               const isPrimary = d.id === primaryDestination?.id;
               return (
@@ -1207,6 +1314,125 @@ export default function TripDetailScreen({ navigation, route }) {
           </View>
 
           </View>
+
+          {/* Trip at a glance: where you sleep, then what each day holds, kept
+              short (what a traveller, or an agency's customer, wants to see). */}
+          {(() => {
+            const days = tripDays(trip, sortedDestinations);
+            if (!days.length || planItems == null) return null;
+            const { stays, days: planned } = summarizePlan(planItems, days);
+            if (!stays.length && !planned.length && !canEdit) return null;
+            const multiStop = sortedDestinations.length > 1;
+            const COLLAPSED = 3;
+            const shownDays = glanceAll ? planned : planned.slice(0, COLLAPSED);
+            const openDay = (day) => { setItinStartDay(day); selectTab('itinerary'); };
+            return (
+              <View style={styles.card}>
+                <View style={styles.sectionHeaderRow}>
+                  <SectionTitle icon="list" tint="#FDEFEA" color={COLORS.accent} title="Trip at a glance" />
+                  {(stays.length > 0 || planned.length > 0) && (
+                    <TouchableOpacity
+                      onPress={() => selectTab('itinerary')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open the full itinerary"
+                    >
+                      <Text style={styles.glanceLink}>Full plan</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {!stays.length && !planned.length ? (
+                  <TouchableOpacity style={styles.glanceEmpty} onPress={() => selectTab('itinerary')} activeOpacity={0.85}>
+                    <Text style={styles.glanceEmptyText}>
+                      Nothing planned yet. Add stays and places to your days and they'll show up here.
+                    </Text>
+                    <Text style={styles.glanceLink}>Plan your days</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    {stays.length > 0 && (
+                      <>
+                        <Text style={styles.glanceLabel}>Where you'll stay</Text>
+                        <View style={styles.glanceStays}>
+                          {stays.map((st, i) => (
+                            <View
+                              key={`${st.key}-${st.fromNight}`}
+                              style={[styles.glanceStay, i > 0 && styles.glanceStayDivider]}
+                            >
+                              <Ionicons name="bed-outline" size={16} color={COLORS.primaryLight} />
+                              <Text style={styles.glanceStayName} numberOfLines={1}>{st.title}</Text>
+                              <Text style={styles.glanceStayNights} numberOfLines={1}>
+                                {nightsLabel(st.fromNight, st.toNight)}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </>
+                    )}
+
+                    {planned.length > 0 && (
+                      <>
+                        <Text style={[styles.glanceLabel, stays.length > 0 && styles.glanceLabelGap]}>Day by day</Text>
+                        {shownDays.map((d, i) => (
+                          <TouchableOpacity
+                            key={d.day}
+                            style={[styles.glanceDay, i > 0 && styles.glanceDayDivider]}
+                            onPress={() => openDay(d.day)}
+                            activeOpacity={0.7}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Day ${d.index + 1}, ${itinDayLabel(d.day)}: ${d.items.map((it) => it.title).join(', ')}. Open this day`}
+                          >
+                            <View style={styles.glanceDayHead}>
+                              <Text style={styles.glanceDayNum}>Day {d.index + 1}</Text>
+                              <Text style={styles.glanceDayDate} numberOfLines={1}>
+                                {itinDayLabel(d.day)}{multiStop && d.stopName ? ` · ${d.stopName}` : ''}
+                              </Text>
+                            </View>
+                            {/* The day's places as a route: a dot at each, joined by a line. */}
+                            {(() => {
+                              const MAX = 4;
+                              const shown = d.items.slice(0, MAX);
+                              const extra = d.items.length - shown.length;
+                              const rows = extra > 0 ? [...shown, { id: 'more', title: `+${extra} more`, more: true }] : shown;
+                              return rows.map((it, j) => (
+                                <View key={it.id ?? j} style={styles.glanceStop}>
+                                  <View style={styles.glanceRail}>
+                                    <View style={[styles.glanceLine, j === 0 && styles.glanceLineHidden]} />
+                                    <View style={[styles.glanceDot, it.more && styles.glanceDotMore]} />
+                                    <View style={[styles.glanceLine, j === rows.length - 1 && styles.glanceLineHidden]} />
+                                  </View>
+                                  <Text
+                                    style={[styles.glanceStopName, it.more && styles.glanceStopMore]}
+                                    numberOfLines={1}
+                                  >
+                                    {it.title}
+                                  </Text>
+                                </View>
+                              ));
+                            })()}
+                          </TouchableOpacity>
+                        ))}
+
+                        {planned.length > COLLAPSED && (
+                          <TouchableOpacity
+                            style={styles.glanceMore}
+                            onPress={() => setGlanceAll((v) => !v)}
+                            activeOpacity={0.8}
+                            accessibilityRole="button"
+                          >
+                            <Text style={styles.glanceLink}>
+                              {glanceAll ? 'Show less' : `Show all ${planned.length} days`}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </View>
+            );
+          })()}
 
           {/* Saved spots: a simple header with one Add button (Explore, which
               has its own search), light type filters, and the list. */}
@@ -1497,7 +1723,18 @@ export default function TripDetailScreen({ navigation, route }) {
         onSubmit={destSheet?.mode === 'edit' ? handleEditDates : handleAddDestination}
       />
 
+      <DateRangeSheet
+        visible={tripDatesOpen}
+        title="Trip dates"
+        startDate={trip.startDate || null}
+        endDate={trip.endDate || null}
+        onClose={() => setTripDatesOpen(false)}
+        onApply={applyTripDates}
+      />
+
       <LiveToast toast={liveToast} top={liveToastTop} />
+      {/* iPhone: the refresh spinner, below the status bar (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={insets.top} />
       {editSheet}
       <TravellersSheet
         visible={travellersOpen}
@@ -1677,6 +1914,16 @@ const styles = StyleSheet.create({
     fontSize: SIZES.base,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
+  },
+  summaryDatesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  summaryDatesShrink: {
+    flexShrink: 1,
+  },
+  summaryDatesPencil: {
+    marginLeft: 5,
   },
   summaryDatesSub: {
     fontSize: SIZES.sm,
@@ -2164,6 +2411,130 @@ const styles = StyleSheet.create({
   },
 
   // Saved places
+  // ── Overview: trip at a glance ──
+  glanceLink: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
+  glanceEmpty: {
+    gap: SIZES.spacing_xs,
+  },
+  glanceEmptyText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  glanceLabel: {
+    fontSize: 11,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textMuted,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: SIZES.spacing_sm,
+  },
+  glanceLabelGap: {
+    marginTop: SIZES.spacing_lg,
+  },
+  // Stays: their own soft panel, apart from the day-by-day list.
+  glanceStays: {
+    borderRadius: SIZES.radius_md,
+    backgroundColor: '#F3F6F9',
+    paddingHorizontal: SIZES.spacing_md,
+  },
+  glanceStay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingVertical: SIZES.spacing_md,
+  },
+  glanceStayDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#DDE4EA',
+  },
+  glanceStayName: {
+    flex: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  glanceStayNights: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  // Day by day: "Day 1 / Wed 12 Mar" on the left, the places on the right.
+  glanceDay: {
+    paddingVertical: SIZES.spacing_md,
+  },
+  glanceDayDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+  },
+  glanceDayHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: SIZES.spacing_sm,
+    marginBottom: SIZES.spacing_xs,
+  },
+  glanceDayNum: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  glanceDayDate: {
+    flex: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+  },
+  // One place on the day's route: rail (line, dot, line) + name.
+  glanceStop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 28,
+  },
+  glanceRail: {
+    width: 18,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    marginRight: SIZES.spacing_sm,
+  },
+  glanceLine: {
+    flex: 1,
+    width: 2,
+    backgroundColor: '#E1E7EC',
+  },
+  glanceLineHidden: {
+    backgroundColor: 'transparent',
+  },
+  glanceDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: COLORS.accent,
+  },
+  glanceDotMore: {
+    backgroundColor: COLORS.white,
+    borderWidth: 2,
+    borderColor: '#C9D2DA',
+  },
+  glanceStopName: {
+    flex: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textPrimary,
+  },
+  glanceStopMore: {
+    fontSize: SIZES.sm,
+    color: COLORS.textMuted,
+  },
+  glanceMore: {
+    alignItems: 'center',
+    paddingTop: SIZES.spacing_md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',

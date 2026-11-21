@@ -62,6 +62,14 @@
       "expo-web-browser",
       "expo-status-bar",
       "expo-image",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#2B3F51",
+          "defaultChannel": "trip-updates"
+        }
+      ],
       "@react-native-community/datetimepicker",
       [
         "expo-location",

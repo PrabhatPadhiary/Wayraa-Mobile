@@ -4,8 +4,10 @@ import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { updateProfile, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import { API_URL, auth } from '../config';
-import { getAuthToken, getStoredUser } from './authService';
+import { getAuthToken, getStoredUser, forgetStoredUser } from './authService';
 import { AuthRequiredError } from './errors';
+import { clearLocalNotifications } from './notificationsService';
+import { cachedFetch, peekCache, setCache, clearAllCaches, CacheKeys } from './cache';
 
 const USER_STORAGE_KEY = 'wayraa_user';
 const PHOTO_SIZE = 600; // px, square crop from the picker
@@ -103,7 +105,16 @@ export async function removeProfilePhoto() {
  *   trips, upcomingTrips, completedTrips, destinations, placesSaved,
  *   favourites, journals } }>}
  */
-export async function getMyProfile() {
+export function getMyProfile() {
+  return cachedFetch(CacheKeys.profile, fetchMyProfile);
+}
+
+/** Your profile as last loaded (instant), or undefined. */
+export function peekMyProfile() {
+  return peekCache(CacheKeys.profile);
+}
+
+async function fetchMyProfile() {
   const token = await getAuthToken();
   if (!token) throw new AuthRequiredError();
   const response = await fetch(`${API_URL}/users/me`, {
@@ -148,6 +159,9 @@ export async function updateMyName(name) {
     const stored = (await getStoredUser()) || {};
     await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify({ ...stored, ...user }));
   } catch { /* ignore */ }
+  forgetStoredUser();
+  const cached = peekCache(CacheKeys.profile);
+  if (cached) setCache(CacheKeys.profile, { ...cached, name: user.name });
 
   return user;
 }
@@ -209,5 +223,8 @@ export async function deleteMyAccount() {
   // The server already removed the Firebase login; clear this device too.
   try { await signOut(auth); } catch { /* already signed out */ }
   try { await AsyncStorage.removeItem(USER_STORAGE_KEY); } catch { /* ignore */ }
+  forgetStoredUser();
+  await clearLocalNotifications();
+  await clearAllCaches();
   return result;
 }

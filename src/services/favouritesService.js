@@ -1,6 +1,7 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
 import { AuthRequiredError } from './errors';
+import { cachedFetch, peekCache, setCache, CacheKeys } from './cache';
 
 /**
  * Fetch the signed-in user's favourite places.
@@ -10,7 +11,22 @@ import { AuthRequiredError } from './errors';
  * on network/HTTP failure — so the screen can tell apart "sign in", "error",
  * and a genuinely empty list.
  */
-export async function getFavourites() {
+export function getFavourites() {
+  return cachedFetch(CacheKeys.favourites, fetchFavourites);
+}
+
+/** Your favourites as last loaded (instant), or undefined. */
+export function peekFavourites() {
+  return peekCache(CacheKeys.favourites);
+}
+
+/** Keep the cached list in step with a ♥ tap (the next load confirms it). */
+function updateCachedFavourites(change) {
+  const list = peekCache(CacheKeys.favourites);
+  if (Array.isArray(list)) setCache(CacheKeys.favourites, change(list));
+}
+
+async function fetchFavourites() {
   const token = await getAuthToken();
   if (!token) throw new AuthRequiredError();
 
@@ -73,6 +89,17 @@ export async function addFavourite(place) {
     if (!response.ok) {
       return { success: false, error: `Failed (${response.status})` };
     }
+    updateCachedFavourites((list) => (list.some((f) => f.placeId === place.placeId) ? list : [{
+      id: `local-${place.placeId}`,
+      placeId: place.placeId,
+      placeName: place.placeName ?? place.name ?? '',
+      vicinity: place.vicinity ?? '',
+      rating: place.rating ?? 0,
+      userRatingsTotal: place.userRatingsTotal ?? 0,
+      photoUrl: place.photoUrl ?? null,
+      category: place.category ?? null,
+      createdAt: new Date().toISOString(),
+    }, ...list]));
     return { success: true };
   } catch (error) {
     if (error instanceof AuthRequiredError) throw error;
@@ -97,6 +124,7 @@ export async function removeFavourite(placeId) {
       headers: { Authorization: `Bearer ${token}` },
     });
 
+    if (response.ok) updateCachedFavourites((list) => list.filter((f) => f.placeId !== placeId));
     return response.ok;
   } catch (error) {
     console.log('removeFavourite error:', error);

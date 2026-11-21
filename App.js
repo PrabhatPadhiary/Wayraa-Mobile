@@ -13,12 +13,13 @@ import {
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
-import { getStoredUser } from './src/services';
+import { getStoredUser, setupNotificationHandler, onNotificationOpened } from './src/services';
+import { hydrateCache } from './src/services/cache';
 import { AppDialogHost } from './src/components/AppDialog';
 import WayraaLoader from './src/components/WayraaLoader';
 import { preloadPublic, preloadSignedIn, waitForHomePreload, restoreHomeSnapshot } from './src/services/homePreload';
@@ -45,6 +46,38 @@ function LoadingScreen() {
 }
 
 const Stack = createNativeStackNavigator();
+const navigationRef = createNavigationContainerRef();
+
+/** The trip open on screen, if any (its updates already show live there). */
+function openTripId() {
+  const route = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
+  return route?.name === 'TripDetail' ? route.params?.tripId : null;
+}
+
+// While the app is open: show notifications, except for the trip you're on.
+setupNotificationHandler(openTripId);
+
+/** Tapping a notification opens its trip (once the app is up and you're signed in). */
+let pendingOpen = null;
+function openTripFromNotification(data) {
+  if (!data?.tripId) return;
+  const root = navigationRef.isReady() ? navigationRef.getRootState() : null;
+  const signedIn = root?.routes?.some((r) => r.name === 'Main');
+  if (!signedIn) {
+    pendingOpen = data; // the app is still starting: open it once ready
+    return;
+  }
+  pendingOpen = null;
+  if (openTripId() === data.tripId) return;
+  navigationRef.navigate('Main', {
+    screen: 'MyTrips',
+    params: {
+      screen: 'TripDetail',
+      params: { tripId: data.tripId, tripName: data.tripName },
+      initial: false,
+    },
+  });
+}
 
 // Logo screen timing: shown at least MIN so it never just flashes, and while
 // the home page preloads, but never longer than MAX (slow network). With a
@@ -108,6 +141,8 @@ export default function App() {
     // Listen for Firebase auth state
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        // Your saved trips, favourites and profile, so screens open filled.
+        await hydrateCache(firebaseUser.uid);
         // User is signed in — check for stored user data
         const user = await getStoredUser();
         if (user) {
@@ -127,6 +162,9 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  // Notification taps, including the one that opened the app.
+  useEffect(() => onNotificationOpened(openTripFromNotification), []);
 
   // Once signed-in state is known, keep the logo up until the home page's
   // data and photos are in (within the min / max times above).
@@ -158,7 +196,12 @@ export default function App() {
     <GestureHandlerRootView style={styles.root}>
     <SafeAreaProvider>
       <BottomBarProvider>
-        <NavigationContainer linking={linking}>
+        <NavigationContainer
+          ref={navigationRef}
+          linking={linking}
+          onReady={() => { if (pendingOpen) openTripFromNotification(pendingOpen); }}
+          onStateChange={() => { if (pendingOpen) openTripFromNotification(pendingOpen); }}
+        >
           <Stack.Navigator
             initialRouteName={initialRoute}
             screenOptions={{ headerShown: false }}

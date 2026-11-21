@@ -18,6 +18,7 @@ import {
   AppState,
   Linking,
   Keyboard,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,6 +39,7 @@ import {
   searchPlaces,
   getCurrentLocation,
   getLocationPermission,
+  getJournalFeed,
   getNearbyPlaces,
   reverseGeocode,
   getMyTrips,
@@ -48,6 +50,7 @@ import { NEARBY_CARD_HEIGHT } from '../components/NearbyPlaceCard';
 import { peekPreloaded, takePreloaded } from '../services/homePreload';
 import { API_URL } from '../config';
 import useAuth from '../hooks/useAuth';
+import useUnreadNotifications from '../hooks/useUnreadNotifications';
 import { pickActiveTrips, daysUntil, dayCount, formatDateRange } from '../utils/tripDates';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -58,6 +61,7 @@ import UnfinishedTripCard from '../components/UnfinishedTripCard';
 import CommunityHighlights from '../components/CommunityHighlights';
 import LocationSheet from '../components/LocationSheet';
 import { getExploreCity, setExploreCity } from '../services/exploreCity';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 // Home's background, top to bottom: a light slate tint, alpine frost, then
@@ -205,6 +209,8 @@ export default function ExploreScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(0);
   const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
+  // The bell's dot: unread notifications (friends' changes, announcements).
+  const unreadNotifications = useUnreadNotifications(isAuthReady && isAuthenticated);
   const routeUser = route?.params?.user;
   const user = firebaseUser || routeUser;
 
@@ -412,14 +418,13 @@ export default function ExploreScreen({ route, navigation }) {
     });
   };
 
-  // Avatar used in the greeting row (48) and the collapsed bar (40): a thin
-  // orange ring around your photo, or white initials on the brand navy
-  // gradient. No shadow: on iOS a shadow on an image/clipped view is drawn
+  // Avatar used in the greeting row (48) and the collapsed bar (40): your
+  // photo as a plain circle (no ring, so it doesn't read as a story), or
+  // white initials on the brand navy gradient. No shadow: on iOS a shadow on an image/clipped view is drawn
   // around its square box, not the circle.
   const renderAvatar = (size) => {
     const outer = { width: size, height: size, borderRadius: size / 2 };
-    const innerSize = size - 6; // 2px ring + 1px gap on each side
-    const inner = { width: innerSize, height: innerSize, borderRadius: innerSize / 2 };
+    const inner = outer;
     if (!isAuthenticated) {
       return (
         <View style={[styles.avatarRing, styles.avatarRingGuest, outer]}>
@@ -655,6 +660,29 @@ export default function ExploreScreen({ route, navigation }) {
     setExploring(city);
     await setExploreCity(city);
     applyLocation({ lat: city.lat, lng: city.lng }, city.name);
+  };
+
+  // ── Pull to refresh: your trips and favourites, stories, and Near you ──
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshHome = async () => {
+    setRefreshing(true);
+    const jobs = [
+      getJournalFeed().then((feed) => setJournals(feed.slice(0, 6))).catch(() => {}),
+    ];
+    if (isAuthenticated) {
+      jobs.push(getMyTrips().then((trips) => setActiveTrips(pickActiveTrips(trips))).catch(() => {}));
+      jobs.push(getFavourites().then((favs) => setFavourites(favs.slice(0, 8))).catch(() => {}));
+    }
+    // Near you: around the city you're exploring, else where you are now.
+    if (exploring) {
+      jobs.push(applyLocation({ lat: exploring.lat, lng: exploring.lng }, exploring.name).catch(() => {}));
+    } else if (!locationDenied && nearbyCoords) {
+      jobs.push(getCurrentLocation()
+        .then((loc) => (loc.granted ? applyLocation(loc) : null))
+        .catch(() => {}));
+    }
+    await Promise.all(jobs);
+    setRefreshing(false);
   };
 
   const clearRecentSearches = async () => {
@@ -979,6 +1007,15 @@ export default function ExploreScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
         onScroll={handleContentScroll}
         scrollEventThrottle={16}
+        refreshControl={(
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refreshHome}
+            tintColor={COLORS.accent}
+            colors={[COLORS.accent]}
+            progressViewOffset={headerHeight || insets.top + 80}
+          />
+        )}
       >
         {/* Popular Destinations */}
         <View style={[styles.section, styles.sectionFirst]}>
@@ -1335,18 +1372,36 @@ export default function ExploreScreen({ route, navigation }) {
               </TouchableOpacity>
             )}
 
-            {/* Menu: Settings (account, privacy, about, log out), apart from
-                your profile (your photo, on the left). */}
-            <TouchableOpacity
-              style={styles.menuButton}
-              onPress={() => navigation.navigate('Settings')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Settings"
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Ionicons name="menu-outline" size={24} color={COLORS.textSecondary} />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              {/* Bell: your notifications, with a dot while any are unread. */}
+              {isAuthenticated && (
+                <TouchableOpacity
+                  style={styles.bellButton}
+                  onPress={() => navigation.navigate('Notifications')}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={unreadNotifications
+                    ? `Notifications, ${unreadNotifications} unread`
+                    : 'Notifications'}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="notifications-outline" size={23} color={COLORS.textSecondary} />
+                  {unreadNotifications > 0 && <View style={styles.bellDot} />}
+                </TouchableOpacity>
+              )}
+              {/* Menu: Settings (account, privacy, about, log out), apart from
+                  your profile (your photo, on the left). */}
+              <TouchableOpacity
+                style={styles.menuButton}
+                onPress={() => navigation.navigate('Settings')}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Settings"
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Ionicons name="menu-outline" size={24} color={COLORS.textSecondary} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* The question, which slides away on scroll down (the rows above
@@ -1419,6 +1474,9 @@ export default function ExploreScreen({ route, navigation }) {
         onPickCity={exploreCity}
         onClose={() => setLocationSheetOpen(false)}
       />
+
+      {/* iPhone: the refresh spinner, below the header (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={headerHeight || insets.top + 80} />
     </SafeAreaView>
   );
 }
@@ -1483,10 +1541,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   // Quiet: just the icon, no circle behind it.
+  // Bell + menu, pushed to the right end of the top bar.
+  headerActions: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+  },
+  bellButton: {
+    width: 36,
+    height: 42,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bellDot: {
+    position: 'absolute',
+    top: 10,
+    right: 7,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: COLORS.accent,
+    borderWidth: 1.5,
+    borderColor: COLORS.white,
+  },
   menuButton: {
     width: 36,
     height: 42,
-    marginLeft: 'auto',
     justifyContent: 'center',
     alignItems: 'flex-end',
   },
@@ -1571,12 +1652,11 @@ const styles = StyleSheet.create({
   avatarRing: {
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: COLORS.accent,
+    overflow: 'hidden',
     backgroundColor: COLORS.white,
   },
   avatarRingGuest: {
-    borderColor: COLORS.primary,
+    backgroundColor: COLORS.borderLight,
   },
   avatarInner: {
     justifyContent: 'center',

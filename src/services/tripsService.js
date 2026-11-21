@@ -1,6 +1,8 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
 import { AuthRequiredError, ForbiddenError } from './errors';
+import { syncTripReminders } from './notificationsService';
+import { cachedFetch, peekCache, setCache, dropCache, CacheKeys } from './cache';
 
 /**
  * Fetch all trips for the signed-in user (owned or member of).
@@ -10,7 +12,16 @@ import { AuthRequiredError, ForbiddenError } from './errors';
  * on network/HTTP failure — so the screen can tell apart "sign in", "error",
  * and a genuinely empty list.
  */
-export async function getMyTrips() {
+export function getMyTrips() {
+  return cachedFetch(CacheKeys.trips, fetchMyTrips);
+}
+
+/** Your trips as last loaded (instant), or undefined. */
+export function peekMyTrips() {
+  return peekCache(CacheKeys.trips);
+}
+
+async function fetchMyTrips() {
   const token = await getAuthToken();
   if (!token) throw new AuthRequiredError();
 
@@ -27,7 +38,10 @@ export async function getMyTrips() {
   }
 
   const data = await response.json();
-  return Array.isArray(data) ? data : [];
+  const trips = Array.isArray(data) ? data : [];
+  // "Your trip starts tomorrow" reminders follow your trips (in the background).
+  syncTripReminders(trips);
+  return trips;
 }
 
 /**
@@ -73,6 +87,10 @@ export async function createTrip(trip) {
         longitude: trip.destination?.longitude ?? null,
         photoUrl: trip.destination?.photoUrl || null,
         order: 0,
+        // The first stop gets the trip's dates, so it doesn't read
+        // "Dates not set" under a dated trip.
+        startDate: trip.startDate || null,
+        endDate: trip.endDate || trip.startDate || null,
       },
     }),
   });
@@ -98,7 +116,19 @@ export async function createTrip(trip) {
  * Throws AuthRequiredError when not signed in. Throws an Error with
  * `status === 404` when the trip doesn't exist or isn't visible to the user.
  */
-export async function getTripById(tripId) {
+export function getTripById(tripId) {
+  return cachedFetch(CacheKeys.trip(tripId), () => fetchTripById(tripId)).catch((e) => {
+    if (e?.status === 404) dropCache(CacheKeys.trip(tripId)); // gone, or no longer yours
+    throw e;
+  });
+}
+
+/** The trip as last loaded (instant), or undefined. */
+export function peekTrip(tripId) {
+  return peekCache(CacheKeys.trip(tripId));
+}
+
+async function fetchTripById(tripId) {
   const token = await getAuthToken();
   if (!token) throw new AuthRequiredError();
 
@@ -348,7 +378,18 @@ export async function deleteTrip(tripId) {
 
   if (response.status === 401) throw new AuthRequiredError();
   if (response.status === 403) throw new ForbiddenError('Only the trip owner can delete this trip.');
-  if (response.status === 404) return true;
+  if (response.status === 404) { forgetTrip(tripId); return true; }
   if (!response.ok) throw new Error(`Failed to delete the trip (${response.status})`);
+  forgetTrip(tripId);
   return true;
+}
+
+/** A trip you deleted or left: out of the cached list and caches straight away. */
+export function forgetTrip(tripId) {
+  const trips = peekCache(CacheKeys.trips);
+  if (Array.isArray(trips)) setCache(CacheKeys.trips, trips.filter((t) => t.id !== tripId));
+  dropCache(CacheKeys.trip(tripId));
+  dropCache(CacheKeys.itinerary(tripId));
+  dropCache(CacheKeys.expenses(tripId));
+  dropCache(CacheKeys.checklist(tripId));
 }

@@ -1,5 +1,6 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
+import { cachedFetch, peekCache, CacheKeys } from './cache';
 import { AuthRequiredError, ForbiddenError } from './errors';
 
 /**
@@ -37,7 +38,16 @@ async function toError(response, fallback) {
 }
 
 /** All itinerary items for a trip, ordered by day then start time. */
-export async function getItinerary(tripId) {
+export function getItinerary(tripId) {
+  return cachedFetch(CacheKeys.itinerary(tripId), () => fetchItinerary(tripId));
+}
+
+/** As last loaded for this trip (instant), or undefined. */
+export function peekItinerary(tripId) {
+  return peekCache(CacheKeys.itinerary(tripId));
+}
+
+async function fetchItinerary(tripId) {
   const response = await fetch(base(tripId), { headers: await authHeaders() });
   if (!response.ok) throw await toError(response, 'Could not load the itinerary.');
   const data = await response.json();

@@ -1,4 +1,5 @@
 import { API_URL } from '../config';
+import { cachedFetch, CacheKeys } from './cache';
 import { reverseGeocode } from './locationService';
 
 /**
@@ -124,7 +125,21 @@ function photoUrlFromPlace(place, maxWidth = 400) {
  * Backend: GET /Destinations/details?placeId=
  * Returns the raw details object plus a normalized `photoUrl`, or null.
  */
-export async function getPlaceDetails(placeId) {
+const PLACE_DETAILS_MAX_AGE = 30 * 60 * 1000; // place info rarely changes
+
+/**
+ * Place details, kept for 30 minutes: opening the same place again is
+ * instant. Failures (null) aren't kept, so the next try fetches again.
+ */
+export function getPlaceDetails(placeId) {
+  if (!placeId) return Promise.resolve(null);
+  return cachedFetch(CacheKeys.place(placeId), () => fetchPlaceDetails(placeId), {
+    maxAge: PLACE_DETAILS_MAX_AGE,
+    keepIf: (value) => value != null,
+  });
+}
+
+async function fetchPlaceDetails(placeId) {
   if (!placeId) return null;
   try {
     const url = `${API_URL}/Destinations/details?placeId=${encodeURIComponent(placeId)}`;

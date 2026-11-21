@@ -11,8 +11,14 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider, API_URL } from '../config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { unregisterPushNotifications } from './notificationsService';
+import { clearAllCaches, hydrateCache } from './cache';
 
 const USER_STORAGE_KEY = 'wayraa_user';
+
+// The stored user, kept in memory after the first read (many screens ask).
+// undefined = not read yet.
+let storedUserMemo;
 
 /**
  * True when a request never got an answer: the phone is offline, or can't
@@ -180,6 +186,9 @@ async function loginWithBackend(token) {
 
   const user = await response.json();
   await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+  storedUserMemo = user;
+  // Saved copies (trips, favourites, profile) are tagged with this account.
+  await hydrateCache(auth.currentUser?.uid);
   return { success: true, user };
 }
 
@@ -214,8 +223,13 @@ export async function completeGoogleSignIn(idToken) {
  */
 export async function logoutUser() {
   try {
+    // While still signed in: this phone stops getting the account's notifications.
+    await unregisterPushNotifications();
     await signOut(auth);
     await AsyncStorage.removeItem(USER_STORAGE_KEY);
+    storedUserMemo = null;
+    // Nothing of this account stays on the phone for the next person.
+    await clearAllCaches();
     return { success: true };
   } catch (error) {
     return { success: false, error: 'Logout failed' };
@@ -226,12 +240,19 @@ export async function logoutUser() {
  * Get the currently stored user (from local storage).
  */
 export async function getStoredUser() {
+  if (storedUserMemo !== undefined) return storedUserMemo;
   try {
     const stored = await AsyncStorage.getItem(USER_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
+    storedUserMemo = stored ? JSON.parse(stored) : null;
   } catch {
     return null;
   }
+  return storedUserMemo;
+}
+
+/** The stored user changed on disk (name edited, account deleted): read it again next time. */
+export function forgetStoredUser() {
+  storedUserMemo = undefined;
 }
 
 /**

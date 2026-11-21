@@ -30,6 +30,7 @@ import { ScreenHeader, FilterChips, Skeleton, JournalCard } from '../components'
 import { getJournalFeed, peekJournalFeed, toggleJournalLike, vibeLabel, AuthRequiredError, getStoredUser } from '../services';
 import { openStoryMenu, isMyStory } from '../utils/storyActions';
 import { showAlert } from '../components/AppDialog';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 const SORTS = [
   { key: 'recent', label: 'Recent' },
@@ -346,6 +347,8 @@ export default function CommunityScreen({ navigation }) {
         )}
       />
 
+      {/* iPhone: the refresh spinner, below the header (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={headerHeight} />
       <ScreenHeader
         title="Community"
         subtitle="Trip stories from fellow travellers"

@@ -1,5 +1,6 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
+import { cachedFetch, peekCache, CacheKeys } from './cache';
 import { AuthRequiredError, ForbiddenError } from './errors';
 
 /**
@@ -50,7 +51,16 @@ function expenseBody(expense) {
 }
 
 /** All expenses for a trip, oldest first. */
-export async function getExpenses(tripId) {
+export function getExpenses(tripId) {
+  return cachedFetch(CacheKeys.expenses(tripId), () => fetchExpenses(tripId));
+}
+
+/** As last loaded for this trip (instant), or undefined. */
+export function peekExpenses(tripId) {
+  return peekCache(CacheKeys.expenses(tripId));
+}
+
+async function fetchExpenses(tripId) {
   const response = await fetch(expensesUrl(tripId), { headers: await authHeaders() });
   if (!response.ok) throw await toError(response, 'Could not load expenses.');
   const data = await response.json();

@@ -32,6 +32,7 @@ import {
   removeTripPlace,
   journalCategoryFor,
   AuthRequiredError,
+  peekFavourites,
 } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { GridSkeleton } from '../components/skeletons';
@@ -194,7 +195,8 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
-  const [favedIds, setFavedIds] = useState(() => new Set());
+  // Hearts start from your favourites as last loaded, then refresh.
+  const [favedIds, setFavedIds] = useState(() => new Set((peekFavourites() || []).map((f) => f.placeId)));
   const favPending = useRef(new Set());
   // Live suggestions while typing (search mode).
   const [suggestions, setSuggestions] = useState([]);

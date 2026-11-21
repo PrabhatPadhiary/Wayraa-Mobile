@@ -27,6 +27,9 @@ import {
   sendPasswordReset,
   deleteMyAccount,
   logoutUser,
+  getNotificationPermission,
+  registerForPushNotifications,
+  peekMyProfile,
 } from '../services';
 import appConfig from '../../app.json';
 import { showAlert } from '../components/AppDialog';
@@ -66,7 +69,9 @@ export default function SettingsScreen({ navigation }) {
   const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
   const keyboardHeight = useKeyboardHeight();
   const [headerHeight, setHeaderHeight] = useState(0);
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState(() => peekMyProfile() || null);
+  // 'granted' | 'denied' | 'undetermined', null while checking.
+  const [notifications, setNotifications] = useState(null);
 
   const [loggingOut, setLoggingOut] = useState(false);
   // Delete account: typed confirmation sheet.
@@ -79,7 +84,20 @@ export default function SettingsScreen({ navigation }) {
   useFocusEffect(useCallback(() => {
     if (!isAuthReady || !isAuthenticated) return;
     getMyProfile().then(setProfile).catch(() => {});
+    // Fresh each visit: you may have just changed it in the phone's settings.
+    getNotificationPermission().then(setNotifications);
   }, [isAuthReady, isAuthenticated]));
+
+  // Not asked yet: ask now. Otherwise the switch lives in the phone's
+  // settings (an app can't turn its own notifications back on).
+  const openNotifications = async () => {
+    if (notifications === 'undetermined') {
+      await registerForPushNotifications();
+      setNotifications(await getNotificationPermission());
+      return;
+    }
+    Linking.openSettings().catch(() => {});
+  };
 
   const email = profile?.email || firebaseUser?.email || '';
   const methods = signInMethods();
@@ -213,6 +231,25 @@ export default function SettingsScreen({ navigation }) {
                 )}
               </View>
             </View>
+
+            {/* Notifications: trip updates from friends and trip reminders. */}
+            {Platform.OS !== 'web' && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Notifications</Text>
+                <View style={styles.group}>
+                  <Row
+                    icon="bell"
+                    label="Trip updates and reminders"
+                    value={notifications === 'granted' ? 'On' : notifications ? 'Off' : ''}
+                    onPress={openNotifications}
+                    last
+                  />
+                </View>
+                <Text style={styles.sectionHint}>
+                  When friends join your trips or add places, expenses and plans, when the owner posts an announcement, and the day before a trip starts.
+                </Text>
+              </View>
+            )}
 
             {/* Privacy and safety */}
             <View style={styles.section}>
@@ -348,6 +385,14 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+  },
+  sectionHint: {
+    marginTop: SIZES.spacing_sm,
+    marginHorizontal: SIZES.spacing_xs,
+    fontSize: SIZES.xs,
+    lineHeight: 17,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
   },
   group: {
     borderRadius: SIZES.radius_lg,

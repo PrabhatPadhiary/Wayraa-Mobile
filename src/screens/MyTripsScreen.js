@@ -21,12 +21,13 @@ import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCar
 import { TRIP_CARD_HEIGHT } from '../components/TripStackCard';
 import { tripTiming } from '../components/TripListRow';
 import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
-import { getMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
+import { getMyTrips, peekMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { sortTripsForList } from '../utils/tripDates';
 import useAuth from '../hooks/useAuth';
 import { showAlert } from '../components/AppDialog';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 /**
  * Filter tabs. `match` maps a filter to the backend status values it includes.
@@ -60,8 +61,9 @@ export default function MyTripsScreen({ navigation }) {
   // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
   const onBarScroll = useHideTabBarOnScroll();
   const { isAuthenticated, isAuthReady } = useAuth();
-  const [trips, setTrips] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Your trips as last loaded, at once; fresh ones load behind them.
+  const [trips, setTrips] = useState(() => peekMyTrips() || []);
+  const [loading, setLoading] = useState(() => !peekMyTrips());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   // Swipe actions: full trip being edited (the sheet needs its stops), the
@@ -223,7 +225,9 @@ export default function MyTripsScreen({ navigation }) {
     refreshing,
     onRefresh,
     tintColor: COLORS.accent,
-    progressViewOffset: headerHeight,
+    colors: [COLORS.accent],
+    // Below the header and the unfinished-trip card, when there is one.
+    progressViewOffset: topInset,
   };
 
   // List view: trips grouped (Happening now, Upcoming, Drafts, Past), each
@@ -442,6 +446,9 @@ export default function MyTripsScreen({ navigation }) {
       )}
 
       {/* Shared floating header panel. List scrolls beneath. */}
+      {/* iPhone: the refresh spinner, below the header and the unfinished-trip
+          card (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={topInset} />
       <ScreenHeader
         title="My trips"
         subtitle={

@@ -15,6 +15,7 @@ import { FilterChips, ScreenHeader, GridSkeleton } from '../components';
 import PlaceGridCard from '../components/PlaceGridCard';
 import { getNearbyPlaces, getCurrentLocation } from '../services';
 import { distanceKm } from '../utils/itinerary';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 // What the list can show: `type` is the Google place type the backend asks
 // for, `radius` (metres) how far to look — food and coffee close by, sights
@@ -171,6 +172,8 @@ export default function NearbyPlacesScreen({ navigation, route }) {
         )}
       />
 
+      {/* iPhone: the refresh spinner, below the header (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={headerHeight} />
       <ScreenHeader
         title="Near you"
         subtitle={label ? `Around ${label}` : 'Places around you'}

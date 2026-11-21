@@ -33,6 +33,7 @@ import {
   removeTripPlace,
   journalCategoryFor,
   AuthRequiredError,
+  peekFavourites,
 } from '../services';
 import { buildTripPlaceDto, toTripCategory, createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
@@ -166,7 +167,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
   const todayIndex = (new Date().getDay() + 6) % 7;
 
   // ── Favourites ───────────────────────────────────────────────────────────
-  const [isFaved, setIsFaved] = useState(false);
+  const [isFaved, setIsFaved] = useState(() => (peekFavourites() || []).some((f) => f.placeId === placeId));
   const [favPending, setFavPending] = useState(false);
   useFocusEffect(
     useCallback(() => {

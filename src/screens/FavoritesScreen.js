@@ -26,12 +26,13 @@ import {
   GridSkeleton,
   AddToTripSheet,
 } from '../components';
-import { getFavourites, removeFavourite, addFavourite, AuthRequiredError } from '../services';
+import { getFavourites, peekFavourites, removeFavourite, addFavourite, AuthRequiredError } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { cityOf, groupByCity, favouriteIcon } from '../utils/favourites';
 import useAuth from '../hooks/useAuth';
 import { createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
+import RefreshSpinner from '../components/RefreshSpinner';
 
 /**
  * Category filters. `match` lists the backend category values each chip includes.
@@ -90,8 +91,9 @@ export default function FavoritesScreen({ navigation }) {
   // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
   const onBarScroll = useHideTabBarOnScroll();
   const { isAuthenticated, isAuthReady } = useAuth();
-  const [favourites, setFavourites] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Your favourites as last loaded, at once; fresh ones load behind them.
+  const [favourites, setFavourites] = useState(() => peekFavourites() || []);
+  const [loading, setLoading] = useState(() => !peekFavourites());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [needsAuth, setNeedsAuth] = useState(false);
@@ -539,6 +541,8 @@ export default function FavoritesScreen({ navigation }) {
       )}
 
       {/* Shared floating header panel. List scrolls beneath. */}
+      {/* iPhone: the refresh spinner, below the header (see RefreshSpinner). */}
+      <RefreshSpinner refreshing={refreshing} top={headerHeight} />
       <ScreenHeader
         title="Favourites"
         subtitle={

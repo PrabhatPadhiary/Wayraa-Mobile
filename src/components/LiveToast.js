@@ -66,6 +66,10 @@ export function describeTripChange(change) {
       if (change.role === 'member') return `${who} made ${whom} an editor`;
       return `${who} changed ${whom === 'you' ? 'your' : `${whom}'s`} role`;
     }
+    case 'announcements':
+      if (a === 'added') return `${who} posted an announcement`;
+      if (a === 'removed') return `${who} removed an announcement`;
+      return `${who} edited an announcement`;
     case 'trip':
       return `${who} deleted this trip`;
     default:
