@@ -266,8 +266,11 @@ export default function SettingsScreen({ navigation }) {
                   icon="slash"
                   label="Blocked people"
                   onPress={() => navigation.navigate('BlockedPeople')}
-                  last
+                  last={!profile?.isModerator}
                 />
+                {profile?.isModerator && (
+                  <Row icon="flag" label="Reports to review" onPress={() => navigation.navigate('Reports')} last />
+                )}
               </View>
             </View>
           </>

@@ -19,6 +19,7 @@ import {
   NearbyPlacesScreen,
   MyStoriesScreen,
   BlockedPeopleScreen,
+  ReportsScreen,
   SettingsScreen,
   NotificationsScreen,
 } from '../screens';
@@ -62,6 +63,7 @@ function ExploreStack({ route }) {
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       {/* Blocked people (from Settings): unblock. */}
       <Stack.Screen name="BlockedPeople" component={BlockedPeopleScreen} />
+      <Stack.Screen name="Reports" component={ReportsScreen} />
     </Stack.Navigator>
   );
 }

@@ -308,7 +308,7 @@ export function onNotificationOpened(onOpen) {
     // Handled: don't open it again on the next start.
     Notifications.clearLastNotificationResponseAsync().catch(() => {});
     const data = response.notification?.request?.content?.data;
-    if (data?.tripId || data?.journalId) onOpen(data);
+    if (data?.tripId || data?.journalId || data?.type === 'report') onOpen(data);
   };
   Notifications.getLastNotificationResponseAsync().then(handle).catch(() => {});
   const sub = Notifications.addNotificationResponseReceivedListener(handle);

@@ -108,11 +108,15 @@ export {
   journalShareUrl,
   REPORT_REASONS,
   reportJournal,
+  reportComment,
   hideJournal,
   unhideJournal,
   blockUser,
   unblockUser,
   getBlockedUsers,
+  getOpenReports,
+  removeReported,
+  dismissReports,
   getJournalsForPlace,
 } from './journalsService';
 export { toggleLike, setLiked, likeStateOf, useLikeState, useLikes } from './likesStore';

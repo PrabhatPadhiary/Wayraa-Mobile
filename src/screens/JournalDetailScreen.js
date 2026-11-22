@@ -32,6 +32,8 @@ import {
   getStoredUser,
   vibeLabel,
   AuthRequiredError,
+  REPORT_REASONS,
+  reportComment,
 } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { useFocusEffect } from '@react-navigation/native';
@@ -229,9 +231,46 @@ export default function JournalDetailScreen({ navigation, route }) {
 
   // ⋯ on someone else's comment: block them. Their comments go at once; if
   // they wrote the story, it's closed too.
+  // Take comments off screen (with the replies under them), e.g. after a report.
+  const dropComments = (shouldDrop) => {
+    setJournal((j) => {
+      const all = j.comments || [];
+      const theirs = all.filter((x) => !shouldDrop(x));
+      const kept = new Set(theirs.map((x) => x.id));
+      const left = theirs.filter((x) => !x.parentCommentId || kept.has(x.parentCommentId));
+      return { ...j, comments: left, commentsCount: Math.max(0, (j.commentsCount || 0) - (all.length - left.length)) };
+    });
+  };
+
+  const reportFromComment = (c) => {
+    showAlert('Why are you reporting this comment?', 'Your report is anonymous.', [
+      ...REPORT_REASONS.map((r) => ({
+        text: r.label,
+        icon: 'flag-outline',
+        onPress: async () => {
+          try {
+            await reportComment(journal.id, c.id, r.key);
+            dropComments((x) => x.id === c.id);
+            if (replyTo?.threadId === c.id) setReplyTo(null);
+            showAlert('Thanks for letting us know', 'We\'ll review this comment within 24 hours. You won\'t see it any more.');
+          } catch (e) {
+            if (e instanceof AuthRequiredError) navigation.navigate('Welcome');
+            else showAlert('Couldn\'t send the report', e?.message || 'Please try again.');
+          }
+        },
+      })),
+      { text: 'Cancel', style: 'cancel' },
+    ], { sheet: true });
+  };
+
   const blockFromComment = (c) => {
     const name = c.author?.name || 'this traveller';
     showAlert(name, undefined, [
+      {
+        text: 'Report comment',
+        icon: 'flag-outline',
+        onPress: () => reportFromComment(c),
+      },
       {
         text: `Block ${name}`,
         style: 'destructive',

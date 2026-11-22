@@ -34,6 +34,7 @@ const TYPE_ICON = {
   likes: { name: 'heart', bg: '#E05024' },
   comment: { name: 'chatbubble', bg: COLORS.primaryLight },
   reply: { name: 'return-down-forward', bg: COLORS.primaryLight },
+  report: { name: 'flag', bg: COLORS.error },
 };
 
 /**
@@ -100,6 +101,10 @@ export default function NotificationsScreen({ navigation }) {
   };
 
   const openTrip = (item) => {
+    if (item.type === 'report') {
+      navigation.navigate('Reports'); // same stack as the bell
+      return;
+    }
     if (item.journalId) {
       navigation.navigate('Community', {
         screen: 'JournalDetail',
@@ -138,7 +143,7 @@ export default function NotificationsScreen({ navigation }) {
           !last && styles.rowDivider,
         ]}
         onPress={() => openTrip(item)}
-        disabled={!item.tripId && !item.journalId}
+        disabled={!item.tripId && !item.journalId && item.type !== 'report'}
         activeOpacity={0.75}
         accessibilityRole="button"
         accessibilityLabel={`${item.isRead ? '' : 'New. '}${item.body}. ${item.title}, ${timeAgo(item.createdAt)}`}

@@ -296,6 +296,15 @@ async function safetyCall(path, method, body, fallback) {
 export const reportJournal = (id, reason, details) =>
   safetyCall(`/Journals/${encodeURIComponent(id)}/report`, 'POST', { reason, details: details || null }, 'Couldn\'t send the report');
 
+/** Report a comment or reply (also hides it from you). Backend: POST /api/Journals/{id}/comments/{commentId}/report */
+export const reportComment = (journalId, commentId, reason, details) =>
+  safetyCall(
+    `/Journals/${encodeURIComponent(journalId)}/comments/${encodeURIComponent(commentId)}/report`,
+    'POST',
+    { reason, details: details || null },
+    'Couldn\'t send the report',
+  );
+
 /** "Not interested": hide a story from your feed. Backend: POST /api/Journals/{id}/hide */
 export const hideJournal = (id) => safetyCall(`/Journals/${encodeURIComponent(id)}/hide`, 'POST', null, 'Couldn\'t hide the story');
 
@@ -313,6 +322,27 @@ export async function getBlockedUsers() {
   const list = await safetyCall('/users/me/blocked', 'GET', null, 'Couldn\'t load blocked people');
   return Array.isArray(list) ? list : [];
 }
+
+// ── Moderation (moderators only: Role "Admin" on the backend) ─────────────
+
+/**
+ * Open reports, one per reported story or comment, newest first.
+ * Backend: GET /api/moderation/reports
+ * @returns {Promise<Array<{ kind: 'story'|'comment', targetId, journalId, journalTitle,
+ *   content, authorId, authorName, reports, reasons: string[], details: string[], lastReportedAt }>>}
+ */
+export async function getOpenReports() {
+  const list = await safetyCall('/moderation/reports', 'GET', null, 'Couldn\'t load reports');
+  return Array.isArray(list) ? list : [];
+}
+
+/** Remove a reported story or comment. Backend: POST /api/moderation/reports/{kind}/{id}/remove */
+export const removeReported = (kind, targetId) =>
+  safetyCall(`/moderation/reports/${kind}/${encodeURIComponent(targetId)}/remove`, 'POST', null, 'Couldn\'t remove it');
+
+/** Nothing wrong with it: close its reports. Backend: POST /api/moderation/reports/{kind}/{id}/dismiss */
+export const dismissReports = (kind, targetId) =>
+  safetyCall(`/moderation/reports/${kind}/${encodeURIComponent(targetId)}/dismiss`, 'POST', null, 'Couldn\'t dismiss it');
 
 /** The story's page on the website, for sharing. */
 export function journalShareUrl(id) {

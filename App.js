@@ -79,7 +79,7 @@ setupNotificationHandler(openTripId, openJournalId);
  */
 let pendingOpen = null;
 function openTripFromNotification(data) {
-  if (!data?.tripId && !data?.journalId) return;
+  if (!data?.tripId && !data?.journalId && data?.type !== 'report') return;
   const root = navigationRef.isReady() ? navigationRef.getRootState() : null;
   const signedIn = root?.routes?.some((r) => r.name === 'Main');
   if (!signedIn) {
@@ -87,6 +87,11 @@ function openTripFromNotification(data) {
     return;
   }
   pendingOpen = null;
+  // Moderators: a new report opens Reports.
+  if (data.type === 'report') {
+    navigationRef.navigate('Main', { screen: 'Explore', params: { screen: 'Reports', initial: false } });
+    return;
+  }
   if (data.journalId) {
     if (openJournalId() === data.journalId) return;
     navigationRef.navigate('Main', {
