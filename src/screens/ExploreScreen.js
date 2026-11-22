@@ -45,7 +45,10 @@ import {
   getMyTrips,
   getFavourites,
   useMyPhoto,
+  getMyProfile,
 } from '../services';
+import RankCelebration from '../components/RankCelebration';
+import useRankUp from '../hooks/useRankUp';
 import { NEARBY_CARD_HEIGHT } from '../components/NearbyPlaceCard';
 import { peekPreloaded, takePreloaded } from '../services/homePreload';
 import { API_URL } from '../config';
@@ -53,10 +56,12 @@ import useAuth from '../hooks/useAuth';
 import useUnreadNotifications from '../hooks/useUnreadNotifications';
 import { pickActiveTrips, daysUntil, dayCount, formatDateRange } from '../utils/tripDates';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { BlurView, BlurTargetView } from 'expo-blur';
+import { ANDROID_BLUR, ANDROID_BLUR_METHOD } from '../utils/glass';
 import { initialsFor } from '../components/TripStackCard';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { useBottomBar } from '../context/BottomBarContext';
+import { useTip } from '../components/Tips';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
 import CommunityHighlights from '../components/CommunityHighlights';
 import LocationSheet from '../components/LocationSheet';
@@ -77,6 +82,8 @@ const CARD_GAP = SIZES.spacing_lg;
 // Narrow enough that the next card clearly peeks in (~24px), hinting at the swipe.
 const CARD_WIDTH = SCREEN_WIDTH - SIZES.spacing_lg * 2 - 36;
 const CARD_HEIGHT = Math.round(CARD_WIDTH * 0.6);
+// One card plus the gap: how far one swipe moves.
+const POPULAR_STEP = CARD_WIDTH + CARD_GAP;
 
 const RECENT_SEARCHES_KEY = 'wayraa_recent_searches';
 // Scroll this far in one direction before the tab bar hides / returns.
@@ -170,6 +177,10 @@ const POPULAR_DESTINATIONS = [
     image: 'https://images.pexels.com/photos/259447/pexels-photo-259447.jpeg?auto=compress&cs=tinysrgb&w=1000',
   },
 ];
+// Three copies in a row, for the endless carousel (see recenterPopular).
+const POPULAR_COUNT = POPULAR_DESTINATIONS.length;
+const POPULAR_LOOP = [0, 1, 2].flatMap((copy) =>
+  POPULAR_DESTINATIONS.map((d) => ({ ...d, loopKey: `${copy}-${d.id}` })));
 
 /** Fixed photos on the home page, cached during the startup logo screen. */
 export const HOME_STATIC_IMAGES = [
@@ -207,12 +218,28 @@ export default function ExploreScreen({ route, navigation }) {
   const searchInputRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const insets = useSafeAreaInsets();
+  // Android: the scrolling page, which the header's glass blurs.
+  const homeBlurTarget = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
   // The bell's dot: unread notifications (friends' changes, announcements).
   const unreadNotifications = useUnreadNotifications(isAuthReady && isAuthenticated);
   const routeUser = route?.params?.user;
   const user = firebaseUser || routeUser;
+
+  // One-time tips: search first (everyone), the bell on a later visit.
+  const searchTipRef = useRef(null);
+  const bellTipRef = useRef(null);
+  useTip('explore_search', searchTipRef, {
+    title: 'Start with a place',
+    text: 'Search a city to see things to do, stays, food and stories from travellers who went.',
+  });
+  useTip('explore_bell', bellTipRef, {
+    enabled: isAuthReady && isAuthenticated,
+    after: 'explore_search',
+    title: 'Your updates',
+    text: 'When friends change a trip you share, or someone likes or comments on your story, it shows up here.',
+  });
 
   // Profile avatar: prefer the Firebase photo, else initials of the display
   // name (or email).
@@ -247,7 +274,9 @@ export default function ExploreScreen({ route, navigation }) {
       toValue: headerCollapsed ? 1 : 0,
       duration: 420,
       easing: Easing.out(Easing.cubic), // gentle, decelerating
-      useNativeDriver: false, // animating height
+      // Transforms and opacity only, so it runs on the native thread: no
+      // layout work per frame, and it stays smooth while you scroll.
+      useNativeDriver: true,
     }).start();
   }, [headerCollapsed, headerAnim]);
 
@@ -268,6 +297,12 @@ export default function ExploreScreen({ route, navigation }) {
   const [headerSolid, setHeaderSolid] = useState(false);
   // The question's full height (measured), for its fold-away animation.
   const [headlineHeight, setHeadlineHeight] = useState(80);
+  // Collapsed: the search row and the glass behind the header slide up by the
+  // question's height (plus its gap), in place of the question.
+  const collapseShift = headerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -(headlineHeight + SIZES.spacing_xs)],
+  });
   const handleContentScroll = (e) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const y = contentOffset.y;
@@ -521,6 +556,16 @@ export default function ExploreScreen({ route, navigation }) {
       category: fav.category,
     });
   };
+
+  // A new traveller rank: celebrated once, a moment after Home opens (your
+  // profile, with its rank, loads quietly behind the page).
+  const [rankProfile, setRankProfile] = useState(null);
+  useEffect(() => {
+    if (!isAuthReady || !isAuthenticated) return undefined;
+    const t = setTimeout(() => { getMyProfile().then(setRankProfile).catch(() => {}); }, 2000);
+    return () => clearTimeout(t);
+  }, [isAuthReady, isAuthenticated, firebaseUser?.uid]);
+  const [celebrateLevel, dismissCelebration] = useRankUp(rankProfile, firebaseUser?.uid);
 
   const handleProfilePress = () => {
     if (isAuthenticated) {
@@ -813,25 +858,36 @@ export default function ExploreScreen({ route, navigation }) {
     }
   };
 
-  const [popularPage, setPopularPage] = useState(0);
-  // Auto-slide: on to the next destination every few seconds (back to the
-  // first after the last). Pauses for a while after you swipe, and while Home
-  // isn't in view or search is open.
+  // Popular destinations go round in a loop: the list holds three copies and
+  // starts on the middle one. Whenever it settles in the first or last copy,
+  // it jumps (invisibly: same card) to that card in the middle copy, so you
+  // can swipe either way forever, and the auto-slide always moves forward.
+  // Auto-slide: on to the next destination every few seconds. Pauses for a
+  // while after you swipe, and while Home isn't in view or search is open.
   const popularRef = useRef(null);
+  const popularPage = useRef(POPULAR_COUNT); // index in POPULAR_LOOP
   const popularPausedUntil = useRef(0);
   const homeFocused = useIsFocused();
+  const jumpPopular = (page, animated) => {
+    popularPage.current = page;
+    popularRef.current?.scrollToOffset({ offset: page * POPULAR_STEP, animated });
+  };
+  // Back into the middle copy (same card) if it's in the first or last.
+  const recenterPopular = () => {
+    const p = popularPage.current;
+    if (p < POPULAR_COUNT || p >= POPULAR_COUNT * 2) {
+      jumpPopular((p % POPULAR_COUNT) + POPULAR_COUNT, false);
+    }
+  };
   useEffect(() => {
     if (!homeFocused || isSearchActive) return undefined;
     const timer = setInterval(() => {
       if (Date.now() < popularPausedUntil.current) return;
-      setPopularPage((p) => {
-        const next = (p + 1) % POPULAR_DESTINATIONS.length;
-        popularRef.current?.scrollToOffset({ offset: next * (CARD_WIDTH + CARD_GAP), animated: true });
-        return next;
-      });
+      recenterPopular();
+      jumpPopular(popularPage.current + 1, true);
     }, POPULAR_AUTO_SLIDE_MS);
     return () => clearInterval(timer);
-  }, [homeFocused, isSearchActive]);
+  }, [homeFocused, isSearchActive]); // eslint-disable-line react-hooks/exhaustive-deps
   const renderPlaceCard = ({ item }) => {
     const isResolving = resolvingCardId === item.id;
     return (
@@ -1000,7 +1056,9 @@ export default function ExploreScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Main Content - starts below the floating header, scrolls up behind it */}
+      {/* Main Content - starts below the floating header, scrolls up behind it.
+          Android: wrapped as the blur target for the header's glass. */}
+      <BlurTargetView ref={homeBlurTarget} style={styles.scrollView} collapsable={false}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={{ paddingTop: headerHeight || insets.top + 80 }}
@@ -1023,18 +1081,30 @@ export default function ExploreScreen({ route, navigation }) {
           <FlatList
             ref={popularRef}
             onScrollBeginDrag={() => { popularPausedUntil.current = Date.now() + POPULAR_PAUSE_MS; }}
-            data={POPULAR_DESTINATIONS}
+            data={POPULAR_LOOP}
             renderItem={renderPlaceCard}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => item.loopKey}
             horizontal
             showsHorizontalScrollIndicator={false}
-            snapToInterval={CARD_WIDTH + CARD_GAP}
+            snapToInterval={POPULAR_STEP}
             decelerationRate="fast"
             contentContainerStyle={styles.cardsContainer}
+            // Start on the middle copy, with every card ready (there are few).
+            contentOffset={{ x: POPULAR_COUNT * POPULAR_STEP, y: 0 }}
+            initialNumToRender={POPULAR_LOOP.length}
+            windowSize={POPULAR_LOOP.length}
+            onLayout={() => {
+              // In case contentOffset was ignored (some Android versions).
+              if (popularPage.current === POPULAR_COUNT) jumpPopular(POPULAR_COUNT, false);
+            }}
             scrollEventThrottle={32}
             onScroll={(e) => {
-              const page = Math.round(e.nativeEvent.contentOffset.x / (CARD_WIDTH + CARD_GAP));
-              if (page !== popularPage) setPopularPage(page);
+              popularPage.current = Math.round(e.nativeEvent.contentOffset.x / POPULAR_STEP);
+            }}
+            // After a swipe settles: back into the middle copy if needed.
+            onMomentumScrollEnd={(e) => {
+              popularPage.current = Math.round(e.nativeEvent.contentOffset.x / POPULAR_STEP);
+              recenterPopular();
             }}
           />
         </View>
@@ -1294,6 +1364,7 @@ export default function ExploreScreen({ route, navigation }) {
         {/* Bottom spacing */}
         <View style={{ height: 100 }} />
       </ScrollView>
+      </BlurTargetView>
 
       {/* Header: open, straight on the frost page (no panel or shadow). The
           greeting scrolls away; the search pill stays pinned at the top, with
@@ -1301,6 +1372,9 @@ export default function ExploreScreen({ route, navigation }) {
           ScrollView so it floats on top. */}
       <View
         style={styles.searchContainer}
+        // The header keeps its full size while collapsed (its parts slide up
+        // instead), so the empty space under the bar must let touches through.
+        pointerEvents="box-none"
         onLayout={(e) => {
           // Only capture the EXPANDED height (ignore shrinking frames while
           // collapsing) so the content's top padding stays stable and doesn't
@@ -1313,19 +1387,34 @@ export default function ExploreScreen({ route, navigation }) {
       >
         {/* Frosted glass once the page scrolls: the content passing under is
             blurred, with a light white wash so the text stays readable.
-            Rounded at the bottom once the header has pinned. */}
+            Rounded at the bottom whenever it shows, so there's never a
+            square-cornered panel while the header is still collapsing. */}
         {headerSolid && (
-          <View
+          <Animated.View
             pointerEvents="none"
-            style={[StyleSheet.absoluteFill, styles.headerGlass, headerCollapsed && styles.headerGlassRound]}
+            style={[
+              StyleSheet.absoluteFill,
+              styles.headerGlass,
+              styles.headerGlassRound,
+              { transform: [{ translateY: collapseShift }] },
+            ]}
           >
-            <BlurView intensity={50} tint="light" style={StyleSheet.absoluteFill} />
-            <View style={[StyleSheet.absoluteFill, styles.headerGlassFill]} />
-          </View>
+            {(Platform.OS === 'ios' || ANDROID_BLUR) && (
+              <BlurView
+                intensity={50}
+                // Android: "default" adds less white over the blur than "light".
+                tint={Platform.OS === 'android' ? 'default' : 'light'}
+                style={StyleSheet.absoluteFill}
+                blurTarget={Platform.OS === 'android' ? homeBlurTarget : undefined}
+                blurMethod={Platform.OS === 'android' ? ANDROID_BLUR_METHOD : undefined}
+              />
+            )}
+            <View style={[StyleSheet.absoluteFill, styles.headerGlassFill, Platform.OS === 'android' && !ANDROID_BLUR && styles.headerGlassFillDense]} />
+          </Animated.View>
         )}
 
         {/* Foreground content (greeting, next trip, search). */}
-        <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]}>
+        <View style={[styles.headerForeground, { paddingTop: insets.top + SIZES.spacing_base }]} pointerEvents="box-none">
           {/* Top bar, always shown (also once scrolled): your location, your
               next trip and your profile. */}
           <View style={styles.greetingRow}>
@@ -1335,7 +1424,7 @@ export default function ExploreScreen({ route, navigation }) {
               activeOpacity={0.85}
               onPress={handleProfilePress}
               accessibilityRole="button"
-              accessibilityLabel={isAuthenticated ? 'Open profile' : 'Log in'}
+              accessibilityLabel={isAuthenticated ? 'Open profile' : 'Sign in'}
             >
               {renderAvatar(42)}
             </TouchableOpacity>
@@ -1376,6 +1465,7 @@ export default function ExploreScreen({ route, navigation }) {
               {/* Bell: your notifications, with a dot while any are unread. */}
               {isAuthenticated && (
                 <TouchableOpacity
+                  ref={bellTipRef}
                   style={styles.bellButton}
                   onPress={() => navigation.navigate('Notifications')}
                   activeOpacity={0.8}
@@ -1406,15 +1496,15 @@ export default function ExploreScreen({ route, navigation }) {
 
           {/* The question, which slides away on scroll down (the rows above
               and below stay). */}
-          {/* Only the box's height animates; the text inside is laid out at its
-              full size (absolutely placed, so the shrinking box never squeezes
-              it), which keeps it on two lines when it opens again. */}
+          {/* Its box keeps its size; the question fades and lifts away while the
+              search row slides up over its place (collapseShift). The text is
+              absolutely placed at full size, so it keeps its two lines. */}
           <Animated.View
+            pointerEvents="none"
             style={{
-              opacity: headerAnim.interpolate({ inputRange: [0, 0.8], outputRange: [1, 0], extrapolate: 'clamp' }),
-              height: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [headlineHeight, 0] }),
-              marginBottom: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [SIZES.spacing_xs, 0] }),
-              overflow: 'hidden',
+              opacity: headerAnim.interpolate({ inputRange: [0, 0.6], outputRange: [1, 0], extrapolate: 'clamp' }),
+              height: headlineHeight,
+              marginBottom: SIZES.spacing_xs,
             }}
           >
             <Animated.View
@@ -1435,8 +1525,9 @@ export default function ExploreScreen({ route, navigation }) {
           </Animated.View>
 
           {/* Search row: slim pill and New trip (pinned). */}
-          <View style={styles.searchRow}>
+          <Animated.View style={[styles.searchRow, { transform: [{ translateY: collapseShift }] }]}>
             <TouchableOpacity
+              ref={searchTipRef}
               style={styles.homeSearchBar}
               activeOpacity={0.9}
               onPress={openSearch}
@@ -1461,10 +1552,16 @@ export default function ExploreScreen({ route, navigation }) {
               <Ionicons name="add" size={18} color={COLORS.white} />
               <Text style={styles.newTripText}>New trip</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
 
         </View>
       </View>
+
+      <RankCelebration
+        level={celebrateLevel}
+        onClose={dismissCelebration}
+        onSeeJourney={() => { dismissCelebration(); navigation.navigate('Profile'); }}
+      />
 
       <LocationSheet
         visible={locationSheetOpen}
@@ -1518,9 +1615,12 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 40,
   },
   headerGlassFill: {
-    // iOS blurs what's behind, so a light wash is enough; Android's blur is
-    // only see-through, so a denser frost keeps the content behind soft.
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 248, 250, 0.55)' : 'rgba(246, 248, 250, 0.94)',
+    // Over a real blur (iPhone, Android 12+), a light wash is enough.
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 248, 250, 0.55)' : 'rgba(246, 248, 250, 0.3)',
+  },
+  // Android 11 and older: no blur, so a denser frost keeps what's behind soft.
+  headerGlassFillDense: {
+    backgroundColor: 'rgba(246, 248, 250, 0.94)',
   },
   // Carries the header's padding.
   headerForeground: {

@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider, API_URL } from '../config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { forgetGuestBrowsing } from '../utils/authNavigation';
 import { unregisterPushNotifications } from './notificationsService';
 import { clearAllCaches, hydrateCache } from './cache';
 
@@ -228,6 +229,7 @@ export async function logoutUser() {
     await signOut(auth);
     await AsyncStorage.removeItem(USER_STORAGE_KEY);
     storedUserMemo = null;
+    await forgetGuestBrowsing(); // next start: Welcome
     // Nothing of this account stays on the phone for the next person.
     await clearAllCaches();
     return { success: true };

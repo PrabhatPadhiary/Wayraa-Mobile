@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMyTrips } from './tripsService';
 import { getFavourites } from './favouritesService';
 import { getJournalFeed } from './journalsService';
+import { auth } from '../config';
 import { getLocationPermission, getCurrentLocation, getNearbyPlaces, reverseGeocode } from './locationService';
 import { pickActiveTrips } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
@@ -59,8 +60,15 @@ function run(key, load, imagesFor) {
 }
 
 // Through getJournalFeed, which keeps the whole feed for Community to show
-// at once; Home's row uses the newest six.
+// at once; Home's row uses the newest six. Waits (briefly) for the saved
+// sign-in to come back first: loaded as a guest, every story would say
+// "not liked" until the next refresh.
+const AUTH_WAIT_MS = 2500;
 async function loadJournals() {
+  await Promise.race([
+    auth.authStateReady?.() ?? Promise.resolve(),
+    new Promise((resolve) => setTimeout(resolve, AUTH_WAIT_MS)),
+  ]).catch(() => {});
   return (await getJournalFeed()).slice(0, 6);
 }
 
@@ -163,6 +171,10 @@ export async function restoreHomeSnapshot(userId) {
     keys.forEach((key) => {
       if (!results[key] && snap.data[key] !== undefined) results[key] = { value: snap.data[key] };
     });
+    // Saved by another account (or a guest): its hearts aren't yours.
+    if (snap.owner !== userId && Array.isArray(results.journals?.value) && results.journals.value === snap.data.journals) {
+      results.journals = { value: results.journals.value.map((j) => ({ ...j, isLiked: false })) };
+    }
     const needed = userId ? ['journals', ...PRIVATE_KEYS] : ['journals'];
     return needed.every((key) => results[key]);
   } catch {

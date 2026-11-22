@@ -20,6 +20,7 @@ import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
 import { timeAgo, tripWhen } from './JournalCard';
 import { vibeLabel } from '../services/journalsService';
+import { useLikes } from '../services/likesStore';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
 const PHOTO_HEIGHT = 300;
@@ -83,7 +84,8 @@ export default function JournalPreviewSheet({ journal, onClose, onToggleLike, on
     },
   });
 
-  const j = journal || shown;
+  const withLike = useLikes();
+  const j = withLike(journal || shown);
   if (!j) return null;
   const photos = j.photos || [];
   const author = j.author?.name || 'Traveller';

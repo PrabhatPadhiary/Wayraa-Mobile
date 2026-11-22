@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +24,14 @@ import { COLORS, SIZES, HEADER_TINT } from '../constants';
  * - floating:   when true (default) the panel is absolutely positioned over
  *               the content. Set false to render it inline in normal flow.
  * - collapsed:  when true, animate the title block away leaving only children.
+ * - collapseExtra: px at the bottom of the children that also go away when
+ *               collapsed (the screen fades that part out itself), so the
+ *               panel ends right under what's left.
+ *
+ * Collapsing only moves and fades things (no height changes), so it runs on
+ * the native thread and stays smooth while the list scrolls: the panel slides
+ * up behind the content, the title fades, the children move up into its place.
+ * The header keeps its full height, and its empty part lets touches through.
  * - children:   optional extra content rendered under the title (e.g. a
  *               FilterChips row). Wrapped in a full-width container.
  * - style:      extra style applied to the outer panel (optional)
@@ -41,20 +49,27 @@ export default function ScreenHeader({
   style,
   right,
   left,
+  collapseExtra = 0,
 }) {
   const insets = useSafeAreaInsets();
 
   // 0 = expanded (title shown), 1 = collapsed (title hidden).
   const anim = useRef(new Animated.Value(0)).current;
+  const [titleHeight, setTitleHeight] = useState(0);
 
   useEffect(() => {
     Animated.timing(anim, {
       toValue: collapsed ? 1 : 0,
       duration: 420,
       easing: Easing.out(Easing.cubic), // gentle, decelerating
-      useNativeDriver: false, // animating height
+      useNativeDriver: true, // transforms and opacity only
     }).start();
   }, [collapsed, anim]);
+
+  // How far the children move up (into the title's place), and the panel's
+  // bottom edge (also past the children's part that goes away).
+  const childShift = titleHeight + (children ? SIZES.spacing_lg : 0);
+  const panelShift = childShift + collapseExtra;
 
   return (
     <View
@@ -65,15 +80,25 @@ export default function ScreenHeader({
         style,
       ]}
       onLayout={onLayout}
+      pointerEvents="box-none"
     >
-      {/* Soft blue wash, same as Home's header. */}
-      <LinearGradient
-        colors={HEADER_TINT}
-        locations={[0, 0.55, 1]}
-        style={styles.tint}
-        pointerEvents="none"
-      />
+      {/* The white panel (with Home's soft blue wash), sliding up as it collapses. */}
       <Animated.View
+        style={[
+          styles.panel,
+          { transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -panelShift] }) }] },
+        ]}
+        pointerEvents="none"
+      >
+        <LinearGradient
+          colors={HEADER_TINT}
+          locations={[0, 0.55, 1]}
+          style={styles.tint}
+        />
+      </Animated.View>
+      <Animated.View
+        onLayout={(e) => setTitleHeight(e.nativeEvent.layout.height)}
+        pointerEvents={collapsed ? 'none' : 'auto'}
         style={{
           // Snap the opacity over a short window so the text reads as a clean
           // slide/wipe rather than lingering at partial opacity the whole way.
@@ -82,13 +107,9 @@ export default function ScreenHeader({
             outputRange: [1, 0],
             extrapolate: 'clamp',
           }),
-          // Only a ceiling for the collapse animation: roomy enough that the
-          // title + subtitle never get clipped (Android adds font padding).
-          maxHeight: anim.interpolate({ inputRange: [0, 1], outputRange: [96, 0] }),
           transform: [
             { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
           ],
-          overflow: 'hidden',
         }}
       >
         <View style={styles.titleBlock}>
@@ -118,14 +139,12 @@ export default function ScreenHeader({
 
       {children ? (
         <Animated.View
+          pointerEvents="box-none"
           style={[
             styles.childrenWrap,
             {
-              // Pull the capsules up to fill the gap as the title collapses.
-              marginTop: anim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [SIZES.spacing_lg, 0],
-              }),
+              // Move the capsules up into the title's place as it collapses.
+              transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -childShift] }) }],
             },
           ]}
         >
@@ -140,6 +159,10 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: SIZES.spacing_lg,
     paddingBottom: SIZES.spacing_md,
+  },
+  // The panel itself, behind the header's content.
+  panel: {
+    ...StyleSheet.absoluteFill,
     backgroundColor: COLORS.white,
     borderBottomLeftRadius: SIZES.radius_xl,
     borderBottomRightRadius: SIZES.radius_xl,
@@ -197,6 +220,7 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   childrenWrap: {
+    marginTop: SIZES.spacing_lg,
     marginHorizontal: -SIZES.spacing_lg, // let a scroll row span full width
   },
 });

@@ -8,6 +8,7 @@ import Skeleton from './Skeleton';
 import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
+import { useLikes } from '../services/likesStore';
 
 const TILE_COUNT = 4;  // under the featured story, two per row
 const FEATURED_HEIGHT = 230;
@@ -59,6 +60,7 @@ function Avatar({ author, size }) {
  */
 export default function CommunityHighlights({ journals, loading, navigation }) {
   const { width } = useWindowDimensions();
+  const withLike = useLikes(); // hearts and counts stay in step with likes anywhere
 
   if (loading) {
     return (
@@ -88,8 +90,8 @@ export default function CommunityHighlights({ journals, loading, navigation }) {
 
   // The most loved recent story leads; the rest follow, newest first, in
   // full rows of two (a single one left over spans the row).
-  const featured = pickFeatured(journals);
-  const others = journals.filter((j) => j.id !== featured.id).slice(0, TILE_COUNT);
+  const featured = withLike(pickFeatured(journals));
+  const others = journals.filter((j) => j.id !== featured.id).slice(0, TILE_COUNT).map(withLike);
   const rest = others.length > 1 ? others.slice(0, others.length - (others.length % 2)) : others;
   const rows = [];
   for (let i = 0; i < rest.length; i += 2) rows.push(rest.slice(i, i + 2));

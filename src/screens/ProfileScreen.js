@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H, sceneY } from '../components/ProfileScene';
+import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H } from '../components/ProfileScene';
 import { Feather } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt } from '../components';
@@ -40,23 +40,19 @@ import { pickNextTrip, formatDateRange, daysUntil } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
+import RankBadge from '../components/RankBadge';
+import JourneyCard from '../components/JourneyCard';
+import RankSheet from '../components/RankSheet';
+import RankCelebration from '../components/RankCelebration';
+import useRankUp from '../hooks/useRankUp';
+import { rankFromProfile } from '../utils/ranks';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
 const MAX_NAME = 60;
-
-// Traveller titles, earned by the number of trips (shown big in the header).
-const LEVELS = [
-  { title: 'Wanderer', from: 0 },
-  { title: 'Explorer', from: 2 },
-  { title: 'Voyager', from: 6 },
-  { title: 'Globetrotter', from: 11 },
-];
-function levelFor(trips = 0) {
-  let i = 0;
-  LEVELS.forEach((l, idx) => { if (trips >= l.from) i = idx; });
-  return { ...LEVELS[i], next: LEVELS[i + 1] || null };
-}
+const AVATAR_SIZE = 96;
+// How much of the profile drawing shows (scene units, of SCENE_H = 340).
+const SCENE_SHOWN = 262;
 
 /** One row in a settings-style group. */
 function Row({ icon, label, value, onPress, danger, last }) {
@@ -143,25 +139,25 @@ export default function ProfileScreen({ navigation }) {
   // The header scene is as wide as the screen; its height follows the scene.
   const { width: windowWidth } = useWindowDimensions();
   const sceneHeight = (windowWidth * SCENE_H) / SCENE_W;
+  // Only the top of the drawing shows (sky, mountains, windmill, houses); the
+  // details sheet then rises over its bottom edge.
+  const bannerHeight = (windowWidth * SCENE_SHOWN) / SCENE_W;
   const email = profile?.email || firebaseUser?.email || '';
   const myPhoto = useMyPhoto(firebaseUser?.photoURL);
   const photo = !photoFailed ? myPhoto : null;
   const since = profile?.createdAt ? new Date(profile.createdAt) : null;
   const stats = profile?.stats || {};
-  const level = levelFor(stats.trips || 0);
-  const showLevel = () => {
-    const n = stats.trips || 0;
-    const ladder = LEVELS.map((l, i) => {
-      const to = LEVELS[i + 1] ? `${l.from}–${LEVELS[i + 1].from - 1}` : `${l.from}+`;
-      return `${l.title === level.title ? '▸ ' : ''}${l.title}: ${to} trips`;
-    }).join('\n');
-    const left = level.next ? level.next.from - n : 0;
-    showAlert(
-      level.title,
-      `${level.next
-        ? `${left} more ${left === 1 ? 'trip' : 'trips'} to become a ${level.next.title}.`
-        : 'The top title. Safe travels!'}\n\n${ladder}`,
-    );
+  // Traveller rank (points from the server; see utils/ranks).
+  const rank = rankFromProfile(profile);
+  const [rankSheet, setRankSheet] = useState(null); // a rank's level, 'how', or null
+  const [celebrateLevel, dismissCelebration] = useRankUp(profile, firebaseUser?.uid);
+  // Scroll to "Your journey" (from the rank chip or the celebration).
+  const scrollRef = useRef(null);
+  const sheetY = useRef(0);   // the sheet, in the page
+  const journeyY = useRef(0); // the journey card, in the sheet
+  const scrollToJourney = () => {
+    const y = sheetY.current + journeyY.current - insets.top - SIZES.spacing_base;
+    scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
   };
 
   // ── Profile photo ──
@@ -277,6 +273,7 @@ export default function ProfileScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
         refreshControl={(
@@ -289,34 +286,12 @@ export default function ProfileScreen({ navigation }) {
           />
         )}
       >
-        {/* Header: a drawn countryside with your first name big INSIDE it,
-            like the iPhone Lock Screen's depth effect: the sky and mountains
-            are behind the name, the hills and the windmill in front of it.
-            Your photo, full name, email and "exploring since" sit on the
-            front hills. */}
-        <View style={[styles.header, { height: sceneHeight }]}>
-          <ProfileSceneBack width={windowWidth} />
-          {/* Your traveller title, big (your name is just below). Tap: what
-              the titles are and how far the next one is. */}
-          {!loading && (
-            <TouchableOpacity
-              style={[styles.bigNameWrap, { top: sceneY(100, windowWidth) }]}
-              onPress={showLevel}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel={`Your traveller title: ${level.title}. What it means`}
-            >
-              <Text
-                style={[styles.bigName, { fontSize: sceneY(66, windowWidth), lineHeight: sceneY(80, windowWidth) }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.5}
-              >
-                {level.title}
-              </Text>
-            </TouchableOpacity>
-          )}
-          <ProfileSceneFront width={windowWidth} />
+        {/* Header: a drawn countryside, as a banner (its bottom is cropped). */}
+        <View style={[styles.header, { height: bannerHeight }]}>
+          <View style={{ height: sceneHeight }}>
+            <ProfileSceneBack width={windowWidth} />
+            <ProfileSceneFront width={windowWidth} />
+          </View>
 
           <TouchableOpacity
             style={[styles.backButton, { top: insets.top + SIZES.spacing_sm }]}
@@ -327,54 +302,74 @@ export default function ProfileScreen({ navigation }) {
             <Feather name="chevron-left" size={22} color={COLORS.primary} />
           </TouchableOpacity>
 
-          {/* You, on the front hills */}
-          <View style={[styles.meRow, { top: sceneY(222, windowWidth) }]}>
-            <TouchableOpacity
-              style={styles.avatarRing}
-              onPress={onAvatarPress}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel={photo ? 'Change or remove your profile photo' : 'Add a profile photo'}
-            >
-              {photo ? (
-                <Image source={{ uri: photo }} style={styles.avatar} onError={() => setPhotoFailed(true)} />
-              ) : (
-                <View style={[styles.avatar, { backgroundColor: avatarColorFor(name) }]}>
-                  <Text style={styles.avatarText}>{initialsFor(name)}</Text>
-                </View>
-              )}
-              {photoBusy && (
-                <View style={styles.avatarBusy}>
-                  <ActivityIndicator color={COLORS.white} />
-                </View>
-              )}
-              {/* Camera badge: this is where you change the photo. */}
-              <View style={styles.avatarBadge}>
-                <Feather name="camera" size={11} color={COLORS.primary} />
+        </View>
+
+        {/* The rest of the page, as a sheet with rounded top corners rising
+            over the banner (like the story and trip screens). */}
+        <View style={styles.pageSheet} onLayout={(e) => { sheetY.current = e.nativeEvent.layout.y; }}>
+        {/* You: your photo, big and centred on the sheet's top edge, and your
+            name, rank, email and "exploring since" centred below it. */}
+        <View style={styles.meRow}>
+          <TouchableOpacity
+            style={styles.avatarRing}
+            onPress={onAvatarPress}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={photo ? 'Change or remove your profile photo' : 'Add a profile photo'}
+          >
+            {photo ? (
+              <Image source={{ uri: photo }} style={styles.avatar} onError={() => setPhotoFailed(true)} />
+            ) : (
+              <View style={[styles.avatar, { backgroundColor: avatarColorFor(name) }]}>
+                <Text style={styles.avatarText}>{initialsFor(name)}</Text>
               </View>
-            </TouchableOpacity>
-            <View style={styles.meText}>
-              <TouchableOpacity
-                style={styles.nameRow}
-                onPress={openNameEditor}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel={`${name}. Edit name`}
-              >
-                <Text style={styles.name} numberOfLines={1}>{name}</Text>
-                <Feather name="edit-2" size={13} color="rgba(255,255,255,0.85)" />
-              </TouchableOpacity>
-              {!!email && <Text style={styles.email} numberOfLines={1}>{email}</Text>}
-              {!!since && (
-                <Text style={styles.sinceText} numberOfLines={1}>
-                  Exploring since {MONTHS[since.getMonth()]} {since.getFullYear()}
-                </Text>
-              )}
+            )}
+            {photoBusy && (
+              <View style={styles.avatarBusy}>
+                <ActivityIndicator color={COLORS.white} />
+              </View>
+            )}
+            {/* Camera badge: this is where you change the photo. */}
+            <View style={styles.avatarBadge}>
+              <Feather name="camera" size={13} color={COLORS.primary} />
             </View>
+          </TouchableOpacity>
+          <View style={styles.meText}>
+            <TouchableOpacity
+              style={styles.nameRow}
+              onPress={openNameEditor}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`${name}. Edit name`}
+            >
+              <Text style={styles.name} numberOfLines={1}>{name}</Text>
+              <Feather name="edit-2" size={13} color={COLORS.textMuted} />
+            </TouchableOpacity>
+            {/* Your rank: tap to see your journey. */}
+            {!!rank && (
+              <TouchableOpacity
+                style={styles.rankChip}
+                onPress={scrollToJourney}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={`Your rank: ${rank.look.name}. See your journey`}
+              >
+                <RankBadge level={rank.level} size={22} />
+                <Text style={styles.rankChipText}>{rank.look.name}</Text>
+              </TouchableOpacity>
+            )}
+            {!!email && <Text style={styles.email} numberOfLines={1}>{email}</Text>}
+            {!!since && (
+              <Text style={styles.sinceText} numberOfLines={1}>
+                Exploring since {MONTHS[since.getMonth()]} {since.getFullYear()}
+              </Text>
+            )}
           </View>
         </View>
 
-        {/* Stats: overlaps the header */}
+        {/* Stats */}
+        <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Travel stats</Text>
         <View style={styles.statsCard}>
           {loading ? (
             <ActivityIndicator color={COLORS.accent} style={styles.statsLoader} />
@@ -393,8 +388,17 @@ export default function ProfileScreen({ navigation }) {
             ))
           )}
         </View>
+        </View>
 
         {!!error && <Text style={styles.error}>{error}</Text>}
+
+        {/* Your journey: rank, progress to the next, the whole ladder */}
+        {!!rank && (
+          <View style={styles.section} onLayout={(e) => { journeyY.current = e.nativeEvent.layout.y; }}>
+            <Text style={styles.sectionTitle}>Your journey</Text>
+            <JourneyCard rank={rank} onOpenRank={setRankSheet} onOpenHow={() => setRankSheet('how')} />
+          </View>
+        )}
 
         {/* Next trip */}
         {nextTrip && (
@@ -459,11 +463,26 @@ export default function ProfileScreen({ navigation }) {
 
         {/* Account security, privacy, legal, log out: all in Settings. */}
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account</Text>
           <View style={styles.group}>
             <Row icon="settings" label="Settings" onPress={() => navigation.navigate('Settings')} last />
           </View>
         </View>
+        </View>
       </ScrollView>
+
+      <RankSheet
+        visible={rankSheet != null}
+        rank={rank}
+        show={rankSheet}
+        onShow={setRankSheet}
+        onClose={() => setRankSheet(null)}
+      />
+      <RankCelebration
+        level={celebrateLevel}
+        onClose={dismissCelebration}
+        onSeeJourney={() => { dismissCelebration(); setTimeout(scrollToJourney, 300); }}
+      />
 
       {/* Edit name */}
       <Modal visible={editingName} transparent animationType="slide" onRequestClose={() => setEditingName(false)}>
@@ -514,9 +533,14 @@ const styles = StyleSheet.create({
 
   header: {
     overflow: 'hidden',
-    borderBottomLeftRadius: SIZES.radius_xl,
-    borderBottomRightRadius: SIZES.radius_xl,
     backgroundColor: '#D9F0FA',
+  },
+  // (Not "sheet": that's the edit-name sheet's style, further down.)
+  pageSheet: {
+    marginTop: -SIZES.radius_xl,
+    borderTopLeftRadius: SIZES.radius_xl,
+    borderTopRightRadius: SIZES.radius_xl,
+    backgroundColor: COLORS.backgroundWarm,
   },
   backButton: {
     position: 'absolute',
@@ -528,10 +552,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.75)',
   },
+  // A white ring, so the photo stands clear of the scene behind it.
   avatarRing: {
-    padding: 3,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    padding: 4,
+    borderRadius: AVATAR_SIZE,
+    backgroundColor: COLORS.white,
+    shadowColor: '#2B3F51',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
   },
   avatarBusy: {
     position: 'absolute',
@@ -546,11 +576,11 @@ const styles = StyleSheet.create({
   },
   avatarBadge: {
     position: 'absolute',
-    right: -2,
-    bottom: -2,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    right: 2,
+    bottom: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: COLORS.white,
@@ -558,45 +588,28 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
   },
   avatar: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: 22,
+    fontSize: 34,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
   },
   // Your first name, big, between the scene's layers.
-  bigNameWrap: {
-    position: 'absolute',
-    left: SIZES.spacing_lg,
-    right: SIZES.spacing_lg,
-    alignItems: 'center',
-  },
-  // Deep slate on the light sky (white got lost there), with a soft white
-  // glow so it also holds up where it crosses the mountains.
-  bigName: {
-    fontFamily: 'PlayfairDisplay_800ExtraBold',
-    color: '#1E3346',
-    letterSpacing: 0.5,
-    textShadowColor: 'rgba(255,255,255,0.55)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 12,
-  },
+  // Photo centred on the scene's bottom edge (half over it), details below.
   meRow: {
-    position: 'absolute',
-    left: SIZES.spacing_lg,
-    right: SIZES.spacing_lg,
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_md,
+    marginTop: -(AVATAR_SIZE / 2 + 4), // half over the banner
+    paddingHorizontal: SIZES.spacing_lg,
   },
   meText: {
-    flex: 1,
-    minWidth: 0,
+    alignItems: 'center',
+    marginTop: SIZES.spacing_sm,
+    maxWidth: '100%',
   },
   nameRow: {
     flexDirection: 'row',
@@ -606,38 +619,40 @@ const styles = StyleSheet.create({
   },
   name: {
     flexShrink: 1,
-    fontSize: SIZES.lg,
+    fontSize: 22,
     fontFamily: 'Poppins_700Bold',
-    color: COLORS.white,
-    textShadowColor: 'rgba(0,0,0,0.25)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    color: COLORS.textPrimary,
   },
-  email: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: 'rgba(255,255,255,0.9)',
-  },
-  sincePill: {
+  rankChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: SIZES.spacing_md,
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: 5,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    gap: 5,
+    marginTop: 6,
+    marginBottom: 6,
+    paddingLeft: 3,
+    paddingRight: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: COLORS.white,
+  },
+  rankChipText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  email: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
   },
   sinceText: {
     fontSize: SIZES.sm,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.white,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
   },
 
   statsCard: {
     flexDirection: 'row',
-    marginTop: -28,
-    marginHorizontal: SIZES.spacing_base,
     paddingVertical: SIZES.spacing_base,
     borderRadius: SIZES.radius_xl,
     backgroundColor: COLORS.white,

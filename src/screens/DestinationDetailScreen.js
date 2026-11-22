@@ -682,6 +682,9 @@ export default function DestinationDetailScreen({ navigation, route }) {
             activeKey={activeCategory}
             onChange={(key) => setActiveCategory(key)}
             variant="pills"
+            // Tabs share the screen width, so they fit on narrow phones too.
+            fullWidth
+            tinted={false}
           />
         </View>
 
@@ -821,7 +824,7 @@ const styles = StyleSheet.create({
   filterRow: {
     marginTop: SIZES.spacing_lg,
     marginBottom: SIZES.spacing_sm,
-    marginHorizontal: -SIZES.spacing_lg, // let the scroll row span full width
+    // Same side margins as the search bar above it.
   },
 
   // Results list (back layer, full screen). Top padding (applied inline) clears

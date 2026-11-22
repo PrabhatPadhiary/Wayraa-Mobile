@@ -1,14 +1,17 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import Constants, { ExecutionEnvironment } from 'expo-constants';
+import Constants from 'expo-constants';
+import { isRunningInExpoGo } from 'expo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL, auth } from '../config';
 
 /**
  * Notifications.
  *
- * Push (from the server, see the backend's TripNotifier): someone joins your
- * trip, adds places, adds an expense or changes the itinerary. The phone
+ * Push (from the server, see the backend's TripNotifier and StoryNotifier):
+ * someone joins your trip, adds places, adds an expense or changes the
+ * itinerary; and someone likes or comments on your story, or replies to your
+ * comment (those carry a journalId instead of a tripId). The phone
  * registers its Expo push token with the backend after sign-in, and removes
  * it on log out.
  *
@@ -27,20 +30,24 @@ const REMINDER_PREFIX = 'trip-reminder-';
 const REMINDER_HOUR = 9; // local time, the day before the trip starts
 
 const isWeb = Platform.OS === 'web';
-const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+// The same check expo-notifications uses before it throws in Expo Go.
+const isExpoGo = isRunningInExpoGo();
 
 const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
 
 /**
  * How notifications show while the app is open. `getOpenTripId` returns the
  * trip on screen: its updates already show live there, so no banner for them.
+ * `getOpenJournalId` likewise for the story on screen (a like or comment on
+ * the story you're reading).
  */
-export function setupNotificationHandler(getOpenTripId) {
+export function setupNotificationHandler(getOpenTripId, getOpenJournalId) {
   if (isWeb) return;
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
       const data = notification?.request?.content?.data || {};
-      const onThatTrip = !!data.tripId && data.type !== 'reminder' && getOpenTripId?.() === data.tripId;
+      const onThatTrip = (!!data.tripId && data.type !== 'reminder' && getOpenTripId?.() === data.tripId)
+        || (!!data.journalId && getOpenJournalId?.() === data.journalId);
       return {
         shouldShowBanner: !onThatTrip,
         shouldShowList: true,
@@ -56,7 +63,7 @@ async function ensureChannel() {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(TRIP_UPDATES_CHANNEL, {
     name: 'Trip updates',
-    description: 'When friends join, add places, expenses or plans to your trips, announcements, and trip reminders.',
+    description: 'When friends join, add places, expenses or plans to your trips, announcements, trip reminders, and likes, comments and replies on your stories.',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 200, 120, 200],
     lightColor: '#2B3F51',
@@ -153,7 +160,8 @@ async function sendTokenToBackend(token) {
  */
 let lastDeviceToken = null;
 export function watchPushToken() {
-  if (isWeb) return () => {};
+  // Expo Go on Android has no push: listening for the token throws there.
+  if (isWeb || (isExpoGo && Platform.OS === 'android')) return () => {};
   const sub = Notifications.addPushTokenListener((deviceToken) => {
     const value = typeof deviceToken?.data === 'string' ? deviceToken.data : JSON.stringify(deviceToken?.data ?? null);
     if (lastDeviceToken === null || value === lastDeviceToken) {
@@ -300,7 +308,7 @@ export function onNotificationOpened(onOpen) {
     // Handled: don't open it again on the next start.
     Notifications.clearLastNotificationResponseAsync().catch(() => {});
     const data = response.notification?.request?.content?.data;
-    if (data?.tripId) onOpen(data);
+    if (data?.tripId || data?.journalId) onOpen(data);
   };
   Notifications.getLastNotificationResponseAsync().then(handle).catch(() => {});
   const sub = Notifications.addNotificationResponseReceivedListener(handle);

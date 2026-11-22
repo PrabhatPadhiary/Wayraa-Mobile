@@ -23,6 +23,10 @@ import {
   NotificationsScreen,
 } from '../screens';
 import { registerForPushNotifications, watchPushToken } from '../services';
+import useAuth from '../hooks/useAuth';
+import { StyleSheet } from 'react-native';
+import { BlurTargetView } from 'expo-blur';
+import { BlurTargetProvider, useRegisterBlurTarget } from '../context/BlurTargetContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -113,20 +117,51 @@ const STACKS = {
 };
 
 /**
+ * Each tab's screens sit in a BlurTargetView, so on Android the floating
+ * bottom bar can really blur what's behind it (BlurTargetContext). A plain
+ * View on iPhone. Made once per tab, so the screens never remount.
+ */
+function withBlurTarget(name, StackComponent) {
+  function TabContent(props) {
+    const register = useRegisterBlurTarget(name);
+    return (
+      <BlurTargetView ref={register} style={styles.tabContent} collapsable={false}>
+        <StackComponent {...props} />
+      </BlurTargetView>
+    );
+  }
+  TabContent.displayName = `${name}Tab`;
+  return TabContent;
+}
+
+const TAB_SCREENS = Object.fromEntries(
+  Object.entries(STACKS).map(([name, Stack]) => [name, withBlurTarget(name, Stack)])
+);
+
+const styles = StyleSheet.create({
+  tabContent: { flex: 1 },
+});
+
+/**
  * MainTabs — bottom-tab navigator with one persistent custom glass tab bar
  * (AppTabBar). Each tab is a native stack (see above).
  */
 export default function MainTabs({ route }) {
   const user = route?.params?.user;
+  const { user: firebaseUser } = useAuth();
+  const uid = firebaseUser?.uid || null;
 
-  // Signed in (fresh sign-in or app start): ask for notifications the first
-  // time, and register this phone for trip updates.
+  // Signed in (at app start, or later from a guest's "Sign in": the tabs
+  // stay, so this watches the account): ask for notifications the first
+  // time, and register this phone for trip and story updates.
   useEffect(() => {
+    if (!uid) return undefined;
     registerForPushNotifications();
     return watchPushToken();
-  }, []);
+  }, [uid]);
 
   return (
+    <BlurTargetProvider>
     <Tab.Navigator
       tabBar={(props) => <AppTabBar {...props} />}
       screenOptions={{
@@ -138,10 +173,11 @@ export default function MainTabs({ route }) {
         <Tab.Screen
           key={tab.key}
           name={tab.key}
-          component={STACKS[tab.key]}
+          component={TAB_SCREENS[tab.key]}
           initialParams={tab.key === 'Explore' ? { user } : undefined}
         />
       ))}
     </Tab.Navigator>
+    </BlurTargetProvider>
   );
 }

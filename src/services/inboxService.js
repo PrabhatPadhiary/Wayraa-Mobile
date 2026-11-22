@@ -27,7 +27,7 @@ async function request(path, options = {}) {
 /**
  * Newest first. For the next page pass the last item's `createdAt` (as the
  * server sent it, unparsed) as `before`.
- * Each: { id, type, title, body, tripId, createdAt, isRead, actor: { id, name, photoUrl } | null }
+ * Each: { id, type, title, body, tripId, journalId, createdAt, isRead, actor: { id, name, photoUrl } | null }
  */
 export async function getNotifications({ before, limit = 30 } = {}) {
   const params = new URLSearchParams({ limit: String(limit) });

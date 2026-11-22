@@ -89,6 +89,8 @@ export async function addFavourite(place) {
     if (!response.ok) {
       return { success: false, error: `Failed (${response.status})` };
     }
+    // The server looks up the place's city from Google and sends it back.
+    const saved = await response.json().catch(() => null);
     updateCachedFavourites((list) => (list.some((f) => f.placeId === place.placeId) ? list : [{
       id: `local-${place.placeId}`,
       placeId: place.placeId,
@@ -98,6 +100,7 @@ export async function addFavourite(place) {
       userRatingsTotal: place.userRatingsTotal ?? 0,
       photoUrl: place.photoUrl ?? null,
       category: place.category ?? null,
+      city: saved?.city ?? null,
       createdAt: new Date().toISOString(),
     }, ...list]));
     return { success: true };

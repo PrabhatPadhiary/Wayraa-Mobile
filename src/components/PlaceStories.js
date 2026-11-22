@@ -9,6 +9,7 @@ import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
 import { timeAgo } from './JournalCard';
 import { getJournalsForPlace } from '../services';
+import { useLikes } from '../services/likesStore';
 import useAuth from '../hooks/useAuth';
 import { showAlert } from './AppDialog';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
@@ -32,6 +33,7 @@ export default function PlaceStories({ placeId, placeName, navigation, prefill }
   const { isAuthenticated } = useAuth();
   const [stories, setStories] = useState(null); // null = loading
   const [failed, setFailed] = useState(false);
+  const withLike = useLikes();
 
   // Reload on focus, so a story just posted about this place shows up.
   useFocusEffect(
@@ -108,7 +110,7 @@ export default function PlaceStories({ placeId, placeName, navigation, prefill }
           decelerationRate="fast"
           snapToInterval={CARD_WIDTH + SIZES.spacing_md}
         >
-          {stories.map((j) => {
+          {stories.map(withLike).map((j) => {
             const cover = cloudinarySized(j.photos?.[0]?.url, IMAGE_WIDTH.COVER);
             const author = j.author?.name || 'Traveller';
             return (

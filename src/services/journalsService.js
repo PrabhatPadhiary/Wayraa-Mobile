@@ -1,7 +1,8 @@
 import { File } from 'expo-file-system';
-import { API_URL } from '../config';
+import { API_URL, auth } from '../config';
 import { getAuthToken } from './authService';
 import { AuthRequiredError } from './errors';
+import { seedLikes, resetLikes, setLikesSignedIn, setLikeSender } from './likesStore';
 
 /**
  * Community trip journals. Backend: JournalsController.
@@ -44,16 +45,41 @@ async function requireToken() {
  * user. Backend: GET /api/Journals/feed
  */
 export async function getJournalFeed() {
-  const response = await fetch(`${API_URL}/Journals/feed`, { headers: await headers() });
+  const h = await headers();
+  const account = h.Authorization ? auth.currentUser?.uid || null : null;
+  const response = await fetch(`${API_URL}/Journals/feed`, { headers: h });
   if (!response.ok) throw new Error(`Couldn't load the community feed (${response.status})`);
   const data = await response.json();
   lastFeed = (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  lastFeedAccount = account;
+  seedLikes(lastFeed, !!account);
   return lastFeed;
 }
 
 // The last feed loaded (by Home at startup, or Community), so Community can
 // open showing it at once and refresh quietly.
 let lastFeed = null;
+let lastFeedAccount = null; // who it was loaded for (null: as a guest)
+
+// ── Likes: one shared state for every screen (see likesStore) ─────────────
+
+let likesAccount; // undefined until sign-in state is first known
+
+/**
+ * Sign-in state known or changed (App's auth listener). Another account, or
+ * signed out: the old likes go. Signed in but the feed was loaded as a guest
+ * (it started before sign-in was restored) or for someone else: reload it,
+ * so the hearts are right everywhere.
+ */
+export function likesAccountChanged(uid) {
+  const prev = likesAccount;
+  likesAccount = uid || null;
+  if (prev !== undefined && prev !== likesAccount) resetLikes(!!likesAccount);
+  else setLikesSignedIn(!!likesAccount);
+  if (likesAccount && lastFeed && lastFeedAccount !== likesAccount) {
+    getJournalFeed().catch(() => {});
+  }
+}
 
 /** The last loaded feed, or null if none yet. */
 export function peekJournalFeed() {
@@ -69,12 +95,17 @@ export async function getJournal(id) {
   if (response.status === 404) throw new Error('This journal is no longer available.');
   if (!response.ok) throw new Error(`Couldn't load this journal (${response.status})`);
   const j = await response.json();
-  return { ...j, vibes: vibesOf(j.vibes), isLiked: !!j.isLikedByMe };
+  const journal = { ...j, vibes: vibesOf(j.vibes), isLiked: !!j.isLikedByMe };
+  seedLikes([journal], !!(await getAuthToken()));
+  return journal;
 }
 
 /**
  * Like / unlike. Returns { liked, likesCount }.
  * Backend: POST /api/Journals/{id}/like (toggles)
+ *
+ * Screens don't call this directly: they use toggleLike / setLiked from
+ * likesStore, which shows the change at once and calls this behind it.
  */
 export async function toggleJournalLike(id) {
   const token = await requireToken();
@@ -86,21 +117,31 @@ export async function toggleJournalLike(id) {
   if (!response.ok) throw new Error(`Couldn't update the like (${response.status})`);
   return response.json();
 }
+setLikeSender(toggleJournalLike);
 
-/** Backend: POST /api/Journals/{id}/comments  { body } */
-export async function addJournalComment(id, body) {
+/**
+ * Backend: POST /api/Journals/{id}/comments  { body, parentCommentId? }
+ * With `parentCommentId` it's a reply (it lands under that comment's
+ * top-level comment: replies are one level deep).
+ */
+export async function addJournalComment(id, body, parentCommentId = null) {
   const token = await requireToken();
   const response = await fetch(`${API_URL}/Journals/${encodeURIComponent(id)}/comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ body }),
+    body: JSON.stringify(parentCommentId ? { body, parentCommentId } : { body }),
   });
   if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 404 && parentCommentId) throw new Error('That comment was deleted.');
   if (!response.ok) throw new Error(`Couldn't post your comment (${response.status})`);
   return response.json();
 }
 
-/** Backend: DELETE /api/Journals/{id}/comments/{commentId} (own comments) */
+/**
+ * Backend: DELETE /api/Journals/{id}/comments/{commentId} (own comments; its
+ * replies go too). Resolves to the story's new comment count when the server
+ * says it (null when the comment was already gone).
+ */
 export async function deleteJournalComment(id, commentId) {
   const token = await requireToken();
   const response = await fetch(
@@ -108,8 +149,14 @@ export async function deleteJournalComment(id, commentId) {
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
   );
   if (response.status === 401) throw new AuthRequiredError();
-  if (!response.ok && response.status !== 404) throw new Error(`Couldn't delete the comment (${response.status})`);
-  return true;
+  if (response.status === 404) return { commentsCount: null };
+  if (!response.ok) throw new Error(`Couldn't delete the comment (${response.status})`);
+  try {
+    const data = await response.json();
+    return { commentsCount: typeof data?.commentsCount === 'number' ? data.commentsCount : null };
+  } catch {
+    return { commentsCount: null };
+  }
 }
 
 async function errorText(response, fallback) {
@@ -216,7 +263,10 @@ export async function getMyJournals() {
   if (response.status === 401) throw new AuthRequiredError();
   if (!response.ok) throw new Error(`Couldn't load your stories (${response.status})`);
   const data = await response.json();
-  return (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  const list = (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  // Older servers don't say isLiked here: only counts then.
+  seedLikes(list, list.some((j) => 'isLiked' in j));
+  return list;
 }
 
 // ── Community safety ─────────────────────────────────────────────────────
@@ -287,11 +337,14 @@ export async function deleteJournal(id) {
  */
 export async function getJournalsForPlace(googlePlaceId, limit = 10) {
   if (!googlePlaceId) return [];
+  const h = await headers();
   const response = await fetch(
     `${API_URL}/Journals/by-place/${encodeURIComponent(googlePlaceId)}?limit=${limit}`,
-    { headers: await headers() }
+    { headers: h }
   );
   if (!response.ok) throw new Error(`Couldn't load stories (${response.status})`);
   const data = await response.json();
-  return (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  const list = (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  seedLikes(list, !!h.Authorization);
+  return list;
 }

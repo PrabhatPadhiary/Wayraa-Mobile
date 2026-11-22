@@ -3,8 +3,8 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, StatusBar, RefreshC
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { ScreenHeader, JournalCard } from '../components';
-import { getMyJournals, toggleJournalLike } from '../services';
+import { ScreenHeader, JournalCard, EmptyState } from '../components';
+import { getMyJournals, toggleLike, setLiked } from '../services';
 import { openStoryMenu } from '../utils/storyActions';
 import { RowListSkeleton } from '../components/skeletons';
 import RefreshSpinner from '../components/RefreshSpinner';
@@ -36,14 +36,8 @@ export default function MyStoriesScreen({ navigation }) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const like = async (item) => {
-    try {
-      const res = await toggleJournalLike(item.id);
-      setStories((prev) => prev.map((j) => (j.id === item.id ? { ...j, isLiked: res.liked, likesCount: res.likesCount } : j)));
-    } catch {
-      // A missed like isn't worth an alert.
-    }
-  };
+  // Shows at once (likesStore); a failed one quietly goes back.
+  const like = (item) => toggleLike(item);
 
   const renderEmpty = () => {
     if (loading) return <RowListSkeleton thumb={64} label="Loading your stories" />;
@@ -59,14 +53,14 @@ export default function MyStoriesScreen({ navigation }) {
       );
     }
     return (
-      <View style={styles.state}>
-        <Feather name="book-open" size={36} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>No stories yet</Text>
-        <Text style={styles.stateText}>Share a trip with the community and it'll show up here.</Text>
-        <TouchableOpacity style={styles.retry} onPress={() => navigation.navigate('WriteJournal')}>
-          <Text style={styles.retryText}>Write a story</Text>
-        </TouchableOpacity>
-      </View>
+      <EmptyState
+        style={styles.emptyState}
+        icon="book-outline"
+        title="No stories yet"
+        text="Write about a trip, add your photos and tag the places you went. Everything you share shows up here, hidden stories too."
+        actionLabel="Write a story"
+        onAction={() => navigation.navigate('WriteJournal')}
+      />
     );
   };
 
@@ -82,7 +76,7 @@ export default function MyStoriesScreen({ navigation }) {
             badge={item.visibility === 'private' ? 'Hidden' : undefined}
             onPress={() => navigation.navigate('JournalDetail', { journalId: item.id, title: item.title })}
             onToggleLike={() => like(item)}
-            onDoubleTapLike={() => { if (!item.isLiked) like(item); }}
+            onDoubleTapLike={() => setLiked(item, true)}
             onMore={() => openStoryMenu({
               journal: item,
               isMine: true,
@@ -155,6 +149,9 @@ const styles = StyleSheet.create({
     paddingTop: SIZES.spacing_xxl,
     paddingHorizontal: SIZES.spacing_xl,
     gap: SIZES.spacing_sm,
+  },
+  emptyState: {
+    paddingTop: SIZES.spacing_xxl,
   },
   stateTitle: {
     fontSize: SIZES.lg,

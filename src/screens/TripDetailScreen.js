@@ -52,6 +52,7 @@ import LiveToast, { describeTripChange, ViewerFaces } from '../components/LiveTo
 import useTripLive from '../hooks/useTripLive';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
+import { useTip } from '../components/Tips';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
@@ -443,6 +444,14 @@ export default function TripDetailScreen({ navigation, route }) {
   const isOwner = (trip?.myRole || '').toLowerCase() === 'owner';
   // Owners and editors can invite people (same rule as the backend).
   const canInvite = ['owner', 'member'].includes((trip?.myRole || '').toLowerCase());
+
+  // One-time tip: planning together.
+  const inviteTipRef = useRef(null);
+  useTip('trip_invite', inviteTipRef, {
+    enabled: canInvite,
+    title: 'Plan it together',
+    text: 'Invite friends to this trip. Everyone can add places, plans and expenses, and you see changes live.',
+  });
 
   const removeTrip = async () => {
     setDeletingTrip(true);
@@ -1165,6 +1174,7 @@ export default function TripDetailScreen({ navigation, route }) {
             </View>
 
             <TouchableOpacity
+              ref={inviteTipRef}
               style={styles.travellersRow}
               onPress={() => setTravellersOpen(true)}
               activeOpacity={0.85}

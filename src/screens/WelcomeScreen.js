@@ -23,6 +23,7 @@ import useGoogleAuth from '../hooks/useGoogleAuth';
 import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import WayraaLoader from '../components/WayraaLoader';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
+import { finishSignIn, continueAsGuest } from '../utils/authNavigation';
 
 /*
  * First screen for signed-out users: full-screen travel photos that slowly
@@ -68,7 +69,7 @@ export default function WelcomeScreen({ navigation }) {
     useGoogleAuth((result) => {
       setIsLoading(false);
       if (result.success) {
-        navigation.replace('Main', { user: result.user });
+        finishSignIn(navigation, result.user);
       } else {
         showToast(result.error);
       }
@@ -295,7 +296,7 @@ export default function WelcomeScreen({ navigation }) {
   };
 
   const handleExplore = () => {
-    navigation.replace('Main', { user: null });
+    continueAsGuest(navigation);
   };
 
   const rise = (offset) => ({

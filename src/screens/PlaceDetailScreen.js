@@ -39,6 +39,7 @@ import { buildTripPlaceDto, toTripCategory, createTripParamsForPlace } from '../
 import { showAlert } from '../components/AppDialog';
 import { areaFromAddress as areaOf, formatCentreDistance } from '../utils/address';
 import { distanceKm } from '../utils/itinerary';
+import { useTip } from '../components/Tips';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.5);
@@ -342,6 +343,14 @@ export default function PlaceDetailScreen({ navigation, route }) {
 
   // Tapping the rating in the header scrolls down to the Google reviews.
   const scrollRef = useRef(null);
+
+  // One-time tip: saving places (not while picking places for a trip stop).
+  const heartTipRef = useRef(null);
+  useTip('place_save', heartTipRef, {
+    enabled: !pickForTrip,
+    title: 'Save it for later',
+    text: 'Tap the heart to keep this place in Favourites. Use Add to trip to put it straight into a plan.',
+  });
   const sheetY = useRef(0);
   const reviewsY = useRef(null);
   const scrollToReviews = () => {
@@ -382,8 +391,9 @@ export default function PlaceDetailScreen({ navigation, route }) {
     ).catch(() => {});
   };
 
-  const roundButton = (icon, onPress, label, active = false) => (
+  const roundButton = (icon, onPress, label, active = false, ref = undefined) => (
     <TouchableOpacity
+      ref={ref}
       style={styles.roundButton}
       onPress={onPress}
       activeOpacity={0.85}
@@ -471,7 +481,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
             {roundButton('chevron-back', () => navigation.goBack(), 'Go back')}
             <View style={styles.heroControlsRight}>
               {roundButton('share-outline', handleShare, 'Share this place')}
-              {roundButton(isFaved ? 'heart' : 'heart-outline', toggleFavourite, isFaved ? 'Remove from favourites' : 'Save to favourites', isFaved)}
+              {roundButton(isFaved ? 'heart' : 'heart-outline', toggleFavourite, isFaved ? 'Remove from favourites' : 'Save to favourites', isFaved, heartTipRef)}
             </View>
           </View>
 

@@ -10,7 +10,7 @@ import {
   Poppins_600SemiBold,
   Poppins_700Bold,
 } from '@expo-google-fonts/poppins';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, LogBox } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
@@ -18,11 +18,13 @@ import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
-import { getStoredUser, setupNotificationHandler, onNotificationOpened } from './src/services';
+import { getStoredUser, setupNotificationHandler, onNotificationOpened, likesAccountChanged } from './src/services';
 import { hydrateCache } from './src/services/cache';
 import { AppDialogHost } from './src/components/AppDialog';
+import { TipsHost } from './src/components/Tips';
 import WayraaLoader from './src/components/WayraaLoader';
 import { preloadPublic, preloadSignedIn, waitForHomePreload, restoreHomeSnapshot } from './src/services/homePreload';
+import { isBrowsingAsGuest } from './src/utils/authNavigation';
 import { HOME_STATIC_IMAGES } from './src/screens/ExploreScreen';
 import { WelcomeScreen, LoginScreen, SignUpScreen, WriteJournalScreen, CreateTripScreen } from './src/screens';
 import { MainTabs } from './src/navigation';
@@ -46,6 +48,14 @@ function LoadingScreen() {
 }
 
 const Stack = createNativeStackNavigator();
+
+// Expo Go: expo-notifications warns on load that push isn't available there
+// (we skip push in Expo Go ourselves). Hide just those two notices in
+// development; they never show in a real build.
+LogBox.ignoreLogs([
+  '`expo-notifications` functionality is not fully supported in Expo Go',
+  '[expo-notifications] Push notifications (remote notifications) are unavailable in Expo Go',
+]);
 const navigationRef = createNavigationContainerRef();
 
 /** The trip open on screen, if any (its updates already show live there). */
@@ -54,13 +64,22 @@ function openTripId() {
   return route?.name === 'TripDetail' ? route.params?.tripId : null;
 }
 
-// While the app is open: show notifications, except for the trip you're on.
-setupNotificationHandler(openTripId);
+/** The story open on screen, if any. */
+function openJournalId() {
+  const route = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
+  return route?.name === 'JournalDetail' ? route.params?.journalId : null;
+}
 
-/** Tapping a notification opens its trip (once the app is up and you're signed in). */
+// While the app is open: show notifications, except for the trip / story you're on.
+setupNotificationHandler(openTripId, openJournalId);
+
+/**
+ * Tapping a notification opens its trip, or for a like / comment / reply its
+ * story at the comments (once the app is up and you're signed in).
+ */
 let pendingOpen = null;
 function openTripFromNotification(data) {
-  if (!data?.tripId) return;
+  if (!data?.tripId && !data?.journalId) return;
   const root = navigationRef.isReady() ? navigationRef.getRootState() : null;
   const signedIn = root?.routes?.some((r) => r.name === 'Main');
   if (!signedIn) {
@@ -68,6 +87,18 @@ function openTripFromNotification(data) {
     return;
   }
   pendingOpen = null;
+  if (data.journalId) {
+    if (openJournalId() === data.journalId) return;
+    navigationRef.navigate('Main', {
+      screen: 'Community',
+      params: {
+        screen: 'JournalDetail',
+        params: { journalId: data.journalId, title: data.journalTitle, focusComments: true },
+        initial: false,
+      },
+    });
+    return;
+  }
   if (openTripId() === data.tripId) return;
   navigationRef.navigate('Main', {
     screen: 'MyTrips',
@@ -140,6 +171,8 @@ export default function App() {
   useEffect(() => {
     // Listen for Firebase auth state
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Hearts on stories: this account's likes (or none signed out).
+      likesAccountChanged(firebaseUser?.uid || null);
       if (firebaseUser) {
         // Your saved trips, favourites and profile, so screens open filled.
         await hydrateCache(firebaseUser.uid);
@@ -155,6 +188,8 @@ export default function App() {
           setHasSnapshot(await restoreHomeSnapshot(null));
         }
       } else {
+        // Looking around as a guest last time: straight back to Home.
+        if (await isBrowsingAsGuest()) setInitialRoute('Main');
         setHasSnapshot(await restoreHomeSnapshot(null));
       }
       setIsAuthReady(true);
@@ -233,6 +268,8 @@ export default function App() {
             />
           </Stack.Navigator>
         </NavigationContainer>
+        {/* One-time tips (useTip): a spotlight on a button, above the screens. */}
+        <TipsHost />
         {/* Wayraa's own alerts and menus (showAlert), above everything. */}
         <AppDialogHost />
       </BottomBarProvider>

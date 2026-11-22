@@ -17,7 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
-import { FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
+import { EmptyState, FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
 import { TRIP_CARD_HEIGHT } from '../components/TripStackCard';
 import { tripTiming } from '../components/TripListRow';
 import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
@@ -338,31 +338,27 @@ export default function MyTripsScreen({ navigation }) {
     // No trips at all vs. none matching the active filter.
     if (trips.length === 0) {
       return (
-        <View style={styles.stateContainer}>
-          <Ionicons name="map-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.stateTitle}>No trips yet</Text>
-          <Text style={styles.stateSubtitle}>Explore a destination and create your first trip.</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => navigation.navigate('Explore')}>
-            <Text style={styles.retryText}>Start exploring</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.joinLink}
-            onPress={() => navigation.navigate('JoinTrip')}
-            accessibilityRole="button"
-            hitSlop={8}
-          >
-            <Text style={styles.joinLinkText}>Have an invite? Join a trip</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          style={styles.stateContainer}
+          icon="map-outline"
+          title="No trips yet"
+          text="Pick a destination and your dates. Then plan each day, track the budget and share a packing list."
+          actionLabel="Plan a trip"
+          onAction={() => navigation.navigate('CreateTrip')}
+          secondaryLabel="Have an invite? Join a trip"
+          onSecondary={() => navigation.navigate('JoinTrip')}
+        />
       );
     }
     const filterLabel = FILTERS.find((f) => f.key === activeFilter)?.label?.toLowerCase();
     return (
-      <View style={styles.stateContainer}>
-        <Ionicons name="funnel-outline" size={44} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>No {filterLabel} trips</Text>
-        <Text style={styles.stateSubtitle}>Try a different filter to see more.</Text>
-      </View>
+      <EmptyState
+        compact
+        style={styles.stateContainer}
+        icon="funnel-outline"
+        title={`No ${filterLabel} trips`}
+        text="Try a different filter to see more."
+      />
     );
   };
 
@@ -373,8 +369,10 @@ export default function MyTripsScreen({ navigation }) {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
         <SignInPrompt
           icon="map-outline"
-          title="Plan your next adventure"
-          subtitle="Sign in to create trips and keep your journeys organised."
+          title="Plan trips together"
+          subtitle="Build a day-by-day itinerary, split expenses and share a packing checklist, with friends or on your own."
+          buttonLabel="Sign in or create account"
+          note="Free. Your trips stay in sync on all your devices."
           onSignIn={() => navigation.navigate('Welcome')}
         />
       </SafeAreaView>
@@ -680,14 +678,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_xl,
     paddingVertical: SIZES.spacing_md,
     borderRadius: SIZES.radius_full,
-  },
-  joinLink: {
-    marginTop: SIZES.spacing_base,
-  },
-  joinLinkText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.accentDeep,
   },
   retryText: {
     fontSize: SIZES.base,

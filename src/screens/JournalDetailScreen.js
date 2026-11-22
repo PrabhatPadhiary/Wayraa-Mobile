@@ -12,6 +12,7 @@ import {
   Platform,
   useWindowDimensions,
   RefreshControl,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -24,7 +25,8 @@ import { timeAgo, tripWhen } from '../components/JournalCard';
 import PhotoViewer from '../components/PhotoViewer';
 import {
   getJournal,
-  toggleJournalLike,
+  toggleLike,
+  useLikeState,
   addJournalComment,
   deleteJournalComment,
   getStoredUser,
@@ -41,6 +43,10 @@ import RefreshSpinner from '../components/RefreshSpinner';
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
 const MAX_COMMENT = 1000;
+/** A thread with more replies than this starts folded ("View 5 replies"). */
+const REPLIES_SHOWN = 2;
+
+const firstNameOf = (name) => (name || '').trim().split(/\s+/)[0] || '';
 
 function Avatar({ name, photoUrl, size = 36 }) {
   return (
@@ -56,9 +62,13 @@ function Avatar({ name, photoUrl, size = 36 }) {
  * One trip journal: photo carousel, the story, trip facts, pro tips, places
  * mentioned, likes and comments. Reading works signed out; liking and
  * commenting ask you to sign in.
+ *
+ * Comments have one level of replies: replying to a reply adds to the same
+ * thread, starting with "@Name". `focusComments` (opened from a like /
+ * comment notification) scrolls down to the comments once loaded.
  */
 export default function JournalDetailScreen({ navigation, route }) {
-  const { journalId, title: routeTitle } = route.params || {};
+  const { journalId, title: routeTitle, focusComments } = route.params || {};
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
 
@@ -71,7 +81,33 @@ export default function JournalDetailScreen({ navigation, route }) {
   const [posting, setPosting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(null);
-  const likeBusy = useRef(false);
+  // The heart and count, shared with every other screen (likesStore).
+  const likes = useLikeState(journal);
+  // Replying: { threadId, name } (the top-level comment it goes under).
+  const [replyTo, setReplyTo] = useState(null);
+  const [openThreads, setOpenThreads] = useState(() => new Set());
+  const inputRef = useRef(null);
+  const scrollRef = useRef(null);
+  const commentsRef = useRef(null);
+  const scrolledToComments = useRef(false);
+  const composerRef = useRef(null);
+  const scrollY = useRef(0);
+
+  // iPhone: once the keyboard is up, make sure the whole comment box (border
+  // and send button, not just the cursor) sits above it, with a small gap.
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return undefined;
+    const sub = Keyboard.addListener('keyboardDidShow', (e) => {
+      if (!inputRef.current?.isFocused?.()) return;
+      const keyboardTop = e?.endCoordinates?.screenY;
+      if (!keyboardTop) return;
+      composerRef.current?.measureInWindow((_x, y, _w, h) => {
+        const overlap = y + h + SIZES.spacing_md - keyboardTop;
+        if (overlap > 0) scrollRef.current?.scrollTo({ y: scrollY.current + overlap, animated: true });
+      });
+    });
+    return () => sub.remove();
+  }, []);
 
   // Pull down for new likes and comments.
   const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +132,20 @@ export default function JournalDetailScreen({ navigation, route }) {
     getStoredUser().then((u) => setMyUserId(u?.id || null)).catch(() => {});
   }, [load]);
 
+  // Opened from a notification: once it's on screen, go to the comments.
+  useEffect(() => {
+    if (!focusComments || !journal || scrolledToComments.current) return;
+    scrolledToComments.current = true;
+    const t = setTimeout(() => {
+      try {
+        commentsRef.current?.measureLayout(scrollRef.current, (_x, y) => {
+          scrollRef.current?.scrollTo({ y: Math.max(0, y - insets.top - SIZES.spacing_xl), animated: true });
+        }, () => {});
+      } catch { /* layout not ready: stay at the top */ }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [focusComments, journal, insets.top]);
+
   // Back from editing the story: show the changes.
   const firstFocus = useRef(true);
   useFocusEffect(useCallback(() => {
@@ -111,41 +161,71 @@ export default function JournalDetailScreen({ navigation, route }) {
     { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
   ]);
 
-  const handleLike = async () => {
-    if (!journal || likeBusy.current) return;
-    likeBusy.current = true;
-    const was = journal;
-    setJournal({ ...journal, isLiked: !journal.isLiked, likesCount: Math.max(0, journal.likesCount + (journal.isLiked ? -1 : 1)) });
-    try {
-      const res = await toggleJournalLike(journal.id);
-      setJournal((j) => ({ ...j, isLiked: res.liked, likesCount: res.likesCount }));
-    } catch (e) {
-      setJournal(was);
-      if (e instanceof AuthRequiredError) askToSignIn('like stories');
-    } finally {
-      likeBusy.current = false;
-    }
+  // Shows at once, here and on every other screen (likesStore).
+  const handleLike = () => {
+    if (!journal) return;
+    toggleLike(journal, { onAuthRequired: () => askToSignIn('like stories') });
   };
 
   const postComment = async () => {
     const body = comment.trim();
     if (!body || posting) return;
     setPosting(true);
+    const threadId = replyTo?.threadId || null;
     try {
-      const created = await addJournalComment(journal.id, body);
+      const created = await addJournalComment(journal.id, body, threadId);
       setJournal((j) => ({
         ...j,
-        comments: [...(j.comments || []), created],
+        comments: [...(j.comments || []), { parentCommentId: threadId, ...created }],
         commentsCount: (j.commentsCount || 0) + 1,
       }));
+      if (threadId) setOpenThreads((open) => new Set(open).add(threadId));
       setComment('');
+      setReplyTo(null);
     } catch (e) {
       if (e instanceof AuthRequiredError) askToSignIn('comment');
-      else showAlert('Couldn\'t post', e?.message || 'Please try again.');
+      else {
+        showAlert('Couldn\'t post', e?.message || 'Please try again.');
+        // The comment being answered is gone: back to a plain comment, and catch up.
+        if (threadId && /deleted/i.test(e?.message || '')) {
+          setReplyTo(null);
+          load();
+        }
+      }
     } finally {
       setPosting(false);
     }
   };
+
+  // "Reply" under a comment. A reply to a reply goes in the same thread and
+  // starts with @Name, so it's clear who it answers.
+  const startReply = (c) => {
+    if (!myUserId) {
+      askToSignIn('reply');
+      return;
+    }
+    const name = c.author?.name || 'Traveller';
+    const threadId = c.parentCommentId || c.id;
+    setReplyTo({ threadId, name });
+    setOpenThreads((open) => new Set(open).add(threadId));
+    const first = firstNameOf(name);
+    if (c.parentCommentId && c.author?.id !== myUserId && first && !comment.trim()) {
+      setComment(`@${first} `);
+    }
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const cancelReply = () => {
+    setReplyTo(null);
+    // Drop an @Name we put there that wasn't added to.
+    setComment((text) => (/^@\S+\s*$/.test(text) ? '' : text));
+  };
+
+  const toggleThread = (id) => setOpenThreads((open) => {
+    const next = new Set(open);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   // ⋯ on someone else's comment: block them. Their comments go at once; if
   // they wrote the story, it's closed too.
@@ -162,9 +242,16 @@ export default function JournalDetailScreen({ navigation, route }) {
             return;
           }
           setJournal((j) => {
-            const left = (j.comments || []).filter((x) => x.author?.id !== userId);
-            return { ...j, comments: left, commentsCount: Math.max(0, (j.commentsCount || 0) - ((j.comments || []).length - left.length)) };
+            const all = j.comments || [];
+            const theirs = all.filter((x) => x.author?.id !== userId);
+            // Replies under their comments go with them.
+            const kept = new Set(theirs.map((x) => x.id));
+            const left = theirs.filter((x) => !x.parentCommentId || kept.has(x.parentCommentId));
+            return { ...j, comments: left, commentsCount: Math.max(0, (j.commentsCount || 0) - (all.length - left.length)) };
           });
+          if (replyTo && !(journal.comments || []).some((x) => x.id === replyTo.threadId && x.author?.id !== userId)) {
+            setReplyTo(null);
+          }
         }),
       },
       { text: 'Cancel', style: 'cancel' },
@@ -172,7 +259,9 @@ export default function JournalDetailScreen({ navigation, route }) {
   };
 
   const removeComment = (c) => {
-    showAlert('Delete comment?', undefined, [
+    const replies = c.parentCommentId ? 0 : (journal.comments || []).filter((x) => x.parentCommentId === c.id).length;
+    const note = replies > 0 ? `Its ${replies === 1 ? 'reply' : `${replies} replies`} will be deleted too.` : undefined;
+    showAlert('Delete comment?', note, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -180,12 +269,17 @@ export default function JournalDetailScreen({ navigation, route }) {
         onPress: async () => {
           setDeletingId(c.id);
           try {
-            await deleteJournalComment(journal.id, c.id);
-            setJournal((j) => ({
-              ...j,
-              comments: (j.comments || []).filter((x) => x.id !== c.id),
-              commentsCount: Math.max(0, (j.commentsCount || 1) - 1),
-            }));
+            const res = await deleteJournalComment(journal.id, c.id);
+            setJournal((j) => {
+              const left = (j.comments || []).filter((x) => x.id !== c.id && x.parentCommentId !== c.id);
+              const removed = (j.comments || []).length - left.length;
+              return {
+                ...j,
+                comments: left,
+                commentsCount: res?.commentsCount ?? Math.max(0, (j.commentsCount || removed) - removed),
+              };
+            });
+            if (replyTo?.threadId === c.id) setReplyTo(null);
           } catch (e) {
             showAlert('Couldn\'t delete', e?.message || 'Please try again.');
           } finally {
@@ -254,14 +348,80 @@ export default function JournalDetailScreen({ navigation, route }) {
   ].filter(Boolean);
   const paragraphs = (journal.body || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
 
+  // Threads: top-level comments, oldest first, each with its replies. A reply
+  // whose comment isn't here (deleted, or by someone you blocked) isn't shown.
+  const allComments = journal.comments || [];
+  const topLevel = allComments.filter((c) => !c.parentCommentId);
+  const repliesOf = new Map();
+  for (const c of allComments) {
+    if (!c.parentCommentId) continue;
+    if (!repliesOf.has(c.parentCommentId)) repliesOf.set(c.parentCommentId, []);
+    repliesOf.get(c.parentCommentId).push(c);
+  }
+
+  const renderComment = (c, isReply = false) => {
+    const mine = myUserId && c.author?.id === myUserId;
+    const name = c.author?.name || 'Traveller';
+    return (
+      <View key={c.id} style={[styles.comment, isReply && styles.commentReply]}>
+        <Avatar name={c.author?.name} photoUrl={c.author?.photoUrl} size={isReply ? 26 : 32} />
+        <View style={styles.commentMain}>
+          <View style={styles.commentBubble}>
+            <View style={styles.commentHead}>
+              <Text style={styles.commentAuthor} numberOfLines={1}>{name}</Text>
+              <Text style={styles.commentTime}>{timeAgo(c.createdAt)}</Text>
+              {mine && (
+                deletingId === c.id ? (
+                  <ActivityIndicator size="small" color={COLORS.error} />
+                ) : (
+                  <TouchableOpacity onPress={() => removeComment(c)} hitSlop={8} accessibilityLabel="Delete your comment">
+                    <Feather name="trash-2" size={14} color={COLORS.textMuted} />
+                  </TouchableOpacity>
+                )
+              )}
+              {/* Someone else's comment: block them from here too. */}
+              {!mine && !!myUserId && !!c.author?.id && (
+                <TouchableOpacity
+                  onPress={() => blockFromComment(c)}
+                  hitSlop={8}
+                  accessibilityLabel={`More options for ${c.author?.name || 'this'} comment`}
+                >
+                  <Feather name="more-horizontal" size={15} color={COLORS.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+            <Text style={styles.commentBody}>{c.body}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.replyButton}
+            onPress={() => startReply(c)}
+            hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Reply to ${name}`}
+          >
+            <Text style={styles.replyButtonText}>Reply</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, styles.storyContainer]}>
       <StatusBar barStyle="light-content" />
-      <KeyboardAvoidingView style={styles.flex} behavior="padding">
+      {/* Keyboard: on iPhone the scroll view makes room itself and scrolls the
+          comment box into view (the wrapper would only shrink the screen and
+          leave the box under the keyboard); Android keeps the wrapper. */}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding" enabled={Platform.OS === 'android'}>
         <ScrollView
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 140 }}
+          automaticallyAdjustKeyboardInsets
+          keyboardDismissMode="interactive"
+          onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+          scrollEventThrottle={32}
+          contentContainerStyle={styles.scrollContent}
           refreshControl={(
             <RefreshControl
               refreshing={refreshing}
@@ -407,15 +567,15 @@ export default function JournalDetailScreen({ navigation, route }) {
                 activeOpacity={0.7}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 accessibilityRole="button"
-                accessibilityState={{ selected: !!journal.isLiked }}
-                accessibilityLabel={`${journal.isLiked ? 'Unlike' : 'Like'}, ${journal.likesCount || 0} likes`}
+                accessibilityState={{ selected: !!likes.isLiked }}
+                accessibilityLabel={`${likes.isLiked ? 'Unlike' : 'Like'}, ${likes.likesCount || 0} likes`}
               >
                 <Ionicons
-                  name={journal.isLiked ? 'heart' : 'heart-outline'}
+                  name={likes.isLiked ? 'heart' : 'heart-outline'}
                   size={24}
-                  color={journal.isLiked ? '#E05024' : COLORS.textPrimary}
+                  color={likes.isLiked ? '#E05024' : COLORS.textPrimary}
                 />
-                <Text style={styles.likeText}>{journal.likesCount || 0}</Text>
+                <Text style={styles.likeText}>{likes.likesCount || 0}</Text>
               </TouchableOpacity>
               <View style={styles.commentCount}>
                 <Feather name="message-circle" size={22} color={COLORS.textPrimary} />
@@ -423,63 +583,70 @@ export default function JournalDetailScreen({ navigation, route }) {
               </View>
             </View>
 
-            {/* Comments */}
-            <Text style={styles.sectionTitle}>Comments</Text>
-            {(journal.comments || []).length === 0 && (
+            {/* Comments, each with its replies underneath (one level). */}
+            <View ref={commentsRef} collapsable={false}>
+              <Text style={styles.sectionTitle}>Comments</Text>
+            </View>
+            {topLevel.length === 0 && (
               <Text style={styles.noComments}>No comments yet. Be the first to say something.</Text>
             )}
-            {(journal.comments || []).map((c) => {
-              const mine = myUserId && c.author?.id === myUserId;
+            {topLevel.map((c) => {
+              const replies = repliesOf.get(c.id) || [];
+              const folded = replies.length > REPLIES_SHOWN && !openThreads.has(c.id);
               return (
-                <View key={c.id} style={styles.comment}>
-                  <Avatar name={c.author?.name} photoUrl={c.author?.photoUrl} size={32} />
-                  <View style={styles.commentBubble}>
-                    <View style={styles.commentHead}>
-                      <Text style={styles.commentAuthor} numberOfLines={1}>{c.author?.name || 'Traveller'}</Text>
-                      <Text style={styles.commentTime}>{timeAgo(c.createdAt)}</Text>
-                      {mine && (
-                        deletingId === c.id ? (
-                          <ActivityIndicator size="small" color={COLORS.error} />
-                        ) : (
-                          <TouchableOpacity onPress={() => removeComment(c)} hitSlop={8} accessibilityLabel="Delete your comment">
-                            <Feather name="trash-2" size={14} color={COLORS.textMuted} />
-                          </TouchableOpacity>
-                        )
-                      )}
-                      {/* Someone else's comment: block them from here too. */}
-                      {!mine && !!myUserId && !!c.author?.id && (
+                <View key={c.id}>
+                  {renderComment(c)}
+                  {replies.length > 0 && (
+                    <View style={styles.replies}>
+                      {!folded && replies.map((r) => renderComment(r, true))}
+                      {replies.length > REPLIES_SHOWN && (
                         <TouchableOpacity
-                          onPress={() => blockFromComment(c)}
-                          hitSlop={8}
-                          accessibilityLabel={`More options for ${c.author?.name || 'this'} comment`}
+                          style={styles.threadToggle}
+                          onPress={() => toggleThread(c.id)}
+                          hitSlop={6}
+                          accessibilityRole="button"
                         >
-                          <Feather name="more-horizontal" size={15} color={COLORS.textMuted} />
+                          <View style={styles.threadLine} />
+                          <Text style={styles.threadToggleText}>
+                            {folded ? `View ${replies.length} replies` : 'Hide replies'}
+                          </Text>
                         </TouchableOpacity>
                       )}
                     </View>
-                    <Text style={styles.commentBody}>{c.body}</Text>
-                  </View>
+                  )}
                 </View>
               );
             })}
 
-            <View style={styles.composer}>
+            {replyTo && (
+              <View style={styles.replyingBar}>
+                <Feather name="corner-down-right" size={14} color={COLORS.textSecondary} />
+                <Text style={styles.replyingText} numberOfLines={1}>
+                  Replying to <Text style={styles.replyingName}>{replyTo.name}</Text>
+                </Text>
+                <TouchableOpacity onPress={cancelReply} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cancel reply">
+                  <Feather name="x" size={16} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <View ref={composerRef} style={styles.composer}>
               <TextInput
+                ref={inputRef}
                 style={styles.composerInput}
                 value={comment}
                 onChangeText={setComment}
-                placeholder="Add a comment…"
+                placeholder={replyTo ? `Reply to ${firstNameOf(replyTo.name) || 'them'}…` : 'Add a comment…'}
                 placeholderTextColor={COLORS.textMuted}
                 multiline
                 maxLength={MAX_COMMENT}
-                accessibilityLabel="Add a comment"
+                accessibilityLabel={replyTo ? `Reply to ${replyTo.name}` : 'Add a comment'}
               />
               <TouchableOpacity
                 style={[styles.send, (!comment.trim() || posting) && styles.sendOff]}
                 onPress={postComment}
                 disabled={!comment.trim() || posting}
                 accessibilityRole="button"
-                accessibilityLabel="Post comment"
+                accessibilityLabel={replyTo ? 'Post reply' : 'Post comment'}
               >
                 {posting ? <ActivityIndicator size="small" color={COLORS.white} /> : <Feather name="send" size={16} color={COLORS.white} />}
               </TouchableOpacity>
@@ -584,7 +751,17 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
 
+  // The white sheet runs to the bottom of the screen (and past it when
+  // bouncing, see storyContainer): no band of background under the comments.
+  scrollContent: {
+    flexGrow: 1,
+  },
+  storyContainer: {
+    backgroundColor: COLORS.white,
+  },
   sheet: {
+    flexGrow: 1,
+    paddingBottom: 140,
     marginTop: -SIZES.spacing_lg,
     paddingHorizontal: SIZES.spacing_lg,
     paddingTop: SIZES.spacing_lg,
@@ -779,10 +956,69 @@ const styles = StyleSheet.create({
   comment: {
     flexDirection: 'row',
     gap: SIZES.spacing_sm,
-    marginBottom: SIZES.spacing_md,
+    marginBottom: SIZES.spacing_sm,
+  },
+  commentReply: {
+    marginBottom: SIZES.spacing_xs,
+  },
+  commentMain: {
+    flex: 1,
+  },
+  // Replies sit under their comment, lined up with its bubble.
+  replies: {
+    marginLeft: 32 + SIZES.spacing_sm,
+    marginBottom: SIZES.spacing_sm,
+  },
+  replyButton: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: SIZES.spacing_md,
+    paddingTop: 4,
+    paddingBottom: 2,
+  },
+  replyButtonText: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textSecondary,
+  },
+  threadToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    marginBottom: SIZES.spacing_xs,
+  },
+  threadLine: {
+    width: 22,
+    height: 1,
+    backgroundColor: COLORS.textMuted,
+  },
+  threadToggleText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textSecondary,
+  },
+  replyingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    marginTop: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: SIZES.spacing_sm,
+    borderRadius: SIZES.radius_lg,
+    backgroundColor: COLORS.cardBackground,
+  },
+  replyingText: {
+    flex: 1,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  replyingName: {
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
   },
   commentBubble: {
-    flex: 1,
     padding: SIZES.spacing_md,
     borderRadius: SIZES.radius_lg,
     borderTopLeftRadius: 4,

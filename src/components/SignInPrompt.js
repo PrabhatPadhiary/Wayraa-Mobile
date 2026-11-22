@@ -11,12 +11,16 @@ import { COLORS, SIZES } from '../constants';
  * @param {string} title
  * @param {string} subtitle
  * @param {() => void} onSignIn - navigate to the Login screen
+ * @param {string} [buttonLabel]
+ * @param {string} [note] - small line under the button (e.g. "Free, takes a minute")
  */
 export default function SignInPrompt({
   icon = 'lock-closed-outline',
   title = 'Sign in to continue',
   subtitle = 'Create an account or sign in to unlock this.',
   onSignIn,
+  buttonLabel = 'Sign in',
+  note,
 }) {
   return (
     <View style={styles.container}>
@@ -25,9 +29,10 @@ export default function SignInPrompt({
       </View>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.subtitle}>{subtitle}</Text>
-      <TouchableOpacity style={styles.button} onPress={onSignIn} activeOpacity={0.9}>
-        <Text style={styles.buttonText}>Sign in</Text>
+      <TouchableOpacity style={styles.button} onPress={onSignIn} activeOpacity={0.9} accessibilityRole="button">
+        <Text style={styles.buttonText}>{buttonLabel}</Text>
       </TouchableOpacity>
+      {!!note && <Text style={styles.note}>{note}</Text>}
     </View>
   );
 }
@@ -68,6 +73,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.spacing_xl * 1.5,
     paddingVertical: SIZES.spacing_md,
     borderRadius: SIZES.radius_full,
+  },
+  note: {
+    marginTop: SIZES.spacing_md,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+    textAlign: 'center',
   },
   buttonText: {
     fontSize: SIZES.base,

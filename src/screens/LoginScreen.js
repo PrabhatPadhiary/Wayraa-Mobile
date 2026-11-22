@@ -17,6 +17,7 @@ import { signInWithEmail, sendPasswordResetTo } from '../services';
 import { showAlert } from '../components/AppDialog';
 import useGoogleAuth from '../hooks/useGoogleAuth';
 import { LoaderOverlay } from '../components/WayraaLoader';
+import { finishSignIn } from '../utils/authNavigation';
 
 /**
  * LoginScreen - Shown when a returning user needs to sign in.
@@ -35,23 +36,26 @@ export default function LoginScreen({ navigation, route }) {
     useGoogleAuth((result) => {
       setIsLoading(false);
       if (result.success) {
-        navigation.replace('Main', { user: result.user });
+        finishSignIn(navigation, result.user);
       } else {
         setError(result.error);
       }
     });
 
-  const handleLogin = async () => {
-    if (!password.trim()) {
+  // `value`: a password that just arrived (autofill), before state catches up.
+  const handleLogin = async (value) => {
+    const pw = typeof value === 'string' ? value : password;
+    if (isLoading) return;
+    if (!pw.trim()) {
       setError('Please enter your password.');
       return;
     }
     setIsLoading(true);
     setError(null);
-    const result = await signInWithEmail(email, password);
+    const result = await signInWithEmail(email, pw);
     setIsLoading(false);
     if (result.success) {
-      navigation.replace('Main', { user: result.user });
+      finishSignIn(navigation, result.user);
     } else {
       setError(result.error);
     }
@@ -147,7 +151,20 @@ export default function LoginScreen({ navigation, route }) {
                 placeholderTextColor={COLORS.textMuted}
                 secureTextEntry={!showPassword}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(text) => {
+                  // Filled in all at once from empty (the keychain / password
+                  // manager): sign in straight away, no second tap. Typing
+                  // adds one character at a time, so it never triggers this.
+                  const autofilled = password.length === 0 && text.length >= 4;
+                  setPassword(text);
+                  if (autofilled) handleLogin(text);
+                }}
+                textContentType="password"
+                autoComplete="current-password"
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="go"
+                onSubmitEditing={() => handleLogin()}
                 autoFocus
               />
               <TouchableOpacity

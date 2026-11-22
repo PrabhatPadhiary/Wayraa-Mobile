@@ -7,6 +7,7 @@ import { COLORS, SIZES } from '../constants';
 import { fallbackGradientFor } from './PlaceTile';
 import { avatarColorFor, initialsFor } from './TripStackCard';
 import { vibeLabel } from '../services/journalsService';
+import { useLikeState } from '../services/likesStore';
 import { dayCount } from '../utils/tripDates';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
@@ -64,6 +65,8 @@ const LIKE_RED = '#E05024';
  * @param {string} [badge]        a tag on the photo, e.g. "Hidden"
  */
 export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTapLike, onLongPress, onMore, badge }) {
+  // Hearts and counts from the shared like state: a like anywhere shows here at once.
+  const likes = useLikeState(journal);
   const [failed, setFailed] = useState(false);
   const lastTap = useRef(0);
   const singleTapTimer = useRef(null);
@@ -212,15 +215,15 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
             onPress={onToggleLike}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
             accessibilityRole="button"
-            accessibilityState={{ selected: !!journal.isLiked }}
-            accessibilityLabel={`${journal.isLiked ? 'Unlike' : 'Like'}, ${journal.likesCount || 0} likes`}
+            accessibilityState={{ selected: !!likes.isLiked }}
+            accessibilityLabel={`${likes.isLiked ? 'Unlike' : 'Like'}, ${likes.likesCount || 0} likes`}
           >
             <Ionicons
-              name={journal.isLiked ? 'heart' : 'heart-outline'}
+              name={likes.isLiked ? 'heart' : 'heart-outline'}
               size={19}
-              color={journal.isLiked ? '#E05024' : COLORS.textSecondary}
+              color={likes.isLiked ? '#E05024' : COLORS.textSecondary}
             />
-            <Text style={[styles.statText, journal.isLiked && styles.statTextLiked]}>{journal.likesCount || 0}</Text>
+            <Text style={[styles.statText, likes.isLiked && styles.statTextLiked]}>{likes.likesCount || 0}</Text>
           </TouchableOpacity>
           <View style={styles.stat} accessible accessibilityLabel={`${journal.commentsCount || 0} comments`}>
             <Feather name="message-circle" size={17} color={COLORS.textSecondary} />

@@ -11,7 +11,40 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import useFloatingBarBottom from '../hooks/useFloatingBarBottom';
 import { COLORS, SIZES, MAIN_TABS } from '../constants';
 import GlassSurface from './GlassSurface';
+import { useBlurTarget } from '../context/BlurTargetContext';
 import { useBottomBar } from '../context/BottomBarContext';
+import { GlassView } from 'expo-glass-effect';
+import { GestureDetector } from 'react-native-gesture-handler';
+import usePillDrag, { tick } from '../hooks/usePillDrag';
+import { useGlassMode } from '../utils/glass';
+
+/**
+ * The sliding pill behind the selected tab. While you drag it (usePillDrag)
+ * it lifts a little, and on iOS 26 becomes a Liquid Glass lens.
+ */
+function DragCapsule({ x, width, dragAnim, dragging, liquid }) {
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.capsule,
+        {
+          left: x,
+          width,
+          transform: [{ scale: dragAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }],
+        },
+      ]}
+    >
+      {liquid && (
+        <GlassView
+          style={[StyleSheet.absoluteFill, styles.capsuleGlass]}
+          glassEffectStyle={{ style: dragging ? 'clear' : 'none', animate: true, animationDuration: 0.2 }}
+          colorScheme="light"
+        />
+      )}
+    </Animated.View>
+  );
+}
 
 const CIRCLE = 66; // collapsed circle diameter (matches the pill outer height)
 
@@ -54,13 +87,23 @@ function SectionTabs({ tabs, width }) {
     ]).start();
   }, [active, x, w]);
 
+  // Drag the pill between the trip's sections.
+  const liquid = useGlassMode() === 'liquid';
+  const { gesture: pillGesture, dragKey, dragAnim } = usePillDrag({
+    x,
+    width: w,
+    layouts,
+    keys: tabs.items.map((t) => t.key),
+    activeKey: tabs.activeKey,
+    onSelect: tabs.onChange,
+  });
+
   return (
-    <View style={[styles.fullTabsRow, { width }]}>
-      {active && (
-        <Animated.View pointerEvents="none" style={[styles.capsule, { left: x, width: w }]} />
-      )}
+    <GestureDetector gesture={pillGesture}>
+    <View style={[styles.fullTabsRow, { width }]} collapsable={false}>
+      {active && <DragCapsule x={x} width={w} dragAnim={dragAnim} dragging={!!dragKey} liquid={liquid} />}
       {tabs.items.map((tab) => {
-        const isActive = tab.key === tabs.activeKey;
+        const isActive = tab.key === (dragKey ?? tabs.activeKey);
         return (
           <TouchableOpacity
             key={tab.key}
@@ -73,7 +116,10 @@ function SectionTabs({ tabs, width }) {
                   : { ...prev, [tab.key]: { x: lx, width } }
               ));
             }}
-            onPress={() => tabs.onChange(tab.key)}
+            onPress={() => {
+              if (tab.key !== tabs.activeKey) tick();
+              tabs.onChange(tab.key);
+            }}
             activeOpacity={0.8}
             accessibilityRole="tab"
             accessibilityState={{ selected: isActive }}
@@ -83,12 +129,12 @@ function SectionTabs({ tabs, width }) {
               // Line icon in both states; the active one is just orange.
               <Feather
                 name={tab.icon}
-                size={20}
+                size={22}
                 color={isActive ? COLORS.accent : COLORS.textPrimary}
               />
             ) : (
               <Ionicons
-                name={isActive ? tab.icon : `${tab.icon}-outline`}
+                name={tab.icon}
                 size={22}
                 color={isActive ? COLORS.accent : COLORS.textPrimary}
               />
@@ -100,6 +146,7 @@ function SectionTabs({ tabs, width }) {
         );
       })}
     </View>
+    </GestureDetector>
   );
 }
 
@@ -138,6 +185,10 @@ export default function AppTabBar({ state, navigation }) {
   const activeKey = state.routes[state.index].name;
   const activeTab = MAIN_TABS.find((t) => t.key === activeKey) || MAIN_TABS[0];
 
+  // Android: blur the screen of the tab that's showing (see BlurTargetContext).
+  const blur = useBlurTarget(activeKey);
+  const glassProps = blur ? { blurTarget: blur.ref, blurKey: `${activeKey}-${blur.version}` } : {};
+
   // Capsule slide (only relevant in the expanded state).
   const [layouts, setLayouts] = useState({});
   const capsuleX = useRef(new Animated.Value(0)).current;
@@ -158,6 +209,19 @@ export default function AppTabBar({ state, navigation }) {
       Animated.spring(capsuleW, { toValue: activeLayout.width, useNativeDriver: false, friction: 18, tension: 50 }),
     ]).start();
   }, [activeLayout, capsuleX, capsuleW]);
+
+  // Drag the pill between the app's tabs (not while it's a circle or
+  // showing a trip's sections).
+  const liquid = useGlassMode() === 'liquid';
+  const { gesture: pillGesture, dragKey, dragAnim } = usePillDrag({
+    x: capsuleX,
+    width: capsuleW,
+    layouts,
+    keys: MAIN_TABS.map((t) => t.key),
+    activeKey,
+    onSelect: (key) => onPressTab(key),
+    enabled: !collapsed && !tabs,
+  });
 
   const handleLayout = (key) => (e) => {
     const { x, width } = e.nativeEvent.layout;
@@ -189,6 +253,7 @@ export default function AppTabBar({ state, navigation }) {
 
   const onPressTab = (key) => {
     const isFocused = activeKey === key;
+    if (!isFocused) tick();
     const route = state.routes.find((r) => r.name === key);
     const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
     if (!isFocused && !event.defaultPrevented) {
@@ -216,7 +281,7 @@ export default function AppTabBar({ state, navigation }) {
       <View style={styles.row}>
         {/* Morphing glass pill: full tab bar -> active-tab circle. */}
         <Animated.View style={[styles.morphBar, { width: barWidth }]}>
-          <GlassSurface radius={38} contentStyle={styles.morphContent}>
+          <GlassSurface radius={38} contentStyle={styles.morphContent} {...glassProps}>
             {/* Full tab row — fixed width so items don't reflow while shrinking. */}
             <Animated.View
               style={[
@@ -225,18 +290,22 @@ export default function AppTabBar({ state, navigation }) {
               ]}
               pointerEvents={collapsed ? 'none' : 'box-none'}
             >
+              <GestureDetector gesture={pillGesture}>
               <Animated.View
                 style={[
                   styles.fullTabsRow,
                   { width: rowWidth || 320, opacity: tabsAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) },
                 ]}
-                pointerEvents={tabs ? 'none' : 'box-none'}
+                // Takes touches itself so the drag can start anywhere on the pill.
+                pointerEvents={tabs ? 'none' : 'auto'}
+                collapsable={false}
               >
               {activeLayout && (
-                <Animated.View pointerEvents="none" style={[styles.capsule, { left: capsuleX, width: capsuleW }]} />
+                <DragCapsule x={capsuleX} width={capsuleW} dragAnim={dragAnim} dragging={!!dragKey} liquid={liquid} />
               )}
               {MAIN_TABS.map((tab) => {
-                const isActive = tab.key === activeKey;
+                // While dragging, the tab under the pill shows as selected.
+                const isActive = tab.key === (dragKey ?? activeKey);
                 return (
                   <TouchableOpacity
                     key={tab.key}
@@ -245,9 +314,11 @@ export default function AppTabBar({ state, navigation }) {
                     onPress={() => onPressTab(tab.key)}
                     activeOpacity={0.8}
                   >
+                    {/* Filled icons on every tab, so they read clearly on glass;
+                        the selected one is orange. */}
                     <Ionicons
-                      name={isActive ? (tab.activeIcon || tab.icon) : tab.icon}
-                      size={22}
+                      name={tab.activeIcon || tab.icon}
+                      size={24}
                       color={isActive ? COLORS.accent : COLORS.textPrimary}
                     />
                     <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
@@ -257,6 +328,7 @@ export default function AppTabBar({ state, navigation }) {
                 );
               })}
               </Animated.View>
+              </GestureDetector>
 
               {!!shownTabs && (
                 <Animated.View
@@ -289,7 +361,7 @@ export default function AppTabBar({ state, navigation }) {
         {cta && (
           <Animated.View style={{ flex: collapseAnim, opacity: collapseAnim, marginLeft: ctaGap, overflow: 'hidden' }}>
             <TouchableOpacity onPress={cta.onPress} activeOpacity={0.85}>
-              <GlassSurface radius={38} contentStyle={styles.ctaContent}>
+              <GlassSurface radius={38} contentStyle={styles.ctaContent} interactive {...glassProps}>
                 {!!cta.icon && <Ionicons name={cta.icon} size={20} color={COLORS.accent} />}
                 <Text style={styles.ctaText} numberOfLines={1}>{cta.label}</Text>
               </GlassSurface>
@@ -339,6 +411,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(217, 72, 28, 0.25)',
   },
+  capsuleGlass: {
+    borderRadius: SIZES.radius_full,
+  },
   iconOnly: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
@@ -359,7 +434,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: SIZES.xs,
-    fontFamily: 'Poppins_500Medium',
+    fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
   },
   labelActive: {

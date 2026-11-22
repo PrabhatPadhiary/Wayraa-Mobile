@@ -364,8 +364,10 @@ export default function CreateTripScreen({ navigation, route }) {
         {renderHeader()}
         <SignInPrompt
           icon="map-outline"
-          title="Plan your next adventure"
-          subtitle="Sign in to create trips and keep your journeys organised."
+          title="Plan trips together"
+          subtitle="Build a day-by-day itinerary, split expenses and share a packing checklist, with friends or on your own."
+          buttonLabel="Sign in or create account"
+          note="Free. Your trips stay in sync on all your devices."
           onSignIn={() => navigation.navigate('Welcome')}
         />
       </SafeAreaView>

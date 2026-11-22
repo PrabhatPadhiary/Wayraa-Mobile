@@ -34,6 +34,7 @@ import {
 import appConfig from '../../app.json';
 import { showAlert } from '../components/AppDialog';
 import { openPrivacyPolicy, openTerms, openAbout, DOWNLOAD_URL, SUPPORT_EMAIL } from '../utils/legal';
+import { resetTips } from '../components/Tips';
 import { LoaderOverlay } from '../components/WayraaLoader';
 
 /** One row in a settings-style group. */
@@ -137,6 +138,12 @@ export default function SettingsScreen({ navigation }) {
     } catch {
       showAlert('No email app found', `You can write to ${SUPPORT_EMAIL} from any email app.`);
     }
+  };
+
+  // The one-time tips (search, saving, sharing, inviting) show again as you go.
+  const showTipsAgain = async () => {
+    await resetTips();
+    showAlert('Tips are back', "You'll see them again as you move around the app.");
   };
 
   const shareApp = () => {
@@ -273,6 +280,7 @@ export default function SettingsScreen({ navigation }) {
             <Row icon="heart" label="About Wayraa" onPress={openAbout} />
             <Row icon="message-circle" label="Send feedback" onPress={sendFeedback} />
             <Row icon="share-2" label="Share Wayraa" onPress={shareApp} />
+            <Row icon="help-circle" label="Show tips again" onPress={showTipsAgain} />
             <Row icon="shield" label="Privacy policy" onPress={openPrivacyPolicy} />
             <Row icon="file-text" label="Terms of use" onPress={openTerms} />
             <Row icon="info" label="Version" value={appConfig?.expo?.version ? `v${appConfig.expo.version}` : '—'} last />

@@ -18,6 +18,7 @@ import { createAccountWithEmail } from '../services';
 import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import { checkPassword, initialPasswordRules } from '../utils/passwordPolicy';
 import { LoaderOverlay } from '../components/WayraaLoader';
+import { finishSignIn } from '../utils/authNavigation';
 
 /**
  * SignUpScreen - Shown when a new user needs to create an account.
@@ -62,7 +63,7 @@ export default function SignUpScreen({ navigation, route }) {
     const result = await createAccountWithEmail(email, password, name.trim());
     setIsLoading(false);
     if (result.success) {
-      navigation.replace('Main', { user: result.user });
+      finishSignIn(navigation, result.user);
     } else {
       setError(result.error);
     }

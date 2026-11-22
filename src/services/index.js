@@ -95,6 +95,7 @@ export {
   peekJournalFeed,
   getJournal,
   toggleJournalLike,
+  likesAccountChanged,
   addJournalComment,
   deleteJournalComment,
   createJournal,
@@ -114,3 +115,4 @@ export {
   getBlockedUsers,
   getJournalsForPlace,
 } from './journalsService';
+export { toggleLike, setLiked, likeStateOf, useLikeState, useLikes } from './likesStore';

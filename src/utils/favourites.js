@@ -1,10 +1,12 @@
 /**
- * Favourites helpers: work out a city from a saved place's address and group
- * favourites into city collections.
+ * Favourites helpers: a saved place's city, and favourites grouped into city
+ * collections.
  *
- * Favourites only store Google's short `vicinity` ("street, area, city"), so
- * the city is a best guess: the last part that isn't a postcode, number or
- * country-like code. Places whose city can't be read go to "Other places".
+ * The server stores each favourite's real city (from Google's address parts)
+ * as `city`. Until it has one (just saved while Google was unreachable), the
+ * city is guessed from the short `vicinity` ("street, area, city"): the last
+ * part that isn't a postcode, number or country-like code. Places with no city
+ * either way go to "Other places".
  */
 
 const OTHER = 'Other places';
@@ -27,6 +29,11 @@ export function cityOf(vicinity) {
   return parts[parts.length - 1] || null;
 }
 
+/** A favourite's city: the stored one, else a guess from its address. */
+export function favouriteCity(f) {
+  return (f?.city && f.city.trim()) || cityOf(f?.vicinity);
+}
+
 /**
  * Group favourites by city: [{ key, city, items }], biggest first, with
  * "Other places" (unknown city) last.
@@ -34,7 +41,7 @@ export function cityOf(vicinity) {
 export function groupByCity(favourites) {
   const map = new Map();
   favourites.forEach((f) => {
-    const city = cityOf(f.vicinity) || OTHER;
+    const city = favouriteCity(f) || OTHER;
     const key = city.toLowerCase();
     if (!map.has(key)) map.set(key, { key, city, items: [] });
     map.get(key).items.push(f);

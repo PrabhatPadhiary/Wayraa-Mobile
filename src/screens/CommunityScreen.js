@@ -26,11 +26,12 @@ import {
 } from '../services/storyUpload';
 import { COLORS, SIZES } from '../constants';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
-import { ScreenHeader, FilterChips, Skeleton, JournalCard } from '../components';
-import { getJournalFeed, peekJournalFeed, toggleJournalLike, vibeLabel, AuthRequiredError, getStoredUser } from '../services';
+import { ScreenHeader, FilterChips, Skeleton, JournalCard, EmptyState } from '../components';
+import { getJournalFeed, peekJournalFeed, toggleLike, setLiked, vibeLabel, getStoredUser } from '../services';
 import { openStoryMenu, isMyStory } from '../utils/storyActions';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
+import { useTip } from '../components/Tips';
 
 const SORTS = [
   { key: 'recent', label: 'Recent' },
@@ -70,9 +71,11 @@ export default function CommunityScreen({ navigation }) {
       toValue: headerCollapsed ? 1 : 0,
       duration: 320,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: false, // animating height
+      useNativeDriver: true, // opacity and transforms only (smooth while scrolling)
     }).start();
   }, [headerCollapsed, collapseAnim]);
+  // The "Share a trip story" row's height: the header panel ends above it once collapsed.
+  const [shareRowHeight, setShareRowHeight] = useState(0);
   const onBarScroll = useHideTabBarOnScroll();
   const onListScroll = (e) => {
     onBarScroll(e);   // the tab bar hides on scroll down, returns on scroll up
@@ -80,7 +83,6 @@ export default function CommunityScreen({ navigation }) {
     if (y > 40 && !headerCollapsed) setHeaderCollapsed(true);
     else if (y < 15 && headerCollapsed) setHeaderCollapsed(false);
   };
-  const likeBusy = useRef(new Set());
   // Long-press preview: id of the journal shown in the bottom sheet.
   const [previewId, setPreviewId] = useState(null);
 
@@ -104,6 +106,13 @@ export default function CommunityScreen({ navigation }) {
   });
   const listRef = useRef(null);
   const { isAuthenticated } = useAuth();
+
+  // One-time tip: sharing a story.
+  const shareTipRef = useRef(null);
+  useTip('community_share', shareTipRef, {
+    title: 'Share your trip',
+    text: 'Back from somewhere? Write a story with photos and the places you loved, so other travellers can find them.',
+  });
 
 
   // Open the story composer (signed-in only).
@@ -170,31 +179,13 @@ export default function CommunityScreen({ navigation }) {
   // The feed already comes newest first.
   const shown = sort === 'popular' ? [...matching].sort(byPopularity) : matching;
 
-  const handleLike = async (journal) => {
-    if (likeBusy.current.has(journal.id)) return;
-    likeBusy.current.add(journal.id);
-    // Optimistic: flip now, settle with the server's count.
-    const flip = (j) => (j.id === journal.id
-      ? { ...j, isLiked: !j.isLiked, likesCount: Math.max(0, (j.likesCount || 0) + (j.isLiked ? -1 : 1)) }
-      : j);
-    setJournals((prev) => prev.map(flip));
-    try {
-      const res = await toggleJournalLike(journal.id);
-      setJournals((prev) => prev.map((j) => (j.id === journal.id
-        ? { ...j, isLiked: res.liked, likesCount: res.likesCount }
-        : j)));
-    } catch (e) {
-      setJournals((prev) => prev.map(flip)); // undo
-      if (e instanceof AuthRequiredError) {
-        showAlert('Sign in to like stories', 'Create an account or sign in to like and comment.', [
-          { text: 'Not now', style: 'cancel' },
-          { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
-        ]);
-      }
-    } finally {
-      likeBusy.current.delete(journal.id);
-    }
-  };
+  // Likes show at once on every screen (likesStore); the server follows.
+  const askToSignInToLike = () => showAlert('Sign in to like stories', 'Create an account or sign in to like and comment.', [
+    { text: 'Not now', style: 'cancel' },
+    { text: 'Sign in', onPress: () => navigation.navigate('Welcome') },
+  ]);
+  const handleLike = (journal) => toggleLike(journal, { onAuthRequired: askToSignInToLike });
+  const likeOnDoubleTap = (journal) => setLiked(journal, true, { onAuthRequired: askToSignInToLike });
 
   const listHeader = (
     <View>
@@ -290,22 +281,24 @@ export default function CommunityScreen({ navigation }) {
     }
     if (journals.length === 0) {
       return (
-        <View style={styles.state}>
-          <Feather name="book-open" size={40} color={COLORS.textMuted} />
-          <Text style={styles.stateTitle}>No stories yet</Text>
-          <Text style={styles.stateText}>Trip journals travellers share publicly will show up here.</Text>
-          <TouchableOpacity style={styles.retry} onPress={startStory} accessibilityRole="button">
-            <Text style={styles.retryText}>Share the first one</Text>
-          </TouchableOpacity>
-        </View>
+        <EmptyState
+          style={styles.state}
+          icon="book-outline"
+          title="No stories yet"
+          text="Stories travellers share publicly show up here. Be the first to share yours."
+          actionLabel="Share a trip story"
+          onAction={startStory}
+        />
       );
     }
     return (
-      <View style={styles.state}>
-        <Feather name="search" size={36} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>No matching stories</Text>
-        <Text style={styles.stateText}>Try another search or vibe.</Text>
-      </View>
+      <EmptyState
+        compact
+        style={styles.state}
+        icon="search-outline"
+        title="No matching stories"
+        text="Try another search or vibe."
+      />
     );
   };
 
@@ -323,7 +316,7 @@ export default function CommunityScreen({ navigation }) {
             journal={item}
             onPress={() => navigation.navigate('JournalDetail', { journalId: item.id, title: item.title })}
             onToggleLike={() => handleLike(item)}
-            onDoubleTapLike={() => { if (!item.isLiked) handleLike(item); }}
+            onDoubleTapLike={() => likeOnDoubleTap(item)}
             onLongPress={() => setPreviewId(item.id)}
             onMore={() => openMenu(item)}
           />
@@ -353,6 +346,7 @@ export default function CommunityScreen({ navigation }) {
         title="Community"
         subtitle="Trip stories from fellow travellers"
         collapsed={headerCollapsed}
+        collapseExtra={shareRowHeight}
         // Keep the expanded height: the list's top padding stays put while the
         // header shrinks over it.
         onLayout={(e) => {
@@ -373,6 +367,7 @@ export default function CommunityScreen({ navigation }) {
           </View>
           {/* Always-visible "+" (stays when the header collapses). */}
           <TouchableOpacity
+            ref={shareTipRef}
             style={styles.plusButton}
             onPress={startStory}
             activeOpacity={0.85}
@@ -384,10 +379,10 @@ export default function CommunityScreen({ navigation }) {
         </View>
         {/* Share a trip story: shown at the top, folds away on scroll. */}
         <Animated.View
+          onLayout={(e) => setShareRowHeight(e.nativeEvent.layout.height)}
           style={{
-            opacity: collapseAnim.interpolate({ inputRange: [0, 0.6], outputRange: [1, 0], extrapolate: 'clamp' }),
-            maxHeight: collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [70, 0] }),
-            overflow: 'hidden',
+            opacity: collapseAnim.interpolate({ inputRange: [0, 0.5], outputRange: [1, 0], extrapolate: 'clamp' }),
+            transform: [{ translateY: collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }],
           }}
           pointerEvents={headerCollapsed ? 'none' : 'auto'}
         >

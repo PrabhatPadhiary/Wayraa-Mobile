@@ -10,7 +10,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { GlassView } from 'expo-glass-effect';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { COLORS, SIZES } from '../constants';
+import { useGlassMode } from '../utils/glass';
+import usePillDrag, { tick } from '../hooks/usePillDrag';
 
 /**
  * Horizontal filter selector built like the bottom GlassTabBar: one floating
@@ -88,6 +92,25 @@ export default function FilterChips({
     });
   };
 
+  // Tapping an option: same as before, with a light tick when it changes.
+  const select = (key) => {
+    if (key !== activeKey) tick();
+    onChange(key);
+  };
+
+  // ── Dragging the pill ("pills" + fullWidth): see usePillDrag ──────────
+  // Press on the orange pill and slide; letting go selects the option under
+  // it. On iOS 26 the pill turns to Liquid Glass while you drag.
+  const liquid = useGlassMode() === 'liquid';
+  const { gesture: pillGesture, dragKey, dragAnim } = usePillDrag({
+    x: capsuleX,
+    width: capsuleW,
+    layouts,
+    keys: filters.map((f) => f.key),
+    activeKey,
+    onSelect: onChange,
+  });
+
   const items = (
     <>
       {/* Sliding capsule behind the active item */}
@@ -109,7 +132,7 @@ export default function FilterChips({
             key={filter.key}
             style={styles.item}
             onLayout={handleLayout(filter.key)}
-            onPress={() => onChange(filter.key)}
+            onPress={() => select(filter.key)}
             activeOpacity={0.8}
           >
             {showIcon && (
@@ -139,21 +162,52 @@ export default function FilterChips({
     const compact = compactProp ?? filters.length > 3;
     if (fullWidth) {
       return (
-        <View style={[styles.segment, styles.segmentFull, tinted && styles.segmentTinted]}>
+        <GestureDetector gesture={pillGesture}>
+        <View
+          style={[styles.segment, styles.segmentFull, tinted && styles.segmentTinted]}
+          collapsable={false}
+        >
           {activeLayout && (
             <Animated.View
               pointerEvents="none"
-              style={[styles.segmentCapsule, { left: capsuleX, width: capsuleW }]}
-            />
+              style={[
+                styles.segmentCapsule,
+                {
+                  left: capsuleX,
+                  width: capsuleW,
+                  // A little bigger while held. iOS 26: the orange gives way
+                  // to Liquid Glass while dragging.
+                  transform: [{ scale: dragAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
+                  ...(liquid ? {
+                    backgroundColor: dragAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [COLORS.accent, 'rgba(255, 255, 255, 0)'],
+                    }),
+                    shadowOpacity: dragAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0] }),
+                  } : null),
+                },
+              ]}
+            >
+              {liquid && (
+                <GlassView
+                  style={[StyleSheet.absoluteFill, styles.capsuleGlass]}
+                  glassEffectStyle={{ style: dragKey ? 'regular' : 'none', animate: true, animationDuration: 0.2 }}
+                  colorScheme="light"
+                />
+              )}
+            </Animated.View>
           )}
           {filters.map((filter) => {
-            const isActive = filter.key === activeKey;
+            // While dragging, the option under the pill shows as selected.
+            const isActive = filter.key === (dragKey ?? activeKey);
+            // Under clear glass (iOS 26 drag) the label stays orange, not white.
+            const onGlass = isActive && liquid && !!dragKey;
             return (
               <TouchableOpacity
                 key={filter.key}
                 style={[styles.segmentItem, styles.segmentItemFull, compact && styles.segmentItemFullCompact]}
                 onLayout={handleLayout(filter.key)}
-                onPress={() => onChange(filter.key)}
+                onPress={() => select(filter.key)}
                 activeOpacity={0.8}
               >
                 {/* With 4+ tabs only the selected one shows its icon, so long
@@ -162,7 +216,7 @@ export default function FilterChips({
                   <Ionicons
                     name={filter.icon}
                     size={15}
-                    color={isActive ? COLORS.white : COLORS.accent}
+                    color={isActive && !onGlass ? COLORS.white : COLORS.accent}
                   />
                 )}
                 <Text
@@ -171,6 +225,7 @@ export default function FilterChips({
                     styles.segmentLabelFull,
                     compact && styles.segmentLabelFullCompact,
                     isActive && styles.segmentLabelActive,
+                    onGlass && styles.segmentLabelOnGlass,
                   ]}
                   numberOfLines={1}
                 >
@@ -180,6 +235,7 @@ export default function FilterChips({
             );
           })}
         </View>
+        </GestureDetector>
       );
     }
 
@@ -208,7 +264,7 @@ export default function FilterChips({
                 key={filter.key}
                 style={[styles.segmentItem, compact && styles.segmentItemCompact]}
                 onLayout={handleLayout(filter.key)}
-                onPress={() => onChange(filter.key)}
+                onPress={() => select(filter.key)}
                 activeOpacity={0.8}
               >
                 {/* In compact rows only the active tab shows its icon, which
@@ -412,5 +468,12 @@ const styles = StyleSheet.create({
   segmentLabelActive: {
     color: COLORS.white,
     fontFamily: 'Poppins_600SemiBold',
+  },
+  // iOS 26, while dragging: the label under the clear glass pill.
+  segmentLabelOnGlass: {
+    color: COLORS.accent,
+  },
+  capsuleGlass: {
+    borderRadius: SIZES.radius_full,
   },
 });

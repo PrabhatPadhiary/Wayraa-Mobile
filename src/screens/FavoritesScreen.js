@@ -22,13 +22,14 @@ import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import {
   FilterChips,
   SignInPrompt,
+  EmptyState,
   ScreenHeader,
   GridSkeleton,
   AddToTripSheet,
 } from '../components';
 import { getFavourites, peekFavourites, removeFavourite, addFavourite, AuthRequiredError } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
-import { cityOf, groupByCity, favouriteIcon } from '../utils/favourites';
+import { favouriteCity, groupByCity, favouriteIcon } from '../utils/favourites';
 import useAuth from '../hooks/useAuth';
 import { createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
@@ -325,7 +326,7 @@ export default function FavoritesScreen({ navigation }) {
   const renderTile = ({ item, height }) => {
     const uri = photoFor(item, 500);
     const showImage = uri && !brokenImages[item.id];
-    const city = cityOf(item.vicinity);
+    const city = favouriteCity(item);
     return (
         <TouchableOpacity
           key={item.id}
@@ -413,22 +414,25 @@ export default function FavoritesScreen({ navigation }) {
     // No favourites at all vs. none matching the active filter.
     if (favourites.length === 0) {
       return (
-        <View style={styles.stateContainer}>
-          <Ionicons name="heart-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.stateTitle}>No favourites yet</Text>
-          <Text style={styles.stateSubtitle}>Tap the heart on a place to save it here.</Text>
-        </View>
+        <EmptyState
+          style={styles.stateContainer}
+          icon="heart-outline"
+          title="No favourites yet"
+          text="Tap the heart on any place to save it here. Saved places are grouped by city, ready to add to a trip."
+          actionLabel="Find places"
+          onAction={() => navigation.navigate('Explore')}
+        />
       );
     }
     const filterLabel = FILTERS.find((f) => f.key === activeFilter)?.label?.toLowerCase();
     return (
-      <View style={styles.inlineEmpty}>
-        <Ionicons name="funnel-outline" size={36} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>
-          No {filterLabel} saved{activeCollection ? ` in ${activeCollection.city}` : ''}
-        </Text>
-        <Text style={styles.stateSubtitle}>Try a different filter to see more.</Text>
-      </View>
+      <EmptyState
+        compact
+        style={styles.inlineEmpty}
+        icon="funnel-outline"
+        title={`No ${filterLabel} saved${activeCollection ? ` in ${activeCollection.city}` : ''}`}
+        text="Try a different filter to see more."
+      />
     );
   };
 
@@ -513,8 +517,10 @@ export default function FavoritesScreen({ navigation }) {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
         <SignInPrompt
           icon="heart-outline"
-          title="Save your favourite places"
-          subtitle="Sign in to keep the places you love in one place."
+          title="Save places you love"
+          subtitle="Tap the heart on any place to keep it here, ready to add to your next trip."
+          buttonLabel="Sign in or create account"
+          note="Free. Your saved places follow you to every device."
           onSignIn={() => navigation.navigate('Welcome')}
         />
       </SafeAreaView>
@@ -554,12 +560,18 @@ export default function FavoritesScreen({ navigation }) {
         onLayout={(e) => setHeaderHeight(Math.round(e.nativeEvent.layout.height))}
       >
         {!loading && favourites.length > 0 && (
-          <FilterChips
-            filters={FILTERS}
-            activeKey={activeFilter}
-            onChange={changeFilter}
-            variant="pills"
-          />
+          // Same side margins as the other screens' tab bars.
+          <View style={styles.filterRow}>
+            <FilterChips
+              filters={FILTERS}
+              activeKey={activeFilter}
+              onChange={changeFilter}
+              variant="pills"
+              // Tabs share the screen width, so they fit on narrow phones too.
+              fullWidth
+              tinted={false}
+            />
+          </View>
         )}
       </ScreenHeader>
 
@@ -601,6 +613,9 @@ export default function FavoritesScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  filterRow: {
+    paddingHorizontal: SIZES.spacing_lg,
+  },
   container: {
     flex: 1,
     backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
@@ -671,10 +686,14 @@ const styles = StyleSheet.create({
   collectionActive: {
     borderColor: COLORS.accent,
   },
+  // The photos clip to the inside of the card's 2px border (24 - 2), on their
+  // own: the card's overflow clipping alone leaves square photo corners.
   collage: {
     flex: 1,
     flexDirection: 'row',
     gap: 2,
+    borderRadius: 22,
+    overflow: 'hidden',
   },
   collageMain: {
     flex: 2,
@@ -694,6 +713,8 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: 80,
+    borderBottomLeftRadius: 22,
+    borderBottomRightRadius: 22,
   },
   collectionText: {
     position: 'absolute',

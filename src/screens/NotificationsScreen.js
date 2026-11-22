@@ -13,7 +13,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
-import { ScreenHeader, SignInPrompt } from '../components';
+import { ScreenHeader, SignInPrompt, EmptyState } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
 import { RowListSkeleton } from '../components/skeletons';
 import useAuth from '../hooks/useAuth';
@@ -31,14 +31,19 @@ const TYPE_ICON = {
   places: { name: 'bookmark', bg: COLORS.primaryLight },
   expenses: { name: 'wallet', bg: '#8A6D3B' },
   itinerary: { name: 'calendar', bg: COLORS.primary },
+  likes: { name: 'heart', bg: '#E05024' },
+  comment: { name: 'chatbubble', bg: COLORS.primaryLight },
+  reply: { name: 'return-down-forward', bg: COLORS.primaryLight },
 };
 
 /**
  * NotificationsScreen (the bell on Home): what happened on your trips while
  * you were away. Friends joining, places, expenses and itinerary changes
- * (grouped, like the pushes) and the owner's announcements. Newest first, in
- * Today / Earlier. Opening it marks everything as read; the ones that were new
- * stay highlighted for this visit. Tapping one opens its trip.
+ * (grouped, like the pushes) and the owner's announcements; and likes,
+ * comments and replies on your stories. Newest first, in Today / Earlier.
+ * Opening it marks everything as read; the ones that were new stay
+ * highlighted for this visit. Tapping one opens its trip, or its story at the
+ * comments.
  */
 export default function NotificationsScreen({ navigation }) {
   const { isAuthenticated, isAuthReady } = useAuth();
@@ -95,6 +100,14 @@ export default function NotificationsScreen({ navigation }) {
   };
 
   const openTrip = (item) => {
+    if (item.journalId) {
+      navigation.navigate('Community', {
+        screen: 'JournalDetail',
+        params: { journalId: item.journalId, title: item.title, focusComments: true },
+        initial: false,
+      });
+      return;
+    }
     if (!item.tripId) return;
     navigation.navigate('MyTrips', {
       screen: 'TripDetail',
@@ -125,7 +138,7 @@ export default function NotificationsScreen({ navigation }) {
           !last && styles.rowDivider,
         ]}
         onPress={() => openTrip(item)}
-        disabled={!item.tripId}
+        disabled={!item.tripId && !item.journalId}
         activeOpacity={0.75}
         accessibilityRole="button"
         accessibilityLabel={`${item.isRead ? '' : 'New. '}${item.body}. ${item.title}, ${timeAgo(item.createdAt)}`}
@@ -156,17 +169,23 @@ export default function NotificationsScreen({ navigation }) {
 
   const renderEmpty = () => {
     if (loading) return <RowListSkeleton thumb={44} round label="Loading notifications" />;
+    if (!error) {
+      return (
+        <EmptyState
+          style={styles.state}
+          icon="notifications-outline"
+          title="You're all caught up"
+          text="When friends join your trips or change the plans, or someone likes or comments on your stories, you'll see it here."
+        />
+      );
+    }
     return (
       <View style={styles.state}>
         <View style={styles.stateIcon}>
-          <Feather name={error ? 'cloud-off' : 'bell'} size={28} color={COLORS.primaryLight} />
+          <Feather name="cloud-off" size={28} color={COLORS.primaryLight} />
         </View>
-        <Text style={styles.stateTitle}>{error || 'You\'re all caught up'}</Text>
-        <Text style={styles.stateText}>
-          {error
-            ? 'Pull down to try again.'
-            : 'When friends join your trips, add places, expenses or plans, or the owner posts an announcement, you\'ll see it here.'}
-        </Text>
+        <Text style={styles.stateTitle}>{error}</Text>
+        <Text style={styles.stateText}>Pull down to try again.</Text>
       </View>
     );
   };
@@ -174,7 +193,7 @@ export default function NotificationsScreen({ navigation }) {
   const header = (
     <ScreenHeader
       title="Notifications"
-      subtitle="What's new on your trips"
+      subtitle="What's new on your trips and stories"
       onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       left={(
         <TouchableOpacity
