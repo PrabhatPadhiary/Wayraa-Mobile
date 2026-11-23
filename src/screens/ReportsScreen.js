@@ -4,7 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { ScreenHeader } from '../components';
-import { getOpenReports, removeReported, dismissReports, REPORT_REASONS } from '../services';
+import { getOpenReports, removeReported, dismissReports, suspendUser, REPORT_REASONS } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { RowListSkeleton } from '../components/skeletons';
 import { timeAgo } from '../components/JournalCard';
@@ -42,9 +42,15 @@ export default function ReportsScreen({ navigation }) {
   const act = async (item, action) => {
     setBusyKey(keyOf(item));
     try {
-      if (action === 'remove') await removeReported(item.kind, item.targetId);
+      if (action === 'remove' || action === 'suspend') await removeReported(item.kind, item.targetId);
       else await dismissReports(item.kind, item.targetId);
       setItems((prev) => prev.filter((i) => keyOf(i) !== keyOf(item)));
+      if (action === 'suspend') {
+        await suspendUser(item.authorId);
+        // Their other reports are moot now: their content is hidden from everyone.
+        setItems((prev) => prev.filter((i) => i.authorId !== item.authorId));
+        showAlert('Account suspended', `${item.authorName || 'They'} can't use Wayraa signed in any more, and their stories and comments are hidden.`);
+      }
     } catch (e) {
       showAlert('Couldn\'t do that', e?.message || 'Please try again.');
     } finally {
@@ -60,9 +66,16 @@ export default function ReportsScreen({ navigation }) {
         ? 'The story, its photos, likes and comments are deleted for everyone. This can\'t be undone.'
         : 'The comment and its replies are deleted for everyone. This can\'t be undone.',
       [
+        { text: 'Remove', style: 'destructive', icon: 'trash-outline', onPress: () => act(item, 'remove') },
+        {
+          text: `Remove and suspend ${item.authorName || 'author'}`,
+          style: 'destructive',
+          icon: 'ban-outline',
+          onPress: () => act(item, 'suspend'),
+        },
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => act(item, 'remove') },
       ],
+      { sheet: true },
     );
   };
 

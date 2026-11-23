@@ -344,6 +344,13 @@ export const removeReported = (kind, targetId) =>
 export const dismissReports = (kind, targetId) =>
   safetyCall(`/moderation/reports/${kind}/${encodeURIComponent(targetId)}/dismiss`, 'POST', null, 'Couldn\'t dismiss it');
 
+/**
+ * Suspend an account: they can't use Wayraa signed in, and their stories and
+ * comments are hidden from everyone. Backend: POST /api/moderation/users/{id}/suspend
+ */
+export const suspendUser = (userId) =>
+  safetyCall(`/moderation/users/${encodeURIComponent(userId)}/suspend`, 'POST', null, 'Couldn\'t suspend the account');
+
 /** The story's page on the website, for sharing. */
 export function journalShareUrl(id) {
   return `https://wayraa.com/community/journal/${id}`;

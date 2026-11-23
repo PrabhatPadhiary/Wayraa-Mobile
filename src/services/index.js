@@ -117,6 +117,7 @@ export {
   getOpenReports,
   removeReported,
   dismissReports,
+  suspendUser,
   getJournalsForPlace,
 } from './journalsService';
 export { toggleLike, setLiked, likeStateOf, useLikeState, useLikes } from './likesStore';
