@@ -1586,8 +1586,7 @@ export default function ExploreScreen({ route, navigation }) {
             {(Platform.OS === 'ios' || ANDROID_BLUR) && (
               <BlurView
                 intensity={50}
-                // Android: "default" adds less white over the blur than "light".
-                tint={Platform.OS === 'android' ? 'default' : 'light'}
+                tint="light"
                 style={StyleSheet.absoluteFill}
                 blurTarget={Platform.OS === 'android' ? homeBlurTarget : undefined}
                 blurMethod={Platform.OS === 'android' ? ANDROID_BLUR_METHOD : undefined}
@@ -1820,8 +1819,9 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 40,
   },
   headerGlassFill: {
-    // Over a real blur (iPhone, Android 12+), a light wash is enough.
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 248, 250, 0.55)' : 'rgba(246, 248, 250, 0.3)',
+    // Over a real blur (iPhone, Android 12+), a light wash keeps it bright:
+    // Android's blur lets dark photos through more, so it gets a little more.
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 248, 250, 0.55)' : 'rgba(246, 248, 250, 0.7)',
   },
   // Android 11 and older: no blur, so a denser frost keeps what's behind soft.
   headerGlassFillDense: {
