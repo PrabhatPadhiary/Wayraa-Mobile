@@ -19,6 +19,10 @@ import { COLORS, SIZES } from '../constants';
  * @param {string|null} endDate    ISO
  * @param {(range: { startDate: string|null, endDate: string|null }) => void} onChange
  * @param {string|null} [minDate]  ISO; earlier days are disabled. Defaults to today.
+ * @param {Array<{startDate: string, endDate: string, name?: string}>} [plannedRanges]
+ *   dates already taken by something else (the trip's other stops). Each gets
+ *   its own colour (PLANNED_COLORS, in order) under the selection, with its
+ *   name written below its days; rows grow a little to fit. Still pickable.
  * @param {number} [horizontalPadding] padding of the parent, to size the grid
  */
 
@@ -32,10 +36,22 @@ const SHORT_MONTHS = MONTHS.map((m) => m.slice(0, 3));
 const MONTHS_AHEAD = 36; // three years to plan ahead
 const isWeekend = (col) => col === 0 || col === 6; // Sunday, Saturday
 const CELL_HEIGHT = 44;
+// With planned ranges: room under each date for a stop's name.
+const CELL_HEIGHT_NAMED = 56;
+const CIRCLE = 36;
+
+/** Colours for planned ranges (never orange: that's your selection). */
+export const PLANNED_COLORS = [
+  { bg: '#DCEBFA', ink: '#2F6FA8' }, // blue
+  { bg: '#DDF1E4', ink: '#2E7D4F' }, // green
+  { bg: '#ECE3F7', ink: '#6A4C9C' }, // purple
+  { bg: '#FBEFD2', ink: '#8A5E0B' }, // amber
+  { bg: '#D6F0EE', ink: '#1F7A72' }, // teal
+  { bg: '#F8E0EA', ink: '#A23E64' }, // pink
+];
 const MONTH_TITLE_HEIGHT = 44;
 // Every month is drawn with 6 week rows so all items share one height,
 // which lets the list jump straight to the selected month.
-const MONTH_HEIGHT = MONTH_TITLE_HEIGHT + CELL_HEIGHT * 6 + SIZES.spacing_md;
 
 /** Whole-day number (days since epoch) of an ISO date, read in UTC. */
 export function isoToDay(iso) {
@@ -72,6 +88,7 @@ export default function DateRangeCalendar({
   endDate,
   onChange,
   minDate,
+  plannedRanges,
   horizontalPadding = SIZES.spacing_lg,
 }) {
   const start = isoToDay(startDate);
@@ -79,6 +96,25 @@ export default function DateRangeCalendar({
   const today = todayDay();
   // Never disable a day that is already selected (e.g. editing a past trip).
   const minDay = Math.min(minDate ? isoToDay(minDate) : today, start ?? Infinity);
+
+  // Other stops' days, as whole-day ranges.
+  const planned = useMemo(() => (plannedRanges || [])
+    .map((r, i) => {
+      const s = isoToDay(r.startDate);
+      const e = isoToDay(r.endDate) ?? s;
+      return s == null ? null : {
+        s: Math.min(s, e),
+        e: Math.max(s, e),
+        name: r.name || '',
+        color: PLANNED_COLORS[i % PLANNED_COLORS.length],
+      };
+    })
+    .filter(Boolean), [plannedRanges]);
+  const named = planned.length > 0;
+  const cellHeight = named ? CELL_HEIGHT_NAMED : CELL_HEIGHT;
+  const monthHeight = MONTH_TITLE_HEIGHT + cellHeight * 6 + SIZES.spacing_md;
+  // The date circle sits at the top when names go underneath, else centred.
+  const circleTop = named ? 2 : (CELL_HEIGHT - CIRCLE) / 2;
 
   const cellWidth = Math.floor((Dimensions.get('window').width - horizontalPadding * 2) / 7);
   const gridWidth = cellWidth * 7;
@@ -146,7 +182,7 @@ export default function DateRangeCalendar({
     for (let i = 0; i < 42; i += 1) {
       const dateNum = i - lead + 1;
       if (dateNum < 1 || dateNum > daysInMonth) {
-        cells.push(<View key={i} style={{ width: cellWidth, height: CELL_HEIGHT }} />);
+        cells.push(<View key={i} style={{ width: cellWidth, height: cellHeight }} />);
         continue;
       }
       const day = firstDay + dateNum - 1;
@@ -158,25 +194,53 @@ export default function DateRangeCalendar({
       const hasRange = start != null && end != null && end > start;
       const isToday = day === today;
       const selected = isStart || isEnd;
+      const plan = planned.find((r) => day >= r.s && day <= r.e);
+      const planStart = !!plan && day === plan.s;
+      const planEnd = !!plan && day === plan.e;
+      // The stop's name goes under its first day, and again at the start of
+      // each week row it carries on into.
+      const nameCells = plan && plan.name && (planStart || i % 7 === 0)
+        ? Math.min(plan.e - day + 1, 7 - (i % 7))
+        : 0;
 
       cells.push(
         <TouchableOpacity
           key={i}
           style={[
-            { width: cellWidth, height: CELL_HEIGHT, justifyContent: 'center', alignItems: 'center' },
+            { width: cellWidth, height: cellHeight, alignItems: 'center', paddingTop: circleTop },
           ]}
           onPress={() => pick(day)}
           disabled={disabled}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityState={{ selected, disabled }}
-          accessibilityLabel={`${dateNum} ${MONTHS[item.month]} ${item.year}${isStart ? ', start' : ''}${isEnd ? ', end' : ''}`}
+          accessibilityLabel={`${dateNum} ${MONTHS[item.month]} ${item.year}${isStart ? ', start' : ''}${isEnd ? ', end' : ''}${plan ? ', already planned' : ''}`}
         >
+          {/* Already planned (another stop): a slate band under everything. */}
+          {!!plan && (
+            <View
+              style={[
+                styles.plannedBand,
+                { top: circleTop + 2, backgroundColor: plan.color.bg },
+                planStart && styles.plannedStart,
+                planEnd && styles.plannedEnd,
+              ]}
+            />
+          )}
+          {nameCells > 0 && (
+            <Text
+              style={[styles.plannedName, { top: circleTop + CIRCLE + 1, width: nameCells * cellWidth - 6, color: plan.color.ink }]}
+              numberOfLines={1}
+            >
+              {plan.name}
+            </Text>
+          )}
           {/* Range band: full width in the middle, half width on the start/end days. */}
           {(inRange || (hasRange && (isStart || isEnd))) && (
             <View
               style={[
                 styles.band,
+                { top: circleTop },
                 isStart && styles.bandStart,
                 isEnd && styles.bandEnd,
               ]}
@@ -201,7 +265,7 @@ export default function DateRangeCalendar({
     }
 
     return (
-      <View style={{ height: MONTH_HEIGHT }}>
+      <View style={{ height: monthHeight }}>
         <Text style={styles.monthTitle}>{MONTHS[item.month]} {item.year}</Text>
         <View style={styles.grid}>{cells}</View>
       </View>
@@ -249,7 +313,7 @@ export default function DateRangeCalendar({
         keyExtractor={(m) => m.key}
         renderItem={renderMonth}
         extraData={`${start}-${end}`}
-        getItemLayout={(_, index) => ({ length: MONTH_HEIGHT, offset: MONTH_HEIGHT * index, index })}
+        getItemLayout={(_, index) => ({ length: monthHeight, offset: monthHeight * index, index })}
         initialScrollIndex={initialIndex}
         initialNumToRender={3}
         windowSize={5}
@@ -440,11 +504,34 @@ const styles = StyleSheet.create({
   },
   band: {
     position: 'absolute',
-    top: 4,
-    bottom: 4,
+    height: CIRCLE,
     left: 0,
     right: 0,
     backgroundColor: '#FBE1D9',
+  },
+  plannedBand: {
+    position: 'absolute',
+    height: CIRCLE - 4,
+    left: 0,
+    right: 0,
+  },
+  plannedName: {
+    position: 'absolute',
+    left: 3,
+    fontSize: 9.5,
+    lineHeight: 13,
+    fontFamily: 'Poppins_600SemiBold',
+    zIndex: 1,
+  },
+  plannedStart: {
+    left: 4,
+    borderTopLeftRadius: 14,
+    borderBottomLeftRadius: 14,
+  },
+  plannedEnd: {
+    right: 4,
+    borderTopRightRadius: 14,
+    borderBottomRightRadius: 14,
   },
   bandStart: {
     left: '50%',

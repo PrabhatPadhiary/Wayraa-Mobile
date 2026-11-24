@@ -121,6 +121,11 @@ export async function hydrateCache(uid) {
   }
 }
 
+// One person's history kept outside the cache: recent searches (Explore),
+// recent cities and the city being explored (location sheet). Cleared with
+// the caches, so the next account on this phone starts clean.
+const PERSONAL_KEYS = ['wayraa_recent_searches', 'wayraa_recent_cities_v1', 'wayraa_explore_city_v1'];
+
 /** Log out / account deleted: forget everything, in memory and on the phone. */
 export async function clearAllCaches() {
   generation += 1;
@@ -129,7 +134,8 @@ export async function clearAllCaches() {
   ownerUid = null;
   try {
     const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(STORAGE_PREFIX));
-    if (keys.length) await AsyncStorage.multiRemove(keys);
+    keys.push(...PERSONAL_KEYS);
+    await AsyncStorage.multiRemove(keys);
   } catch {
     // Nothing to clear.
   }

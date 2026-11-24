@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
 import { searchPlaces, getPlaceDetails } from '../services';
-import DateRangeCalendar from './DateRangeCalendar';
+import DateRangeCalendar, { PLANNED_COLORS } from './DateRangeCalendar';
 import { DateRangeSummary } from './DateRangeSheet';
 import { isoToDay } from '../utils/itinerary';
 import { formatDateRange } from '../utils/tripDates';
@@ -63,8 +63,9 @@ const SEARCH_DELAY_MS = 300;
  * @param {string|null} [suggestedStart]  prefill for the start date (add mode)
  * @param {Array} [otherStops]  the trip's other stops, to note overlapping dates
  * @param {() => void} onClose
- * @param {(result: { destination?: object, startDate: string|null, endDate: string|null }) => Promise<void>} onSubmit
- *   `destination` (add mode only): { googlePlaceId, name, latitude, longitude, photoUrl }
+ * @param {(result: { destination?: object, details?: Promise, startDate: string|null, endDate: string|null }) => Promise<void>} onSubmit
+ *   Add mode only: `destination` { googlePlaceId, name } and `details`, the
+ *   place lookup (coordinates, photo) already started, for the parent to await.
  */
 export default function DestinationSheet({
   visible,
@@ -129,6 +130,9 @@ export default function DestinationSheet({
     return () => clearTimeout(timer);
   }, [query, visible, isEdit, picked]);
 
+  // The other stops that have dates, shaded in the calendar.
+  const plannedStops = otherStops.filter((o) => o.startDate || o.endDate);
+
   const alreadyInTrip = (result) => existingPlaceIds.includes(result.placeId);
 
   const submit = async () => {
@@ -142,17 +146,15 @@ export default function DestinationSheet({
       if (isEdit) {
         await onSubmit({ startDate: startIso, endDate: endIso });
       } else {
-        // Coordinates and a photo come from the place details.
-        const details = await getPlaceDetails(picked.placeId);
-        const geo = details?.geometry;
+        // Hand over straight away: the trip shows the stop at once and saves
+        // it in the background. Coordinates and a photo come from the place
+        // details, looked up meanwhile (`details` is that lookup).
         await onSubmit({
           destination: {
             googlePlaceId: picked.placeId,
-            name: picked.name || details?.name || picked.description,
-            latitude: geo?.latitude ?? geo?.location?.lat ?? null,
-            longitude: geo?.longitude ?? geo?.location?.lng ?? null,
-            photoUrl: details?.photoUrl || null,
+            name: picked.name || picked.description,
           },
+          details: getPlaceDetails(picked.placeId),
           startDate: startIso,
           endDate: endIso,
         });
@@ -263,9 +265,26 @@ export default function DestinationSheet({
           </View>
         );
       })()}
+      {/* Key for the coloured days: the trip's other stops, in the
+          calendar's colours. */}
+      {plannedStops.length > 0 && (
+        <View style={styles.plannedKey}>
+          {plannedStops.map((o, i) => {
+            const c = PLANNED_COLORS[i % PLANNED_COLORS.length];
+            return (
+              <View key={o.id || o.name} style={[styles.plannedChip, { backgroundColor: c.bg }]}>
+                <Text style={[styles.plannedChipText, { color: c.ink }]} numberOfLines={1}>
+                  {o.name} · {formatDateRange(o.startDate, o.endDate)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
       <DateRangeCalendar
         startDate={startDate}
         endDate={endDate}
+        plannedRanges={plannedStops}
         onChange={(r) => { setStartDate(r.startDate); setEndDate(r.endDate); setError(''); }}
       />
     </>
@@ -437,6 +456,22 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
+  },
+  plannedKey: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: SIZES.spacing_sm,
+  },
+  plannedChip: {
+    maxWidth: '100%',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: SIZES.radius_full,
+  },
+  plannedChipText: {
+    fontSize: SIZES.xs + 1,
+    fontFamily: 'Poppins_600SemiBold',
   },
   takenText: {
     fontSize: SIZES.sm,

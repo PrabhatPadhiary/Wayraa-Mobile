@@ -133,7 +133,7 @@ export default function UnfinishedTripCard({ navigation, upcoming, style, onHeig
         onHeight?.(e.nativeEvent.layout.height);
       }}
     >
-      {pageCount === 1 ? (upcoming ? renderUpcoming() : renderRow(drafts[0])) : (
+      {pageCount === 1 ? (upcoming ? renderUpcoming() : renderRow(drafts[0])) : !width ? null : (
         <>
           <ScrollView
             ref={scrollRef}
@@ -167,6 +167,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.white,
+    overflow: 'hidden',
   },
   dots: {
     flexDirection: 'row',
@@ -185,6 +186,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   },
   icon: {
+    flexShrink: 0,
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -192,8 +194,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FDEFEA',
   },
+  // The text gives way (cut with "…"); Continue and ✕ always keep their room.
   body: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
     minWidth: 0,
   },
   title: {
@@ -213,11 +218,13 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
   },
   continueText: {
+    flexShrink: 0,
     fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.accentDeep,
   },
   close: {
+    flexShrink: 0,
     width: 28,
     height: 28,
     justifyContent: 'center',

@@ -27,7 +27,7 @@ import { createTrip, addPlaceToTrip, getPlaceDetails, placeCoords, findCityOf, A
 import { showAlert } from '../components/AppDialog';
 import { formatDateRange } from '../utils/tripDates';
 import { LoaderOverlay } from '../components/WayraaLoader';
-import { getTripDraft, findTripDraftFor, saveTripDraft, clearTripDraft, newDraftId } from '../services/tripDraft';
+import { getTripDraft, findTripDraftFor, saveTripDraft, clearTripDraft, clearTripDraftsFor, newDraftId } from '../services/tripDraft';
 
 // The destination photo's share of the screen height (status bar included),
 // close to the trip page (46%) and place page (50%).
@@ -325,6 +325,8 @@ export default function CreateTripScreen({ navigation, route }) {
       // the list. The Home tab stays on the page you started from.
       allowLeave.current = true;
       clearDraft();
+      // And any other unfinished trip to the same place: it's planned now.
+      clearTripDraftsFor(target.placeId);
       navigation.navigate('Main', created?.id
         ? {
           screen: 'MyTrips',

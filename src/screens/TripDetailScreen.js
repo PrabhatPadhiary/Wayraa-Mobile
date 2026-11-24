@@ -302,7 +302,6 @@ export default function TripDetailScreen({ navigation, route }) {
   // Destination sheet: null (closed) | { mode: 'add' } | { mode: 'edit', dest }
   const [destSheet, setDestSheet] = useState(null);
   // Destination id currently being removed (shows a spinner on its row).
-  const [removingDestId, setRemovingDestId] = useState('');
   // Saved-place id currently being removed (shows a spinner on its row).
   const [removingPlaceId, setRemovingPlaceId] = useState('');
   // Saved-place ids whose thumbnail failed to load (shows the placeholder).
@@ -585,23 +584,60 @@ export default function TripDetailScreen({ navigation, route }) {
 
   // Stops are kept in date order by the backend (the primary destination
   // never changes when they move), so a reload shows the new order.
-  const handleAddDestination = async ({ destination, startDate, endDate }) => {
+  //
+  // The stop shows at once (marked "Adding…") and the sheet closes; it's
+  // saved in the background. `details` is the place lookup the sheet started
+  // (for coordinates and a photo). If saving fails, the stop is taken out
+  // again and the error shown.
+  const handleAddDestination = ({ destination, details, startDate, endDate }) => {
     const nextOrder = sortedDestinations.reduce((max, d) => Math.max(max, d.order ?? 0), -1) + 1;
-    const created = await addTripDestination(trip.id, {
-      ...destination,
-      order: nextOrder,
-      startDate,
-      endDate,
-    });
-    if (created?.id && (startDate || endDate)) {
-      await updateDestinationDates(trip.id, [
-        ...backfillPrimary(created.id),
-        { destinationId: created.id, startDate, endDate },
-      ]);
-    }
+    const tempId = `adding-${Date.now()}`;
+    const backfill = backfillPrimary(null);
+    setTrip((prev) => (prev ? {
+      ...prev,
+      destinations: [...(prev.destinations || []), {
+        id: tempId,
+        saving: true,
+        name: destination.name,
+        googlePlaceId: destination.googlePlaceId,
+        order: nextOrder,
+        startDate,
+        endDate,
+        places: [],
+      }],
+    } : prev));
     setDestSheet(null);
-    if (created?.id) setAddDestId(created.id);
-    await loadTrip();
+
+    (async () => {
+      try {
+        const found = details ? await details.catch(() => null) : null;
+        const geo = found?.geometry;
+        const created = await addTripDestination(trip.id, {
+          ...destination,
+          name: destination.name || found?.name,
+          latitude: geo?.latitude ?? geo?.location?.lat ?? null,
+          longitude: geo?.longitude ?? geo?.location?.lng ?? null,
+          photoUrl: found?.photoUrl || null,
+          order: nextOrder,
+          startDate,
+          endDate,
+        });
+        if (created?.id && (startDate || endDate)) {
+          await updateDestinationDates(trip.id, [
+            ...backfill,
+            { destinationId: created.id, startDate, endDate },
+          ]);
+        }
+        if (created?.id) setAddDestId(created.id);
+        await loadTrip();
+      } catch (e) {
+        setTrip((prev) => (prev ? {
+          ...prev,
+          destinations: (prev.destinations || []).filter((d) => d.id !== tempId),
+        } : prev));
+        showAlert('Could not add the stop', e?.message || 'Please try again.');
+      }
+    })();
   };
 
   // From the Itinerary tab when the trip has no dates: date the first stop,
@@ -680,16 +716,23 @@ export default function TripDetailScreen({ navigation, route }) {
         {
           text: 'Remove',
           style: 'destructive',
+          // Gone from the list at once; removed on the server in the
+          // background. If that fails, the stop comes back and we say why.
           onPress: async () => {
-            setRemovingDestId(dest.id);
+            if (addDestId === dest.id) setAddDestId('');
+            setTrip((prev) => (prev ? {
+              ...prev,
+              destinations: (prev.destinations || []).filter((d) => d.id !== dest.id),
+            } : prev));
             try {
               await removeTripDestination(trip.id, dest.id);
-              if (addDestId === dest.id) setAddDestId('');
               await loadTrip();
             } catch (e) {
+              setTrip((prev) => (prev && !(prev.destinations || []).some((d) => d.id === dest.id) ? {
+                ...prev,
+                destinations: [...(prev.destinations || []), dest],
+              } : prev));
               showAlert('Could not remove', e?.message || 'Please try again.');
-            } finally {
-              setRemovingDestId('');
             }
           },
         },
@@ -1322,7 +1365,7 @@ export default function TripDetailScreen({ navigation, route }) {
                   key={d.id}
                   style={styles.timelineRow}
                   onPress={() => {
-                    if (!multi) return;
+                    if (!multi || d.saving) return;
                     setAddDestId(d.id);
                   }}
                   activeOpacity={multi ? 0.85 : 1}
@@ -1347,12 +1390,10 @@ export default function TripDetailScreen({ navigation, route }) {
                         )}
                       </View>
                       <Text style={styles.timelineMeta} numberOfLines={1}>
-                        {range || 'Dates not set'} · {count} {count === 1 ? 'place' : 'places'}
+                        {range || 'Dates not set'} · {d.saving ? 'Adding…' : `${count} ${count === 1 ? 'place' : 'places'}`}
                       </Text>
                     </View>
-                    {removingDestId === d.id ? (
-                      <ActivityIndicator size="small" color={COLORS.accent} />
-                    ) : canEdit && (
+                    {!d.saving && canEdit && (
                       <TouchableOpacity
                         style={styles.timelineMore}
                         onPress={() => openDestinationMenu(d, isPrimary)}
@@ -1524,22 +1565,20 @@ export default function TripDetailScreen({ navigation, route }) {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stopChips}>
                 {sortedDestinations.map((d, i) => {
                   const on = addTarget?.id === d.id;
-                  const n = (d.places || []).length;
                   return (
                     <TouchableOpacity
                       key={d.id}
                       style={[styles.stopChip, on && styles.stopChipOn]}
-                      onPress={() => setAddDestId(d.id)}
+                      onPress={() => { if (!d.saving) setAddDestId(d.id); }}
                       activeOpacity={0.8}
                       accessibilityRole="tab"
                       accessibilityState={{ selected: on }}
-                      accessibilityLabel={`Stop ${i + 1}, ${d.name}, ${n} saved`}
+                      accessibilityLabel={`Stop ${i + 1}, ${d.name}`}
                     >
                       <View style={[styles.stopChipDot, on && styles.stopChipDotOn]}>
                         <Text style={styles.stopChipDotText}>{i + 1}</Text>
                       </View>
                       <Text style={[styles.stopChipName, on && styles.stopChipNameOn]} numberOfLines={1}>{d.name}</Text>
-                      <Text style={[styles.stopChipCount, on && styles.stopChipCountOn]}>{n}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -1803,7 +1842,12 @@ export default function TripDetailScreen({ navigation, route }) {
         editing={destSheet?.mode === 'edit' ? destSheet.dest : null}
         existingPlaceIds={sortedDestinations.map((d) => d.googlePlaceId)}
         suggestedStart={sortedDestinations[sortedDestinations.length - 1]?.endDate || null}
-        otherStops={sortedDestinations.filter((d) => d.id !== destSheet?.dest?.id)}
+        otherStops={sortedDestinations
+          .filter((d) => d.id !== destSheet?.dest?.id)
+          // A lone undated stop (older trips) covers the trip's own dates.
+          .map((d) => (sortedDestinations.length === 1 && !d.startDate && !d.endDate
+            ? { ...d, startDate: trip?.startDate || null, endDate: trip?.endDate || null }
+            : d))}
         onClose={() => setDestSheet(null)}
         onSubmit={destSheet?.mode === 'edit' ? handleEditDates : handleAddDestination}
       />
@@ -2165,14 +2209,6 @@ const styles = StyleSheet.create({
   stopChipNameOn: {
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
-  },
-  stopChipCount: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textMuted,
-  },
-  stopChipCountOn: {
-    color: COLORS.accentDeep,
   },
   spotFilters: {
     gap: 6,
