@@ -774,12 +774,21 @@ export default function TripDetailScreen({ navigation, route }) {
 
   // Open the chosen destination in picking mode: its cards get an add/remove
   // toggle for this trip, and back returns here (the trip reloads on focus).
+  // Which tab adding opens on: the one you're looking at, or from All, the
+  // first type this stop has nothing saved in yet (stays, then food, then
+  // activities).
+  const addCategory = placeTab !== 'all'
+    ? placeTab
+    : (['stays', 'food', 'activities'].find((k) => !shownPlaces.some((p) => sectionKeyFor(p.category) === k)) || 'stays');
+  const addSection = PLACE_FILTERS.find((s) => s.key === addCategory) || PLACE_FILTERS[1];
+
   const openAddPlaces = () => {
     if (!trip || !addTarget?.googlePlaceId) return;
     navigation.navigate('DestinationDetail', {
       placeId: addTarget.googlePlaceId,
       name: addTarget.name,
       secondary: '',
+      startCategory: addCategory,
       pickForTrip: {
         tripId: trip.id,
         destinationId: addTarget.id,
@@ -1488,9 +1497,10 @@ export default function TripDetailScreen({ navigation, route }) {
               <View style={styles.flexShrink}>
                 <View style={styles.placesTitleRow}>
                   <SectionTitle icon="bookmark" tint="#FDEFEA" color={COLORS.accent} title="Saved spots" />
-                  <Text style={styles.sectionCount}>{allPlaces.length}</Text>
+                  <Text style={styles.sectionCount}>{shownPlaces.length}</Text>
                 </View>
-                {!!addTarget && (
+                {/* One stop: say where. Several: the stop chips below say it. */}
+                {!!addTarget && !multiStop && (
                   <Text style={styles.spotsWhere} numberOfLines={1}>In {addTarget.name}</Text>
                 )}
               </View>
@@ -1500,13 +1510,41 @@ export default function TripDetailScreen({ navigation, route }) {
                   onPress={openAddPlaces}
                   activeOpacity={0.85}
                   accessibilityRole="button"
-                  accessibilityLabel={`Add spots in ${addTarget.name}`}
+                  accessibilityLabel={`Add ${addSection.noun} in ${addTarget.name}`}
                 >
                   <Ionicons name="add" size={16} color={COLORS.primary} />
                   <Text style={styles.addStopText}>Add</Text>
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* Several stops: which stop's spots these are, numbered like the
+                Destinations timeline. Picking one here picks it up there too. */}
+            {multiStop && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.stopChips}>
+                {sortedDestinations.map((d, i) => {
+                  const on = addTarget?.id === d.id;
+                  const n = (d.places || []).length;
+                  return (
+                    <TouchableOpacity
+                      key={d.id}
+                      style={[styles.stopChip, on && styles.stopChipOn]}
+                      onPress={() => setAddDestId(d.id)}
+                      activeOpacity={0.8}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`Stop ${i + 1}, ${d.name}, ${n} saved`}
+                    >
+                      <View style={[styles.stopChipDot, on && styles.stopChipDotOn]}>
+                        <Text style={styles.stopChipDotText}>{i + 1}</Text>
+                      </View>
+                      <Text style={[styles.stopChipName, on && styles.stopChipNameOn]} numberOfLines={1}>{d.name}</Text>
+                      <Text style={[styles.stopChipCount, on && styles.stopChipCountOn]}>{n}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
 
             {/* Type filters: plain text chips with counts. */}
             {allPlaces.length > 0 && (
@@ -1546,7 +1584,7 @@ export default function TripDetailScreen({ navigation, route }) {
                   </Text>
                   {canEdit && !!addTarget?.googlePlaceId && (
                     <TouchableOpacity style={styles.emptyButton} onPress={openAddPlaces} activeOpacity={0.9}>
-                      <Text style={styles.emptyButtonText}>Add places in {addTarget.name}</Text>
+                      <Text style={styles.emptyButtonText}>Add {addSection.noun} in {addTarget.name}</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -2080,6 +2118,61 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textSecondary,
+  },
+  stopChips: {
+    gap: SIZES.spacing_sm,
+    paddingTop: SIZES.spacing_md,
+  },
+  stopChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    maxWidth: 220,
+    paddingLeft: 5,
+    paddingRight: SIZES.spacing_md,
+    paddingVertical: 5,
+    borderRadius: SIZES.radius_full,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+  },
+  stopChipOn: {
+    borderColor: COLORS.accent,
+    backgroundColor: '#FDEFEA',
+  },
+  stopChipDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: COLORS.textMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stopChipDotOn: {
+    backgroundColor: COLORS.accent,
+  },
+  stopChipDotText: {
+    fontSize: 11,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+  stopChipName: {
+    flexShrink: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  stopChipNameOn: {
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  stopChipCount: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textMuted,
+  },
+  stopChipCountOn: {
+    color: COLORS.accentDeep,
   },
   spotFilters: {
     gap: 6,

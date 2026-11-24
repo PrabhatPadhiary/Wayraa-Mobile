@@ -85,7 +85,11 @@ export default function DestinationDetailScreen({ navigation, route }) {
   const contentTop = headerHeight + SIZES.spacing_base;
 
   const [details, setDetails] = useState(null);
-  const [activeCategory, setActiveCategory] = useState('stays');
+  // Opens on the tab asked for (e.g. Activities when adding activities to a
+  // trip), else Stays.
+  const [activeCategory, setActiveCategory] = useState(() => (
+    CATEGORIES.some((c) => c.key === route.params?.startCategory) ? route.params.startCategory : 'stays'
+  ));
   // Results + load state cached per category so switching tabs is instant on revisit.
   const [resultsByCategory, setResultsByCategory] = useState({});
   const [loadingCategory, setLoadingCategory] = useState({});
