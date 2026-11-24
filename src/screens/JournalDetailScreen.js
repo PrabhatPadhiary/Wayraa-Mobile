@@ -41,6 +41,7 @@ import { openStoryMenu, isMyStory, confirmBlock } from '../utils/storyActions';
 import { JournalDetailSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
@@ -70,6 +71,8 @@ function Avatar({ name, photoUrl, size = 36 }) {
  * comment notification) scrolls down to the comments once loaded.
  */
 export default function JournalDetailScreen({ navigation, route }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const { journalId, title: routeTitle, focusComments } = route.params || {};
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -458,8 +461,8 @@ export default function JournalDetailScreen({ navigation, route }) {
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
           keyboardDismissMode="interactive"
-          onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
-          scrollEventThrottle={32}
+          onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; onBarScroll(e); }}
+          scrollEventThrottle={16}
           contentContainerStyle={styles.scrollContent}
           refreshControl={(
             <RefreshControl

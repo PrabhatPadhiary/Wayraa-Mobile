@@ -15,6 +15,7 @@ import { ScreenHeader, Skeleton, PlaceTile } from '../components';
 import PlaceGridCard from '../components/PlaceGridCard';
 import { getPlacesByTheme, getCurrentLocation, reverseGeocode, isRegionResult } from '../services';
 import { placePhotoUrl } from '../utils/placePhotos';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 // Fallback copy per theme if the route doesn't pass a label.
 const THEME_LABELS = {
@@ -59,6 +60,8 @@ function distanceText(km) {
  * Route params: theme, title.
  */
 export default function CategoryResultsScreen({ route, navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const theme = route?.params?.theme;
   const title = route?.params?.title || THEME_LABELS[theme] || 'Destinations';
   const curated = CURATED_DESTINATIONS[theme] || [];
@@ -183,6 +186,8 @@ export default function CategoryResultsScreen({ route, navigation }) {
       <StatusBar barStyle="dark-content" />
 
       <ScrollView
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         contentContainerStyle={{ paddingTop: headerHeight + SIZES.spacing_sm, paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
       >

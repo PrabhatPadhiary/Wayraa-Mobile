@@ -21,6 +21,7 @@ import { getNotifications, markNotificationsRead } from '../services/inboxServic
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { timeAgo, isToday } from '../utils/timeAgo';
 import RefreshSpinner from '../components/RefreshSpinner';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 const PAGE = 30;
 
@@ -48,6 +49,8 @@ const TYPE_ICON = {
  * comments.
  */
 export default function NotificationsScreen({ navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const { isAuthenticated, isAuthReady } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -236,6 +239,8 @@ export default function NotificationsScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <SectionList
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         sections={sections}
         keyExtractor={(n) => String(n.id)}
         renderItem={renderItem}

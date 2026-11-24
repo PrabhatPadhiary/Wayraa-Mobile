@@ -38,6 +38,7 @@ import { distanceKm } from '../utils/itinerary';
 import { useTip } from '../components/Tips';
 import * as Haptics from 'expo-haptics';
 import { PopOnTrue } from '../components/Motion';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.5);
@@ -110,6 +111,8 @@ function SectionTitle({ icon, tint, color, title, right }) {
  *    a photo grid (tap for full screen) and Google reviews.
  */
 export default function PlaceDetailScreen({ navigation, route }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const {
     placeId,
     name: routeName,
@@ -413,7 +416,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
         scrollEventThrottle={16}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: true,
-          listener: onScroll,
+          listener: (e) => { onScroll(e); onBarScroll(e); },
         })}
         contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
       >

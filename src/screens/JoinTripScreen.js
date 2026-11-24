@@ -22,6 +22,7 @@ import { ROLE_INFO } from '../components/TravellersSheet';
 import { getInvitationPreview, joinTrip, parseInviteId, AuthRequiredError } from '../services';
 import { normalizePhotoUrl } from '../utils/placePhotos';
 import { LoaderOverlay } from '../components/WayraaLoader';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 /**
  * Join a trip from an invite.
@@ -35,6 +36,8 @@ import { LoaderOverlay } from '../components/WayraaLoader';
  * Shows the trip and the role you'll get, then joins and opens the trip.
  */
 export default function JoinTripScreen({ navigation, route }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const initialId = parseInviteId(route?.params?.inviteId);
   const [input, setInput] = useState('');
   const [inviteId, setInviteId] = useState(initialId);
@@ -134,7 +137,12 @@ export default function JoinTripScreen({ navigation, route }) {
         >
           <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
         </TouchableOpacity>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          onScroll={onBarScroll}
+          scrollEventThrottle={16}
+        >
 
           <Text style={styles.title}>Join a trip</Text>
           <Text style={styles.subtitle}>

@@ -46,6 +46,7 @@ import RankSheet from '../components/RankSheet';
 import RankCelebration from '../components/RankCelebration';
 import useRankUp from '../hooks/useRankUp';
 import { rankFromProfile } from '../utils/ranks';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
@@ -83,6 +84,8 @@ function Row({ icon, label, value, onPress, danger, last }) {
  * privacy, legal pages, log out and delete account are in Settings.
  */
 export default function ProfileScreen({ navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const insets = useSafeAreaInsets();
   const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
   // On both platforms: Android is drawn edge to edge, so its window isn't
@@ -174,6 +177,7 @@ export default function ProfileScreen({ navigation }) {
   const onScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
     useNativeDriver: true,
     listener: (e) => {
+      onBarScroll(e);
       const on = e.nativeEvent.contentOffset.y > BAR_SHOW_AT + 15; // tappable once mostly in
       setBarOn((prev) => (prev === on ? prev : on));
     },

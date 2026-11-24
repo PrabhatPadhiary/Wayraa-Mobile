@@ -8,6 +8,7 @@ import { getOpenReports, removeReported, dismissReports, suspendUser, REPORT_REA
 import { showAlert } from '../components/AppDialog';
 import { RowListSkeleton } from '../components/skeletons';
 import { timeAgo } from '../components/JournalCard';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 const REASON_LABEL = Object.fromEntries(REPORT_REASONS.map((r) => [r.key, r.label]));
 
@@ -16,6 +17,8 @@ const REASON_LABEL = Object.fromEntries(REPORT_REASONS.map((r) => [r.key, r.labe
  * every reported story and comment, with Remove or Dismiss.
  */
 export default function ReportsScreen({ navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -152,6 +155,8 @@ export default function ReportsScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <FlatList
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         data={items}
         keyExtractor={keyOf}
         renderItem={renderItem}

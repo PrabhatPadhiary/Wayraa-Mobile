@@ -36,6 +36,7 @@ import { showAlert } from '../components/AppDialog';
 import { openPrivacyPolicy, openTerms, openAbout, DOWNLOAD_URL, SUPPORT_EMAIL } from '../utils/legal';
 import { resetTips } from '../components/Tips';
 import { LoaderOverlay } from '../components/WayraaLoader';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 /** One row in a settings-style group. */
 function Row({ icon, label, value, onPress, danger, last }) {
@@ -66,6 +67,8 @@ function Row({ icon, label, value, onPress, danger, last }) {
  * Your photo, name, stats and trips live on Profile.
  */
 export default function SettingsScreen({ navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const insets = useSafeAreaInsets();
   const { user: firebaseUser, isAuthenticated, isAuthReady } = useAuth();
   const keyboardHeight = useKeyboardHeight();
@@ -217,6 +220,8 @@ export default function SettingsScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <ScrollView
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: headerHeight + SIZES.spacing_sm, paddingBottom: 140 }}
       >

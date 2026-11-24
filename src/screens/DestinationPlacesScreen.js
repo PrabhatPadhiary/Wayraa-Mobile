@@ -34,6 +34,7 @@ import {
 } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { GridSkeleton } from '../components/skeletons';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 /** A trip place category from Google types: food, stay or activity. */
 function tripCategoryFromTypes(types = []) {
@@ -74,6 +75,8 @@ const SUGGEST_RADIUS = 50000; // metres around the destination
  * of results, Text Search), then matching places that open directly.
  */
 export default function DestinationPlacesScreen({ navigation, route }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const {
     placeId,
     destinationName,
@@ -550,6 +553,8 @@ export default function DestinationPlacesScreen({ navigation, route }) {
       )}
 
       <FlatList
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         data={places}
         keyExtractor={(item) => item.placeId}
         renderItem={renderPlace}

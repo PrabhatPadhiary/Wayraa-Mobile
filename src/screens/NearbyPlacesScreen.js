@@ -16,6 +16,7 @@ import PlaceGridCard from '../components/PlaceGridCard';
 import { getNearbyPlaces, getCurrentLocation } from '../services';
 import { distanceKm } from '../utils/itinerary';
 import RefreshSpinner from '../components/RefreshSpinner';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 // What the list can show: `type` is the Google place type the backend asks
 // for, `radius` (metres) how far to look — food and coffee close by, sights
@@ -54,6 +55,8 @@ function withDistance(places, from) {
  *  - places (Home's "Near you" list, shown at once for Things to do)
  */
 export default function NearbyPlacesScreen({ navigation, route }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const { coords: startCoords = null, label = null, places: startPlaces = [] } = route?.params || {};
 
   const [kind, setKind] = useState('sights');
@@ -154,6 +157,8 @@ export default function NearbyPlacesScreen({ navigation, route }) {
       <StatusBar barStyle="dark-content" />
 
       <FlatList
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         data={places}
         keyExtractor={(item) => item.placeId}
         renderItem={renderCard}

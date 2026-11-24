@@ -8,6 +8,7 @@ import { getMyJournals, toggleLike, setLiked } from '../services';
 import { openStoryMenu } from '../utils/storyActions';
 import { RowListSkeleton } from '../components/skeletons';
 import RefreshSpinner from '../components/RefreshSpinner';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 /**
  * Your stories: everything you've posted, including ones hidden from
@@ -15,6 +16,8 @@ import RefreshSpinner from '../components/RefreshSpinner';
  * (edit, hide / show, share, delete). Opened from Profile.
  */
 export default function MyStoriesScreen({ navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const [stories, setStories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -68,6 +71,8 @@ export default function MyStoriesScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <FlatList
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         data={stories}
         keyExtractor={(j) => String(j.id)}
         renderItem={({ item }) => (

@@ -33,6 +33,7 @@ import {
 import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
 import useTripPicks from '../hooks/useTripPicks';
 import { cityCentre } from '../utils/address';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 
 /**
@@ -74,6 +75,8 @@ const FILTER_ICONS = {
  * and the bottom button becomes "Done".
  */
 export default function DestinationDetailScreen({ navigation, route }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const { placeId, name, secondary, pickForTrip } = route.params || {};
   const insets = useSafeAreaInsets();
 
@@ -517,7 +520,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
         )}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
-        onScroll={onListScroll}
+        onScroll={(e) => { onListScroll(e); onBarScroll(e); }}
       />
 
       {/* FRONT LAYER: solid white header panel — title + location + centered

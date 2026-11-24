@@ -10,12 +10,15 @@ import { getBlockedUsers, unblockUser } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { RowListSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
+import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 /**
  * Blocked people (from Profile): everyone you've blocked, with Unblock.
  * Their stories and comments come back once unblocked.
  */
 export default function BlockedPeopleScreen({ navigation }) {
+  // The bottom bar slides away while scrolling down, back on scroll up.
+  const onBarScroll = useHideTabBarOnScroll();
   const [people, setPeople] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -102,6 +105,8 @@ export default function BlockedPeopleScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <FlatList
+        onScroll={onBarScroll}
+        scrollEventThrottle={16}
         data={people}
         keyExtractor={(p) => String(p.id)}
         renderItem={renderPerson}
