@@ -11,7 +11,6 @@ import {
   Dimensions,
   Platform,
   Share,
-  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -28,15 +27,12 @@ import {
   getFavourites,
   addFavourite,
   removeFavourite,
-  getTripById,
-  addPlaceToTrip,
-  removeTripPlace,
   journalCategoryFor,
   AuthRequiredError,
   peekFavourites,
 } from '../services';
 import { buildTripPlaceDto, toTripCategory, createTripParamsForPlace } from '../utils/tripPlaces';
-import { showAlert } from '../components/AppDialog';
+import useTripPicks from '../hooks/useTripPicks';
 import { areaFromAddress as areaOf, formatCentreDistance } from '../utils/address';
 import { distanceKm } from '../utils/itinerary';
 import { useTip } from '../components/Tips';
@@ -229,61 +225,33 @@ export default function PlaceDetailScreen({ navigation, route }) {
   // known yet), null when it isn't.
   const pickTripId = pickForTrip?.tripId;
   const pickDestId = pickForTrip?.destinationId;
-  const [pickedId, setPickedId] = useState(() => {
-    const hit = (pickForTrip?.saved || []).find(([pid]) => pid === placeId);
-    return hit ? (hit[1] || '') : null;
+  // Added or removed the moment you tap; saving happens in the background.
+  const { picked: pickedOnStop, toggle: togglePlace, refresh: refreshPicked } = useTripPicks({
+    tripId: pickTripId,
+    destId: pickDestId,
+    seed: pickForTrip?.saved,
   });
-  const [picking, setPicking] = useState(false);
   useFocusEffect(useCallback(() => {
-    if (!pickTripId || !pickDestId) return undefined;
-    let cancelled = false;
-    getTripById(pickTripId).then((full) => {
-      if (cancelled) return;
-      const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
-      const tp = (dest?.places || []).find((p) => p.placeId === placeId);
-      setPickedId(tp ? tp.id : null);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [pickTripId, pickDestId, placeId]));
+    if (pickTripId && pickDestId) refreshPicked().catch(() => {});
+  }, [pickTripId, pickDestId, refreshPicked]));
 
-  const togglePick = async () => {
-    if (!pickTripId || !pickDestId || picking) return;
-    setPicking(true);
-    try {
-      if (pickedId !== null) {
-        let id = pickedId;
-        if (!id) {
-          const full = await getTripById(pickTripId);
-          const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
-          id = (dest?.places || []).find((p) => p.placeId === placeId)?.id || '';
-        }
-        if (id) await removeTripPlace(id);
-        setPickedId(null);
-      } else {
-        const fromTypes = journalCategoryFor(details?.types || []);
-        const cat = toTripCategory(category)
-          || (fromTypes === 'food' ? 'food' : fromTypes === 'stay' ? 'stay' : 'activity');
-        const res = await addPlaceToTrip(pickTripId, pickDestId, buildTripPlaceDto({
-          placeId,
-          name: displayName,
-          vicinity: displayAddress,
-          rating: displayRating,
-          userRatingsTotal: displayReviewCount,
-          photos: details?.photos,
-          geometry: details?.geometry,
-        }, cat));
-        setPickedId(res?.id || '');
-      }
-    } catch (e) {
-      showAlert(
-        'Could not update trip',
-        e instanceof AuthRequiredError ? 'Sign in to edit your trips.' : (e?.message || 'Please try again.'),
-      );
-    } finally {
-      setPicking(false);
-    }
+  const togglePick = () => {
+    togglePlace(placeId, () => {
+      const fromTypes = journalCategoryFor(details?.types || []);
+      const cat = toTripCategory(category)
+        || (fromTypes === 'food' ? 'food' : fromTypes === 'stay' ? 'stay' : 'activity');
+      return buildTripPlaceDto({
+        placeId,
+        name: displayName,
+        vicinity: displayAddress,
+        rating: displayRating,
+        userRatingsTotal: displayReviewCount,
+        photos: details?.photos,
+        geometry: details?.geometry,
+      }, cat);
+    });
   };
-  const isPicked = pickedId !== null;
+  const isPicked = pickedOnStop.has(placeId);
 
   const openTripFromSheet = (tripId, tripName) => {
     navigation.getParent()?.navigate('MyTrips', {
@@ -544,24 +512,17 @@ export default function PlaceDetailScreen({ navigation, route }) {
               <TouchableOpacity
                 style={[styles.addButton, isPicked && styles.addButtonAdded]}
                 onPress={togglePick}
-                disabled={picking}
                 activeOpacity={0.9}
                 accessibilityRole="button"
-                accessibilityState={{ selected: isPicked, busy: picking }}
+                accessibilityState={{ selected: isPicked }}
                 accessibilityLabel={isPicked
                   ? `Added to ${pickForTrip.tripName || 'your trip'}. Tap to remove`
                   : `Add to ${pickForTrip.tripName || 'your trip'}`}
               >
-                {picking ? (
-                  <ActivityIndicator color={isPicked ? COLORS.success : COLORS.white} />
-                ) : (
-                  <>
-                    <Feather name={isPicked ? 'check' : 'plus'} size={18} color={isPicked ? '#2B6A4B' : COLORS.white} />
-                    <Text style={[styles.addButtonText, isPicked && styles.addButtonTextAdded]} numberOfLines={1}>
-                      {isPicked ? 'Added to ' : 'Add to '}{pickForTrip.tripName || 'your trip'}
-                    </Text>
-                  </>
-                )}
+                <Feather name={isPicked ? 'check' : 'plus'} size={18} color={isPicked ? '#2B6A4B' : COLORS.white} />
+                <Text style={[styles.addButtonText, isPicked && styles.addButtonTextAdded]} numberOfLines={1}>
+                  {isPicked ? 'Added to ' : 'Add to '}{pickForTrip.tripName || 'your trip'}
+                </Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity

@@ -26,15 +26,12 @@ import {
   getFavourites,
   addFavourite,
   removeFavourite,
-  getTripById,
-  addPlaceToTrip,
-  removeTripPlace,
   placeCoords,
   AuthRequiredError,
   peekFavourites,
 } from '../services';
 import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
-import { showAlert } from '../components/AppDialog';
+import useTripPicks from '../hooks/useTripPicks';
 import { cityCentre } from '../utils/address';
 
 
@@ -292,70 +289,30 @@ export default function DestinationDetailScreen({ navigation, route }) {
   // Seeded from the trip screen (`pickForTrip.saved`: [placeId, tripPlaceId]
   // pairs) so ticks show instantly; the focus refresh below then syncs with
   // the server in the background.
-  const [pickedMap, setPickedMap] = useState(() => new Map(pickForTrip?.saved || []));
-  // False until we know which places are saved (no seed and first fetch pending),
-  // so toggles don't flash "+" on places that are actually added.
-  const [pickedReady, setPickedReady] = useState(() => Array.isArray(pickForTrip?.saved));
-  const [pickPending, setPickPending] = useState(() => new Set());
   const isFocused = useIsFocused();
   const pickTripId = pickForTrip?.tripId;
   const pickDestId = pickForTrip?.destinationId;
-
-  const loadPicked = useCallback(async () => {
-    if (!pickTripId) return new Map();
-    const full = await getTripById(pickTripId);
-    const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
-    const map = new Map((dest?.places || []).map((p) => [p.placeId, p.id]));
-    setPickedMap(map);
-    setPickedReady(true);
-    return map;
-  }, [pickTripId, pickDestId]);
+  // Ticks change the moment you tap; saving happens in the background.
+  const {
+    picked: pickedMap,
+    ready: pickedReady,
+    toggle: togglePlace,
+    refresh: loadPicked,
+  } = useTripPicks({ tripId: pickTripId, destId: pickDestId, seed: pickForTrip?.saved });
 
   useFocusEffect(
     useCallback(() => {
       if (!pickTripId) return undefined;
-      let cancelled = false;
       // On failure keep what we already know (the seed) rather than clearing the ticks.
-      loadPicked().catch(() => { if (!cancelled) setPickedReady(true); });
-      return () => { cancelled = true; };
+      loadPicked().catch(() => {});
+      return undefined;
     }, [pickTripId, loadPicked])
   );
 
-  const togglePick = useCallback(async (item) => {
-    const id = item.placeId;
-    if (!id || !pickTripId || !pickDestId || pickPending.has(id)) return;
-
+  const togglePick = useCallback((item) => {
     const category = toTripCategory(activeCategory);
-    setPickPending((prev) => new Set(prev).add(id));
-    try {
-      if (pickedMap.has(id)) {
-        // Saved already: remove it. If we only know it's saved (409 earlier),
-        // look up its id first.
-        let tripPlaceId = pickedMap.get(id);
-        if (!tripPlaceId) tripPlaceId = (await loadPicked()).get(id);
-        if (tripPlaceId) await removeTripPlace(tripPlaceId);
-        setPickedMap((prev) => {
-          const next = new Map(prev);
-          next.delete(id);
-          return next;
-        });
-      } else {
-        const res = await addPlaceToTrip(pickTripId, pickDestId, buildTripPlaceDto(item, category));
-        setPickedMap((prev) => new Map(prev).set(id, res.id || ''));
-      }
-    } catch (e) {
-      const message = e instanceof AuthRequiredError
-        ? 'Sign in to edit your trips.'
-        : (e?.message || 'Something went wrong. Please try again.');
-      showAlert('Could not update trip', message);
-    } finally {
-      setPickPending((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
-  }, [pickTripId, pickDestId, pickedMap, pickPending, activeCategory, loadPicked]);
+    togglePlace(item.placeId, () => buildTripPlaceDto(item, category));
+  }, [togglePlace, activeCategory]);
 
   // "Add (N)": N is every place saved to this destination across the
   // Stays, Food and Activities tabs, including ones added earlier.
@@ -456,7 +413,6 @@ export default function DestinationDetailScreen({ navigation, route }) {
   const renderResult = ({ item }) => {
     const isFaved = favedIds.has(item.placeId);
     const isPicked = pickedMap.has(item.placeId);
-    const isPickPending = pickPending.has(item.placeId);
     return (
       <PlaceGridCard
         name={item.name}
@@ -478,7 +434,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
           /* Picking for a trip: add / saved toggle */
           <PickToggle
             picked={isPicked}
-            pending={isPickPending || !pickedReady}
+            pending={!pickedReady}
             onPress={() => togglePick(item)}
             label={isPicked ? `Remove ${item.name} from ${pickForTrip.tripName}` : `Add ${item.name} to ${pickForTrip.tripName}`}
           />
@@ -531,7 +487,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
           pass up behind the frosted pill bar and the hero's glass frame edges. */}
       <FlatList
         data={activeResults}
-        extraData={{ pickedMap, pickPending, favedIds }}
+        extraData={{ pickedMap, favedIds }}
         renderItem={renderResult}
         keyExtractor={(item) => item.placeId}
         numColumns={2}

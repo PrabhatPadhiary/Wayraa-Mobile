@@ -20,16 +20,14 @@ import { placeIconFor } from '../components/PlaceSearchField';
 import PickToggle from '../components/PickToggle';
 import { useBottomBar } from '../context/BottomBarContext';
 import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
+import useTripPicks from '../hooks/useTripPicks';
 import {
   searchInDestination,
   searchAnyPlace,
   getFavourites,
   addFavourite,
   removeFavourite,
-  getTripById,
   getPlaceDetails,
-  addPlaceToTrip,
-  removeTripPlace,
   journalCategoryFor,
   AuthRequiredError,
   peekFavourites,
@@ -96,18 +94,14 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   // ── Adding to a trip stop (pickForTrip) ──
   // placeId -> trip place id for the stop's saved places ('' = saved, id not
   // known yet). Seeded from the caller so ticks show at once, then synced.
-  const [pickedMap, setPickedMap] = useState(() => new Map(pickForTrip?.saved || []));
-  const [pickPending, setPickPending] = useState(() => new Set());
+  // Ticks change the moment you tap; saving happens in the background.
   const pickTripId = pickForTrip?.tripId;
   const pickDestId = pickForTrip?.destinationId;
-  const loadPicked = useCallback(async () => {
-    if (!pickTripId) return new Map();
-    const full = await getTripById(pickTripId);
-    const dest = (full?.destinations || []).find((d) => d.id === pickDestId);
-    const map = new Map((dest?.places || []).map((p) => [p.placeId, p.id]));
-    setPickedMap(map);
-    return map;
-  }, [pickTripId, pickDestId]);
+  const { picked: pickedMap, toggle: togglePlace, refresh: loadPicked } = useTripPicks({
+    tripId: pickTripId,
+    destId: pickDestId,
+    seed: pickForTrip?.saved,
+  });
   useFocusEffect(useCallback(() => {
     if (pickTripId) loadPicked().catch(() => {});
   }, [pickTripId, loadPicked]));
@@ -147,43 +141,17 @@ export default function DestinationPlacesScreen({ navigation, route }) {
 
   // Add / remove a place on the trip stop. `place` is a search result or a
   // suggestion (suggestions are looked up first, for photo and coordinates).
-  const togglePick = async (place, { fromSuggestion = false } = {}) => {
+  const togglePick = (place, { fromSuggestion = false } = {}) => {
     const id = place.placeId;
-    if (!id || !pickTripId || !pickDestId || pickPending.has(id)) return;
-    const mark = (on) => setPickPending((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id); else next.delete(id);
-      return next;
-    });
-    mark(true);
-    try {
-      if (pickedMap.has(id)) {
-        let tripPlaceId = pickedMap.get(id);
-        if (!tripPlaceId) tripPlaceId = (await loadPicked()).get(id);
-        if (tripPlaceId) await removeTripPlace(tripPlaceId);
-        setPickedMap((prev) => {
-          const next = new Map(prev);
-          next.delete(id);
-          return next;
-        });
-      } else {
-        const category = toTripCategory(categoryKey) || tripCategoryFromTypes(place.types);
-        let source = place;
-        if (fromSuggestion) {
-          const details = await getPlaceDetails(id);
-          source = details ? { ...details, placeId: id, name: details.name || place.name } : place;
-        }
-        const res = await addPlaceToTrip(pickTripId, pickDestId, buildTripPlaceDto(source, category));
-        setPickedMap((prev) => new Map(prev).set(id, res.id || ''));
+    togglePlace(id, async () => {
+      const category = toTripCategory(categoryKey) || tripCategoryFromTypes(place.types);
+      let source = place;
+      if (fromSuggestion) {
+        const details = await getPlaceDetails(id);
+        source = details ? { ...details, placeId: id, name: details.name || place.name } : place;
       }
-    } catch (e) {
-      showAlert(
-        'Could not update trip',
-        e instanceof AuthRequiredError ? 'Sign in to edit your trips.' : (e?.message || 'Please try again.')
-      );
-    } finally {
-      mark(false);
-    }
+      return buildTripPlaceDto(source, category);
+    });
   };
 
   const [filter, setFilter] = useState(startFilter);
@@ -365,7 +333,6 @@ export default function DestinationPlacesScreen({ navigation, route }) {
         corner={pickForTrip ? (
           <PickToggle
             picked={pickedMap.has(item.placeId)}
-            pending={pickPending.has(item.placeId)}
             onPress={() => togglePick(item)}
             label={pickedMap.has(item.placeId)
               ? `Remove ${item.name} from ${pickForTrip.tripName}`
@@ -561,22 +528,17 @@ export default function DestinationPlacesScreen({ navigation, route }) {
                   <TouchableOpacity
                     style={[styles.suggestAdd, pickedMap.has(sg.placeId) && styles.suggestAdded]}
                     onPress={() => togglePick(sg, { fromSuggestion: true })}
-                    disabled={pickPending.has(sg.placeId)}
                     accessibilityRole="button"
                     accessibilityLabel={pickedMap.has(sg.placeId)
                       ? `Remove ${sg.name} from ${pickForTrip.tripName}`
                       : `Add ${sg.name} to ${pickForTrip.tripName}`}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    {pickPending.has(sg.placeId) ? (
-                      <ActivityIndicator size="small" color={pickedMap.has(sg.placeId) ? COLORS.white : COLORS.primary} />
-                    ) : (
-                      <Feather
-                        name={pickedMap.has(sg.placeId) ? 'check' : 'plus'}
-                        size={16}
-                        color={pickedMap.has(sg.placeId) ? COLORS.white : COLORS.primary}
-                      />
-                    )}
+                    <Feather
+                      name={pickedMap.has(sg.placeId) ? 'check' : 'plus'}
+                      size={16}
+                      color={pickedMap.has(sg.placeId) ? COLORS.white : COLORS.primary}
+                    />
                   </TouchableOpacity>
                 ) : (
                   <Feather name="arrow-up-left" size={16} color={COLORS.textMuted} />
