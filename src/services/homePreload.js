@@ -8,6 +8,7 @@ import { getLocationPermission, getCurrentLocation, getNearbyPlaces, reverseGeoc
 import { pickActiveTrips } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
+import { onClearAllCaches } from './cache';
 
 /**
  * Home page preload: started while the logo screen is up, so the Explore page
@@ -36,15 +37,28 @@ const PUBLIC_KEYS = ['journals', 'nearby'];
 const PRIVATE_KEYS = ['trips', 'favourites'];
 let snapshotOwner = null; // signed-in account the private results belong to
 let saveTimer = null;
+let runId = 0; // bumped on log out: answers for the last account are dropped
 
 const tasks = {};   // key -> promise of the value
 const results = {}; // key -> { value } once settled successfully
 const latest = {};  // key -> { value } fetched this run (kept for the saved copy)
 
+// Log out: drop this run's results and the saved copy, so the next account
+// never opens Home with the last person's trips or favourites.
+onClearAllCaches(() => {
+  runId += 1;
+  clearTimeout(saveTimer);
+  snapshotOwner = null;
+  [tasks, results, latest].forEach((map) => Object.keys(map).forEach((key) => { delete map[key]; }));
+  AsyncStorage.removeItem(SNAPSHOT_KEY).catch(() => {});
+});
+
 function run(key, load, imagesFor) {
   if (tasks[key]) return tasks[key];
+  const id = runId;
   tasks[key] = (async () => {
     const value = await load();
+    if (id !== runId) return undefined; // logged out meanwhile
     results[key] = { value };
     latest[key] = { value };
     scheduleSnapshotSave();

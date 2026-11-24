@@ -126,12 +126,24 @@ export async function hydrateCache(uid) {
 // the caches, so the next account on this phone starts clean.
 const PERSONAL_KEYS = ['wayraa_recent_searches', 'wayraa_recent_cities_v1', 'wayraa_explore_city_v1'];
 
+// Other modules that keep one account's data in memory (your photo, the Home
+// preload) register here, so log out resets them too.
+const clearListeners = new Set();
+
+/** Run `reset` whenever clearAllCaches() runs (log out, account deleted). */
+export function onClearAllCaches(reset) {
+  clearListeners.add(reset);
+}
+
 /** Log out / account deleted: forget everything, in memory and on the phone. */
 export async function clearAllCaches() {
   generation += 1;
   entries.clear();
   inflight.clear();
   ownerUid = null;
+  clearListeners.forEach((reset) => {
+    try { reset(); } catch { /* one failing reset mustn't stop the rest */ }
+  });
   try {
     const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(STORAGE_PREFIX));
     keys.push(...PERSONAL_KEYS);

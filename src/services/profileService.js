@@ -7,7 +7,7 @@ import { API_URL, auth } from '../config';
 import { getAuthToken, getStoredUser, forgetStoredUser } from './authService';
 import { AuthRequiredError } from './errors';
 import { clearLocalNotifications } from './notificationsService';
-import { cachedFetch, peekCache, setCache, clearAllCaches, CacheKeys } from './cache';
+import { cachedFetch, peekCache, setCache, clearAllCaches, onClearAllCaches, CacheKeys } from './cache';
 
 const USER_STORAGE_KEY = 'wayraa_user';
 const PHOTO_SIZE = 600; // px, square crop from the picker
@@ -24,6 +24,10 @@ export function setMyPhoto(url) {
   myPhoto = url;
   photoListeners.forEach((l) => l(url));
 }
+
+// Log out: back to "not known", so the next account shows its own photo
+// (from Firebase/Google until its profile loads), never the last person's.
+onClearAllCaches(() => setMyPhoto(undefined));
 
 /**
  * Your current profile photo URL (or null), updating live when it changes.
