@@ -3,7 +3,9 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
+import * as Haptics from 'expo-haptics';
 import RatingRow from './RatingRow';
+import { PopOnTrue } from './Motion';
 
 /**
  * The place card used in every two-column grid (a destination's places, "See
@@ -77,17 +79,26 @@ export default function PlaceGridCard({
   );
 }
 
-/** Round control for a card's photo corner (the favourite heart). */
+/**
+ * Round control for a card's photo corner (the favourite heart). A filled
+ * heart pops in, with a light tap, when you save.
+ */
 export function CardCornerButton({ icon, color = COLORS.textPrimary, onPress, accessibilityLabel }) {
+  const press = () => {
+    if (icon === 'heart-outline') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onPress?.();
+  };
   return (
     <TouchableOpacity
       style={styles.cornerButton}
-      onPress={onPress}
+      onPress={press}
       activeOpacity={0.8}
       accessibilityLabel={accessibilityLabel}
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
     >
-      <Ionicons name={icon} size={18} color={color} />
+      <PopOnTrue active={icon === 'heart'}>
+        <Ionicons name={icon} size={18} color={color} />
+      </PopOnTrue>
     </TouchableOpacity>
   );
 }

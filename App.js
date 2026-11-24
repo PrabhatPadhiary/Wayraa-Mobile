@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useFonts } from 'expo-font';
 import {
-  PlayfairDisplay_700Bold,
-  PlayfairDisplay_800ExtraBold,
-} from '@expo-google-fonts/playfair-display';
-import {
   Poppins_400Regular,
   Poppins_500Medium,
   Poppins_600SemiBold,
@@ -39,7 +35,9 @@ function LoadingScreen() {
         <View style={styles.loadingContent}>
           {/* The logo, animated: rings ripple, the sun bobs, the waves sway. */}
           <WayraaLoader size={220} />
-          <Text style={styles.loadingBrand}>Wayraa</Text>
+          <Text style={styles.loadingBrand}>
+            wayraa<Text style={styles.loadingBrandDot}>.</Text>
+          </Text>
           <Text style={styles.loadingTagline}>Plan. Explore. Share.</Text>
         </View>
       </View>
@@ -159,8 +157,6 @@ const linking = {
 
 export default function App() {
   const [fontsLoaded] = useFonts({
-    PlayfairDisplay_700Bold,
-    PlayfairDisplay_800ExtraBold,
     Poppins_400Regular,
     Poppins_500Medium,
     Poppins_600SemiBold,
@@ -300,11 +296,14 @@ const styles = StyleSheet.create({
   },
   loadingBrand: {
     marginTop: SIZES.spacing_lg,
-    fontSize: 44,
-    fontFamily: 'PlayfairDisplay_800ExtraBold',
-    color: COLORS.primary,
-    letterSpacing: 1,
-    marginBottom: 4,
+    fontSize: 40,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+    letterSpacing: -1,
+    marginBottom: 2,
+  },
+  loadingBrandDot: {
+    color: COLORS.accent,
   },
   loadingTagline: {
     fontSize: SIZES.md,

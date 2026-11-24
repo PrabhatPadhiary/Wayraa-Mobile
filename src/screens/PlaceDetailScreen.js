@@ -40,6 +40,8 @@ import { showAlert } from '../components/AppDialog';
 import { areaFromAddress as areaOf, formatCentreDistance } from '../utils/address';
 import { distanceKm } from '../utils/itinerary';
 import { useTip } from '../components/Tips';
+import * as Haptics from 'expo-haptics';
+import { PopOnTrue } from '../components/Motion';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HERO_HEIGHT = Math.round(SCREEN_HEIGHT * 0.5);
@@ -183,6 +185,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
     if (favPending) return;
     setFavPending(true);
     const wasFaved = isFaved;
+    if (!wasFaved) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setIsFaved(!wasFaved); // optimistic
     try {
       if (wasFaved) {
@@ -401,7 +404,10 @@ export default function PlaceDetailScreen({ navigation, route }) {
       accessibilityLabel={label}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
-      <Ionicons name={icon} size={20} color={active ? COLORS.accent : COLORS.white} />
+      {/* The heart pops in when you save. */}
+      <PopOnTrue active={icon === 'heart'}>
+        <Ionicons name={icon} size={20} color={active ? COLORS.accent : COLORS.white} />
+      </PopOnTrue>
     </TouchableOpacity>
   );
 
@@ -427,7 +433,9 @@ export default function PlaceDetailScreen({ navigation, route }) {
           onPress={toggleFavourite}
           accessibilityLabel={isFaved ? 'Remove from favourites' : 'Save to favourites'}
         >
-          <Ionicons name={isFaved ? 'heart' : 'heart-outline'} size={20} color={isFaved ? COLORS.accent : COLORS.textPrimary} />
+          <PopOnTrue active={isFaved}>
+            <Ionicons name={isFaved ? 'heart' : 'heart-outline'} size={20} color={isFaved ? COLORS.accent : COLORS.textPrimary} />
+          </PopOnTrue>
         </TouchableOpacity>
       </Animated.View>
 

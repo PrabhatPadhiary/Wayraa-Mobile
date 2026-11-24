@@ -4,7 +4,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
+  Animated,
   StatusBar,
   ActivityIndicator,
   Modal,
@@ -19,7 +19,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H } from '../components/ProfileScene';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
@@ -153,6 +153,31 @@ export default function ProfileScreen({ navigation }) {
   const [celebrateLevel, dismissCelebration] = useRankUp(profile, firebaseUser?.uid);
   // Scroll to "Your journey" (from the rank chip or the celebration).
   const scrollRef = useRef(null);
+  // Compact bar (like the trip and place pages): once the round back button
+  // nears the status bar, a white bar with its own back button fades in.
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const BAR_SHOW_AT = SIZES.spacing_sm + 38; // the round button's bottom edge
+  const [barOn, setBarOn] = useState(false);
+  // Spread over ~110pt of scrolling, so it eases in rather than snapping on,
+  // with a small drop into place.
+  const BAR_FADE = [BAR_SHOW_AT - 40, BAR_SHOW_AT + 70];
+  const barOpacity = scrollY.interpolate({
+    inputRange: BAR_FADE,
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  const barShift = scrollY.interpolate({
+    inputRange: BAR_FADE,
+    outputRange: [-10, 0],
+    extrapolate: 'clamp',
+  });
+  const onScroll = Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+    useNativeDriver: true,
+    listener: (e) => {
+      const on = e.nativeEvent.contentOffset.y > BAR_SHOW_AT + 15; // tappable once mostly in
+      setBarOn((prev) => (prev === on ? prev : on));
+    },
+  });
   const sheetY = useRef(0);   // the sheet, in the page
   const journeyY = useRef(0); // the journey card, in the sheet
   const scrollToJourney = () => {
@@ -272,8 +297,10 @@ export default function ProfileScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      <ScrollView
+      <Animated.ScrollView
         ref={scrollRef}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
         refreshControl={(
@@ -301,6 +328,7 @@ export default function ProfileScreen({ navigation }) {
           >
             <Feather name="chevron-left" size={22} color={COLORS.primary} />
           </TouchableOpacity>
+
 
         </View>
 
@@ -469,7 +497,19 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
+
+      {/* Compact bar: fades in once the round back button scrolls away. */}
+      <Animated.View
+        style={[styles.stickyHeader, { opacity: barOpacity, transform: [{ translateY: barShift }], paddingTop: insets.top }]}
+        pointerEvents={barOn ? 'auto' : 'none'}
+      >
+        <TouchableOpacity style={styles.stickyButton} onPress={() => navigation.goBack()} accessibilityLabel="Go back">
+          <Ionicons name="chevron-back" size={22} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.stickyTitle} numberOfLines={1}>Profile</Text>
+        <View style={styles.stickyButtonSpacer} />
+      </Animated.View>
 
       <RankSheet
         visible={rankSheet != null}
@@ -551,6 +591,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.75)',
+  },
+  // Compact bar once scrolled (same as the trip and place pages).
+  stickyHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingBottom: SIZES.spacing_sm,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  stickyButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.cardBackground,
+  },
+  stickyButtonSpacer: {
+    width: 40,
+    height: 40,
+  },
+  stickyTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
   },
   // A white ring, so the photo stands clear of the scene behind it.
   avatarRing: {

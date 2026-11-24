@@ -27,6 +27,7 @@ const PAGE = 30;
 /** Small badge on the avatar: what kind of change it was. */
 const TYPE_ICON = {
   announcement: { name: 'megaphone', bg: COLORS.accent },
+  poll: { name: 'stats-chart', bg: COLORS.primaryLight },
   joined: { name: 'person-add', bg: COLORS.success },
   places: { name: 'bookmark', bg: COLORS.primaryLight },
   expenses: { name: 'wallet', bg: '#8A6D3B' },

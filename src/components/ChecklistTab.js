@@ -9,6 +9,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import Reanimated, { LinearTransition, Easing as REasing } from 'react-native-reanimated';
+import { PopOnTrue, DonePulse, ArrivalGlow, useLiveArrivals } from './Motion';
 import { COLORS, SIZES } from '../constants';
 import {
   getChecklist,
@@ -22,6 +25,9 @@ import { setCache, CacheKeys } from '../services/cache';
 import { formatDay } from '../utils/tripDates';
 import { showAlert } from './AppDialog';
 import { ChecklistSkeleton } from './skeletons';
+
+// A ticked row gliding to its new place.
+const ROW_GLIDE = LinearTransition.duration(260).easing(REasing.bezier(0.2, 0.8, 0.2, 1));
 
 /** Backend categories, with the website's colors. */
 export const CHECKLIST_CATEGORIES = [
@@ -71,6 +77,13 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
   const [category, setCategory] = useState('packing');
   const [adding, setAdding] = useState(false);
   const [pending, setPending] = useState(() => new Set()); // item ids mid-request
+  // Just ticked / unticked: they keep their old place for a beat, so you see
+  // the tick land before the row glides to its new spot. id -> old isCompleted
+  const [settling, setSettling] = useState(() => new Map());
+  const settleTimers = useRef({});
+  useEffect(() => () => Object.values(settleTimers.current).forEach(clearTimeout), []);
+  // Rows a friend just added (live): they glow once.
+  const fresh = useLiveArrivals(items, liveKey);
   const inputRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -121,6 +134,22 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
   // Optimistic: flip immediately, then take the server's version.
   const toggle = async (item) => {
     if (!canEdit || pending.has(item.id)) return;
+    const ticking = !item.isCompleted;
+    // Tick: a light tap; the last open one in its group: a success buzz.
+    const group = items.filter((i) => (CATEGORY_BY_KEY[i.category] ? i.category : 'other')
+      === (CATEGORY_BY_KEY[item.category] ? item.category : 'other'));
+    const finishesGroup = ticking && group.every((i) => i.id === item.id || i.isCompleted);
+    if (finishesGroup) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    else if (ticking) Haptics.selectionAsync().catch(() => {});
+    setSettling((prev) => new Map(prev).set(item.id, item.isCompleted));
+    clearTimeout(settleTimers.current[item.id]);
+    settleTimers.current[item.id] = setTimeout(() => {
+      setSettling((prev) => {
+        const next = new Map(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }, 420);
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, isCompleted: !i.isCompleted } : i)));
     markPending(item.id, true);
     try {
@@ -183,10 +212,15 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
   const groups = CHECKLIST_CATEGORIES
     .map((c) => ({
       ...c,
-      // Open items first, ticked ones sink to the bottom.
+      // Open items first, ticked ones sink to the bottom (just-ticked ones
+      // keep their place for a beat first).
       items: items
         .filter((i) => (CATEGORY_BY_KEY[i.category] ? i.category : 'other') === c.key)
-        .sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted)),
+        .sort((a, b) => {
+          const doneA = settling.has(a.id) ? settling.get(a.id) : a.isCompleted;
+          const doneB = settling.has(b.id) ? settling.get(b.id) : b.isCompleted;
+          return Number(doneA) - Number(doneB);
+        }),
     }))
     .filter((g) => g.items.length > 0);
 
@@ -317,7 +351,11 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
                 </View>
                 <Text style={styles.groupTitle}>{g.label}</Text>
               </View>
-              <Text style={styles.count}>{groupDone}/{g.items.length}</Text>
+              <DonePulse done={groupDone === g.items.length}>
+                <Text style={[styles.count, groupDone === g.items.length && styles.countDone]}>
+                  {groupDone}/{g.items.length}
+                </Text>
+              </DonePulse>
             </View>
 
             {g.items.map((item, index) => {
@@ -327,10 +365,12 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
                 item.assignedToName ? item.assignedToName : null,
               ].filter(Boolean).join(' · ');
               return (
-                <View
+                <Reanimated.View
                   key={item.id}
+                  layout={ROW_GLIDE}
                   style={[styles.itemRow, index < g.items.length - 1 && styles.itemDivider]}
                 >
+                  <ArrivalGlow active={fresh.has(item.id)} radius={10} />
                   <TouchableOpacity
                     style={styles.itemMain}
                     onPress={() => toggle(item)}
@@ -340,7 +380,8 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
                     accessibilityState={{ checked: item.isCompleted, disabled: !canEdit }}
                     accessibilityLabel={item.title}
                   >
-                    <View
+                    <PopOnTrue
+                      active={item.isCompleted}
                       style={[
                         styles.check,
                         { borderColor: g.color },
@@ -348,7 +389,7 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
                       ]}
                     >
                       {item.isCompleted && <Ionicons name="checkmark" size={14} color={COLORS.white} />}
-                    </View>
+                    </PopOnTrue>
                     <View style={styles.itemText}>
                       <Text
                         style={[styles.itemTitle, item.isCompleted && styles.itemTitleDone]}
@@ -374,7 +415,7 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
                       </TouchableOpacity>
                     )
                   )}
-                </View>
+                </Reanimated.View>
               );
             })}
           </View>
@@ -456,6 +497,9 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textMuted,
+  },
+  countDone: {
+    color: '#327956',
   },
 
   progressTrack: {

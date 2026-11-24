@@ -125,15 +125,16 @@ export default function JoinTripScreen({ navigation, route }) {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
       <KeyboardAvoidingView style={styles.flex} behavior="padding">
+        {/* Back: above the content, so it stays put while you scroll. */}
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Go back"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
+        </TouchableOpacity>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-            accessibilityLabel="Go back"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
-          </TouchableOpacity>
 
           <Text style={styles.title}>Join a trip</Text>
           <Text style={styles.subtitle}>
@@ -272,11 +273,12 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: SIZES.spacing_lg,
-    paddingTop: SIZES.spacing_lg,
+    paddingTop: SIZES.spacing_xl,
     paddingBottom: 140,
   },
   backButton: {
-    marginBottom: SIZES.spacing_xl,
+    marginTop: SIZES.spacing_lg,
+    marginLeft: SIZES.spacing_lg,
     alignSelf: 'flex-start',
   },
   title: {

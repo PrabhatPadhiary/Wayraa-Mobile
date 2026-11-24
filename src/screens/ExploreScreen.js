@@ -56,6 +56,21 @@ import useAuth from '../hooks/useAuth';
 import useUnreadNotifications from '../hooks/useUnreadNotifications';
 import { pickActiveTrips, daysUntil, dayCount, formatDateRange } from '../utils/tripDates';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+import Reanimated, {
+  useReducedMotion,
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withDelay,
+  interpolate,
+  Easing as REasing,
+} from 'react-native-reanimated';
+
+// Search: the Home pill grows into the search field (and shrinks back).
+const SEARCH_MORPH_MS = 380;
+const SEARCH_MORPH_EASE = REasing.bezier(0.2, 0.8, 0.2, 1);
+const SEARCH_FIELD_H = 54;
 import { BlurView, BlurTargetView } from 'expo-blur';
 import { ANDROID_BLUR, ANDROID_BLUR_METHOD } from '../utils/glass';
 import { initialsFor } from '../components/TripStackCard';
@@ -250,18 +265,71 @@ export default function ExploreScreen({ route, navigation }) {
 
   const firstName = (profileName || '').trim().split(' ')[0];
 
-  // Slim search pill: the hint rotates through a few example searches.
-  const [hintIndex, setHintIndex] = useState(0);
-  const hintFade = useRef(new Animated.Value(1)).current;
+  // Slim search pill: the hint rolls through a few example searches (the
+  // old one slides up and out, the next rises in from below) and the
+  // magnifier gives a small tilt as each arrives. Still when motion is
+  // reduced. Pressing the pill sinks it a touch, with a light tick.
+  const reduceMotion = useReducedMotion();
+  // Every hint is drawn at once, stacked; `hintRoll` says which one shows
+  // (hint i sits at i; it runs 0 → N and back to 0, where hint 0 is again).
+  // Changing hints is then only an animation: nothing re-renders, so
+  // nothing can flash in between.
+  const hintRoll = useRef(new Animated.Value(0)).current;
+  const hintStep = useRef(0);
+  const searchTilt = useRef(new Animated.Value(0)).current;
+  const searchPress = useRef(new Animated.Value(1)).current;
   useEffect(() => {
+    if (reduceMotion) {
+      hintStep.current = 0;
+      hintRoll.setValue(0);
+      return undefined;
+    }
     const timer = setInterval(() => {
-      Animated.timing(hintFade, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
-        setHintIndex((i) => (i + 1) % SEARCH_HINTS.length);
-        Animated.timing(hintFade, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+      const next = hintStep.current + 1;
+      hintStep.current = next % SEARCH_HINTS.length;
+      Animated.timing(hintRoll, {
+        toValue: next,
+        duration: 560,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        // Past the last hint: back to 0, which looks the same (hint 0).
+        if (finished && next === SEARCH_HINTS.length) hintRoll.setValue(0);
       });
-    }, 3200);
+      // The magnifier tilts as the new hint lands: left, a little right, rest.
+      Animated.sequence([
+        Animated.delay(220),
+        Animated.timing(searchTilt, { toValue: -1, duration: 140, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(searchTilt, { toValue: 0.5, duration: 160, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.spring(searchTilt, { toValue: 0, speed: 14, bounciness: 6, useNativeDriver: true }),
+      ]).start();
+    }, 3400);
     return () => clearInterval(timer);
-  }, [hintFade]);
+  }, [hintRoll, searchTilt, reduceMotion]);
+  // Where hint i is as the roll moves: rising in from below, shown, leaving
+  // upwards. Hint 0 shows at both ends of the roll.
+  const hintStyle = (i) => {
+    const n = SEARCH_HINTS.length;
+    const RISE = 14;
+    if (i === 0) {
+      return {
+        opacity: hintRoll.interpolate({ inputRange: [0, 0.5, n - 0.5, n], outputRange: [1, 0, 0, 1], extrapolate: 'clamp' }),
+        transform: [{ translateY: hintRoll.interpolate({ inputRange: [0, 1, n - 1, n], outputRange: [0, -RISE, RISE, 0], extrapolate: 'clamp' }) }],
+      };
+    }
+    return {
+      opacity: hintRoll.interpolate({ inputRange: [i - 0.5, i, i + 0.5], outputRange: [0, 1, 0], extrapolate: 'clamp' }),
+      transform: [{ translateY: hintRoll.interpolate({ inputRange: [i - 1, i, i + 1], outputRange: [RISE, 0, -RISE], extrapolate: 'clamp' }) }],
+    };
+  };
+  const pressSearch = (down) => {
+    Animated.spring(searchPress, {
+      toValue: down ? 0.97 : 1,
+      speed: down ? 40 : 18,
+      bounciness: down ? 0 : 8,
+      useNativeDriver: true,
+    }).start();
+  };
 
   // Collapsing header: greeting + location chip shrink away on scroll down,
   // leaving a compact bar (search pill + small avatar); they expand back on
@@ -735,18 +803,108 @@ export default function ExploreScreen({ route, navigation }) {
     await AsyncStorage.removeItem(RECENT_SEARCHES_KEY);
   };
 
+  // ── Search opens out of the pill ───────────────────────────────────────
+  // On open the pill's spot on screen is measured; the search field starts
+  // there and grows into place under "Where to?" while the page fades in
+  // behind it, then the rest of the search fades up. Closing runs it back
+  // into the pill. (Rects are in screen points; the search modal covers the
+  // whole screen, so its own layout uses the same ones.)
+  const searchFrom = useSharedValue(null); // the pill: { x, y, width, height }
+  const searchTo = useSharedValue(null);   // the field's place in the search screen
+  const searchMorph = useSharedValue(0);   // 0 pill … 1 field
+  const searchShow = useSharedValue(0);    // the rest of the search screen
+  const searchStarted = useRef(false);
+  const searchCloseTimer = useRef(null);
+  useEffect(() => () => clearTimeout(searchCloseTimer.current), []);
+
   const openSearch = () => {
-    setIsSearchActive(true);
+    if (isSearchActive) return;
+    clearTimeout(searchCloseTimer.current);
+    searchMorph.value = 0;
+    searchShow.value = 0;
+    searchTo.value = null;
+    searchStarted.current = false;
+    const pill = searchTipRef.current;
+    if (!pill?.measureInWindow || reduceMotion) {
+      searchFrom.value = null;
+      setIsSearchActive(true);
+      return;
+    }
+    pill.measureInWindow((x, y, width, height) => {
+      searchFrom.value = width > 0 ? { x, y, width, height } : null;
+      setIsSearchActive(true);
+    });
   };
 
-  const closeSearch = () => {
+  // The field's place is known (first layout of the search screen): go.
+  const onSearchFieldLayout = (e) => {
+    const { x, y, width, height } = e.nativeEvent.layout;
+    searchTo.value = { x, y, width, height };
+    if (searchStarted.current) return;
+    searchStarted.current = true;
+    if (searchFrom.value) {
+      searchMorph.value = withTiming(1, { duration: SEARCH_MORPH_MS, easing: SEARCH_MORPH_EASE });
+      searchShow.value = withDelay(160, withTiming(1, { duration: 280, easing: REasing.out(REasing.cubic) }));
+      setTimeout(() => searchInputRef.current?.focus(), SEARCH_MORPH_MS - 40);
+    } else {
+      searchMorph.value = 1;
+      searchShow.value = withTiming(1, { duration: reduceMotion ? 0 : 200 });
+      searchInputRef.current?.focus();
+    }
+  };
+
+  /**
+   * Close search. Animated back into the pill, unless `instant` (a result
+   * was tapped and another screen is opening anyway).
+   */
+  const closeSearch = (options) => {
+    const instant = options?.instant === true;
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchSeq.current += 1; // ignore a search still on its way
-    setIsSearchActive(false);
-    setSearchQuery('');
-    setSearchResults([]);
-    setSearchedFor(null);
+    const finish = () => {
+      setIsSearchActive(false);
+      setSearchQuery('');
+      setSearchResults([]);
+      setSearchedFor(null);
+    };
+    clearTimeout(searchCloseTimer.current);
+    if (instant || !searchFrom.value || reduceMotion) {
+      finish();
+      return;
+    }
+    Keyboard.dismiss();
+    searchShow.value = withTiming(0, { duration: 140 });
+    searchMorph.value = withDelay(60, withTiming(0, { duration: SEARCH_MORPH_MS - 40, easing: SEARCH_MORPH_EASE }));
+    searchCloseTimer.current = setTimeout(finish, SEARCH_MORPH_MS + 40);
   };
+
+  const searchBackdropStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(searchMorph.value, [0, 0.55], [0, 1], 'clamp'),
+  }));
+  const searchContentStyle = useAnimatedStyle(() => ({
+    opacity: searchShow.value,
+    transform: [{ translateY: (1 - searchShow.value) * 14 }],
+  }));
+  const searchFieldStyle = useAnimatedStyle(() => {
+    const to = searchTo.value;
+    if (!to) return { opacity: 0 };
+    const from = searchFrom.value || to;
+    const t = searchMorph.value;
+    return {
+      opacity: 1,
+      left: from.x + (to.x - from.x) * t,
+      top: from.y + (to.y - from.y) * t,
+      width: from.width + (to.width - from.width) * t,
+      height: from.height + (to.height - from.height) * t,
+    };
+  });
+  // The pill's hint hands over to the field's own placeholder.
+  const searchGhostStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(searchMorph.value, [0, 0.45], [1, 0], 'clamp'),
+  }));
+  const searchInputStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(searchMorph.value, [0.4, 1], [0, 1], 'clamp'),
+  }));
 
   // Search now; only the latest search's results are kept.
   const runSearch = async (query) => {
@@ -812,9 +970,17 @@ export default function ExploreScreen({ route, navigation }) {
     });
   };
 
+  // "Nearby" in the search sheet: the full list if we already know where you
+  // are, otherwise ask for location (the Near You section then fills in).
+  const handleNearbyTap = () => {
+    closeSearch({ instant: true });
+    if (nearbyCoords && !exploring) openNearbyAll();
+    else useCurrentLocation();
+  };
+
   const handleResultTap = (item) => {
     if (!item?.placeId) return;
-    closeSearch();
+    closeSearch({ instant: true });
     openDestination(item);
     // Save to recent searches in the background (don't block navigation).
     persistRecentSearch(item).catch(() => {});
@@ -823,7 +989,7 @@ export default function ExploreScreen({ route, navigation }) {
   const handleRecentSearchTap = (item) => {
     // Newer recent entries carry a placeId → open the destination directly.
     if (item && typeof item === 'object' && item.placeId) {
-      closeSearch();
+      closeSearch({ instant: true });
       openDestination(item);
       return;
     }
@@ -933,43 +1099,32 @@ export default function ExploreScreen({ route, navigation }) {
       {/* Full Screen Search Modal */}
       <Modal
         visible={isSearchActive}
-        animationType="slide"
+        animationType="none"
         transparent={true}
-        onRequestClose={closeSearch}
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => closeSearch()}
       >
         <View style={[styles.searchModal, { paddingTop: insets.top + SIZES.spacing_sm }]}>
+          {/* The page, fading in behind the growing field. */}
+          <Reanimated.View style={[styles.searchBackdrop, searchBackdropStyle]} pointerEvents="none" />
+
           {/* Top bar: close button (top-left, Airbnb style) */}
-          <View style={styles.searchTopBar}>
-            <TouchableOpacity style={styles.searchCloseButton} onPress={closeSearch}>
+          <Reanimated.View style={[styles.searchTopBar, searchContentStyle]}>
+            <TouchableOpacity style={styles.searchCloseButton} onPress={() => closeSearch()} accessibilityLabel="Close search">
               <Ionicons name="close" size={22} color={COLORS.textPrimary} />
             </TouchableOpacity>
-          </View>
+          </Reanimated.View>
 
           {/* Big title */}
-          <Text style={styles.searchCardTitle}>Where to?</Text>
+          <Reanimated.Text style={[styles.searchCardTitle, searchContentStyle]}>Where to?</Reanimated.Text>
 
-          {/* Large search field */}
-          <View style={styles.searchInputContainer}>
-            <Ionicons name="search" size={20} color={COLORS.textPrimary} />
-            <TextInput
-              ref={searchInputRef}
-              style={styles.searchInput}
-              placeholder="Search destinations"
-              placeholderTextColor={COLORS.textMuted}
-              value={searchQuery}
-              onChangeText={handleSearch}
-              onSubmitEditing={handleSearchSubmit}
-              returnKeyType="search"
-              autoFocus
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
-                <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
-              </TouchableOpacity>
-            )}
-          </View>
+          {/* The field's place; the field itself is drawn over it (it grows
+              here from the Home pill). */}
+          <View style={styles.searchFieldSlot} onLayout={onSearchFieldLayout} />
 
           {/* Suggestions / Results fill the rest of the screen */}
+          <Reanimated.View style={[styles.searchSuggestions, searchContentStyle]}>
           <ScrollView
             style={styles.searchSuggestions}
             contentContainerStyle={styles.searchSuggestionsContent}
@@ -1007,7 +1162,7 @@ export default function ExploreScreen({ route, navigation }) {
               {searchQuery.length === 0 && recentSearches.length === 0 && (
                 <>
                   <Text style={styles.suggestionsTitle}>Suggested destinations</Text>
-                  <TouchableOpacity style={styles.suggestionItem}>
+                  <TouchableOpacity style={styles.suggestionItem} onPress={handleNearbyTap}>
                     <View style={[styles.suggestionIcon, { backgroundColor: 'rgba(63, 90, 115, 0.12)' }]}>
                       <Ionicons name="navigate" size={20} color={COLORS.primaryLight} />
                     </View>
@@ -1053,6 +1208,35 @@ export default function ExploreScreen({ route, navigation }) {
                 </View>
               )}
             </ScrollView>
+          </Reanimated.View>
+
+          {/* The search field: grows out of the Home pill into its place. */}
+          <Reanimated.View style={[styles.searchInputContainer, searchFieldStyle]}>
+            <Ionicons name="search" size={20} color={COLORS.textPrimary} />
+            <View style={styles.searchInputArea}>
+              {/* The pill's hint, fading out as the field takes over. */}
+              <Reanimated.Text style={[styles.searchGhostHint, searchGhostStyle]} numberOfLines={1} pointerEvents="none">
+                {SEARCH_HINTS[hintStep.current] || SEARCH_HINTS[0]}
+              </Reanimated.Text>
+              <Reanimated.View style={[styles.searchInputFade, searchInputStyle]}>
+                <TextInput
+                  ref={searchInputRef}
+                  style={styles.searchInput}
+                  placeholder="Search destinations"
+                  placeholderTextColor={COLORS.textMuted}
+                  value={searchQuery}
+                  onChangeText={handleSearch}
+                  onSubmitEditing={handleSearchSubmit}
+                  returnKeyType="search"
+                />
+              </Reanimated.View>
+            </View>
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }} accessibilityLabel="Clear search">
+                <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            )}
+          </Reanimated.View>
         </View>
       </Modal>
 
@@ -1526,19 +1710,40 @@ export default function ExploreScreen({ route, navigation }) {
 
           {/* Search row: slim pill and New trip (pinned). */}
           <Animated.View style={[styles.searchRow, { transform: [{ translateY: collapseShift }] }]}>
-            <TouchableOpacity
-              ref={searchTipRef}
-              style={styles.homeSearchBar}
-              activeOpacity={0.9}
-              onPress={openSearch}
-              accessibilityRole="search"
-              accessibilityLabel="Search destinations, stays and more"
-            >
-              <Ionicons name="search" size={19} color={COLORS.primaryLight} />
-              <Animated.Text style={[styles.searchHint, { opacity: hintFade }]} numberOfLines={1}>
-                {SEARCH_HINTS[hintIndex]}
-              </Animated.Text>
-            </TouchableOpacity>
+            <Animated.View style={[styles.homeSearchWrap, { opacity: isSearchActive ? 0 : 1, transform: [{ scale: searchPress }] }]}>
+              <TouchableOpacity
+                ref={searchTipRef}
+                style={styles.homeSearchBar}
+                activeOpacity={1}
+                onPressIn={() => pressSearch(true)}
+                onPressOut={() => pressSearch(false)}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  openSearch();
+                }}
+                accessibilityRole="search"
+                accessibilityLabel="Search destinations, stays and more"
+              >
+                <Animated.View
+                  style={{
+                    transform: [{
+                      rotate: searchTilt.interpolate({ inputRange: [-1, 1], outputRange: ['-16deg', '16deg'] }),
+                    }],
+                  }}
+                >
+                  <Ionicons name="search" size={19} color={COLORS.primaryLight} />
+                </Animated.View>
+                {/* The hint rolls: clipped to the pill's middle line. */}
+                <View style={styles.searchHintClip}>
+                  {SEARCH_HINTS.map((hint, i) => (
+                    // Each hint centred in its own full-height box; the box moves.
+                    <Animated.View key={hint} style={[styles.searchHintSlot, hintStyle(i)]}>
+                      <Text style={styles.searchHint} numberOfLines={1}>{hint}</Text>
+                    </Animated.View>
+                  ))}
+                </View>
+              </TouchableOpacity>
+            </Animated.View>
             {/* Plan a new trip: always one tap away (pinned with the search).
                 Create trip opens with a destination to search for. */}
             <TouchableOpacity
@@ -1725,8 +1930,10 @@ const styles = StyleSheet.create({
   // Slim one-line search pill.
   // Same search pill as the destination page: soft grey fill, no shadow.
   // White pill on the blue wash, with a light blue outline.
-  homeSearchBar: {
+  homeSearchWrap: {
     flex: 1,
+  },
+  homeSearchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     height: 48,
@@ -1767,8 +1974,21 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
   },
-  searchHint: {
+  // As tall as the pill, so each hint centres exactly where the plain text did.
+  searchHintClip: {
     flex: 1,
+    alignSelf: 'stretch',
+    overflow: 'hidden',
+  },
+  searchHintSlot: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    justifyContent: 'center',
+  },
+  searchHint: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
@@ -1811,8 +2031,38 @@ const styles = StyleSheet.create({
   searchModal: {
     ...StyleSheet.absoluteFill,
     flex: 1,
-    backgroundColor: COLORS.white,
     paddingHorizontal: SIZES.spacing_lg,
+  },
+  searchBackdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.white,
+  },
+  // Where the field lands (it's drawn over this, absolutely).
+  searchFieldSlot: {
+    height: SEARCH_FIELD_H,
+    marginBottom: SIZES.spacing_lg,
+  },
+  searchInputArea: {
+    flex: 1,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    marginLeft: SIZES.spacing_md,
+  },
+  searchGhostHint: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  searchInputFade: {
+    flex: 1,
+    justifyContent: 'center',
   },
   // Top bar holding the close button (top-left).
   searchTopBar: {
@@ -1845,6 +2095,7 @@ const styles = StyleSheet.create({
   // Rounded search field — same medium size as the home search bar so the two
   // match. (Slightly smaller than the previous large modal field.)
   searchInputContainer: {
+    position: 'absolute',
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.white,
@@ -1852,8 +2103,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.borderLight,
     borderRadius: SIZES.radius_full,
     paddingHorizontal: SIZES.spacing_base,
-    paddingVertical: 15,
-    marginBottom: SIZES.spacing_lg,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
@@ -1865,7 +2114,6 @@ const styles = StyleSheet.create({
     fontSize: SIZES.base,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textPrimary,
-    marginLeft: SIZES.spacing_md,
     paddingVertical: 0,
     outlineStyle: 'none',
   },

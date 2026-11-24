@@ -19,12 +19,15 @@ import { showAlert } from './AppDialog';
 import {
   ANNOUNCEMENT_MAX_LENGTH,
   getAnnouncements,
+  peekAnnouncements,
+  rememberAnnouncements,
   postAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
 } from '../services/announcementsService';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { timeAgo } from '../utils/timeAgo';
+import { ArrivalGlow, useLiveArrivals } from './Motion';
 
 /**
  * Announcements on the trip's Overview: notes from the owner to everyone
@@ -39,9 +42,15 @@ import { timeAgo } from '../utils/timeAgo';
  * @param {number} liveKey  bumps when someone changes the trip (live updates): reload
  */
 export default function AnnouncementsCard({ tripId, isOwner, liveKey }) {
-  const [items, setItems] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  // As last loaded, at once; the fresh copy loads behind it.
+  const [items, setItems] = useState(() => peekAnnouncements(tripId) || []);
+  const [loaded, setLoaded] = useState(() => !!peekAnnouncements(tripId));
+  useEffect(() => {
+    if (loaded) rememberAnnouncements(tripId, items);
+  }, [loaded, items, tripId]);
   const [expanded, setExpanded] = useState(false);
+  // An announcement that just came in (live): it glows once.
+  const freshIds = useLiveArrivals(items, liveKey);
   const [composer, setComposer] = useState(null); // null | { id?, text }
 
   const load = useCallback(() => {
@@ -142,6 +151,7 @@ export default function AnnouncementsCard({ tripId, isOwner, liveKey }) {
               key={item.id}
               item={item}
               first={i === 0}
+              arrived={freshIds.has(item.id)}
               onMenu={isOwner ? () => openMenu(item) : null}
             />
           ))}
@@ -166,10 +176,11 @@ export default function AnnouncementsCard({ tripId, isOwner, liveKey }) {
   );
 }
 
-function AnnouncementRow({ item, first, onMenu }) {
+function AnnouncementRow({ item, first, onMenu, arrived }) {
   const name = item.author?.name || 'Former traveller';
   return (
     <View style={[styles.item, !first && styles.itemDivider]}>
+      <ArrivalGlow active={arrived} radius={12} style={styles.itemGlow} />
       <View style={styles.itemHead}>
         <View style={[styles.avatar, { backgroundColor: avatarColorFor(name) }]}>
           {item.author?.photoUrl
@@ -334,6 +345,10 @@ const styles = StyleSheet.create({
   },
   item: {
     paddingVertical: SIZES.spacing_sm,
+  },
+  itemGlow: {
+    left: -8,
+    right: -8,
   },
   itemDivider: {
     borderTopWidth: StyleSheet.hairlineWidth,

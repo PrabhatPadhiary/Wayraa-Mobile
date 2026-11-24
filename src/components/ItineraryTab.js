@@ -23,6 +23,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { ratingText } from './RatingRow';
 import { COLORS, SIZES } from '../constants';
 import useFloatingBarBottom from '../hooks/useFloatingBarBottom';
+import PollCard from './PollCard';
+import { ArrivalGlow, useLiveArrivals } from './Motion';
+import PollComposer from './PollComposer';
+import { getPolls, peekPolls, rememberPolls } from '../services/pollsService';
 import {
   getItinerary,
   createItineraryItem,
@@ -255,6 +259,36 @@ export default function ItineraryTab({
     if (!peekItinerary(trip.id)) setStatus('loading');
     load();
   }, [load]);
+
+  // Polls about a day and part of the day show inside that slot until the
+  // winner goes into the plan.
+  const [polls, setPolls] = useState(() => peekPolls(trip.id) || []);
+  const pollsLoaded = useRef(!!peekPolls(trip.id));
+  useEffect(() => {
+    if (pollsLoaded.current) rememberPolls(trip.id, polls);
+  }, [polls, trip.id]);
+  const [pollDraft, setPollDraft] = useState(null); // null | { day, slot }
+  // Two or more polls in one slot start folded; these are open.
+  const [openPollIds, setOpenPollIds] = useState(() => new Set());
+  const togglePoll = (id) => setOpenPollIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  useEffect(() => {
+    let cancelled = false;
+    getPolls(trip.id).then((list) => {
+      if (cancelled) return;
+      pollsLoaded.current = true;
+      setPolls(list);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [trip.id, liveKey]);
+  // Stops and polls a friend just added (live): they glow once.
+  const freshItems = useLiveArrivals(items, liveKey);
+  const freshPolls = useLiveArrivals(polls, liveKey);
+  const replacePoll = useCallback((poll) => setPolls((prev) => prev.map((p) => (p.id === poll.id ? poll : p))), []);
+  const removePoll = useCallback((id) => setPolls((prev) => prev.filter((p) => p.id !== id)), []);
 
   // A friend changed the trip (live update): reload quietly, but never in the
   // middle of a drag. The reload waits until you let go.
@@ -1138,6 +1172,7 @@ export default function ItineraryTab({
           {...dragHandlers}
         >
           <View style={[styles.item, open && styles.itemOpen, dragging && styles.itemDragging, saving && styles.itemSaving]}>
+            <ArrivalGlow active={freshItems.has(item.id)} />
             <View style={[styles.itemBar, { backgroundColor: cat.bar }]} />
             <View style={styles.flex}>
               <TouchableOpacity
@@ -1238,8 +1273,11 @@ export default function ItineraryTab({
     const list = daySlots[slot.key];
     const hoverHere = hover?.key === `slot:${slot.key}`;
     const adding = canEdit && addingSlot === slot.key;
+    const slotPolls = polls.filter((p) => !p.itineraryItemId
+      && isoToDay(p.scheduledDate) === current.day
+      && (p.slot || 'anytime') === slot.key);
     // Anytime only shows when it has something (or while dragging / adding).
-    if (slot.key === 'anytime' && !list.length && !drag && !adding) return null;
+    if (slot.key === 'anytime' && !list.length && !slotPolls.length && !drag && !adding) return null;
     return (
       <View
         key={slot.key}
@@ -1252,6 +1290,17 @@ export default function ItineraryTab({
           <Text style={styles.slotTitle}>{slot.label}</Text>
           {list.length > 0 && <Text style={styles.slotCount}>{list.length}</Text>}
           <View style={styles.flex} />
+          {canEdit && !adding && !drag && (
+            <TouchableOpacity
+              style={styles.slotAdd}
+              onPress={() => setPollDraft({ day: current.day, slot: slot.key })}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Start a poll for ${slot.label.toLowerCase()}`}
+            >
+              <Ionicons name="stats-chart-outline" size={14} color={COLORS.primary} />
+            </TouchableOpacity>
+          )}
           {canEdit && !adding && (
             <TouchableOpacity
               style={styles.slotAdd}
@@ -1275,8 +1324,26 @@ export default function ItineraryTab({
           );
         })}
 
+        {slotPolls.map((p) => (
+          <View key={p.id} style={styles.slotPoll}>
+            <PollCard
+              poll={p}
+              tripId={trip.id}
+              sortedDests={sortedDests}
+              canEdit={canEdit}
+              showWhen={false}
+              arrived={freshPolls.has(p.id)}
+              expanded={slotPolls.length === 1 || openPollIds.has(p.id)}
+              onToggle={slotPolls.length > 1 ? () => togglePoll(p.id) : undefined}
+              onChange={replacePoll}
+              onRemoved={removePoll}
+              onAddedToItinerary={(item) => setItems((prev) => [...prev, item])}
+            />
+          </View>
+        ))}
+
         {adding && renderAddBox(slot.key)}
-        {!list.length && !adding && (
+        {!list.length && !adding && !slotPolls.length && (
           <TouchableOpacity
             style={[styles.slotEmpty, hoverHere && styles.slotEmptyHover]}
             onPress={() => { if (canEdit && !drag) { setAddingSlot(slot.key); setAddText(''); } }}
@@ -1508,6 +1575,14 @@ export default function ItineraryTab({
           ))}
         </View>
       )}
+
+      <PollComposer
+        trip={trip}
+        sortedDests={sortedDests}
+        draft={pollDraft}
+        onClose={() => setPollDraft(null)}
+        onCreated={(poll) => { setPolls((prev) => [poll, ...prev]); setPollDraft(null); }}
+      />
     </View>,
     heroMap,
   );
@@ -2064,6 +2139,9 @@ const styles = StyleSheet.create({
     borderColor: COLORS.accent,
     borderStyle: 'dashed',
     backgroundColor: '#FDF4F1',
+  },
+  slotPoll: {
+    marginTop: SIZES.spacing_sm,
   },
   slotAdd: {
     width: 26,

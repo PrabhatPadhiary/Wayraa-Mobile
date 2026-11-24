@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { ArrivalGlow, useLiveArrivals } from './Motion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
 import {
@@ -154,6 +155,8 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
   // As last loaded for this trip, at once (switching tabs is instant); the
   // fresh copy loads behind it.
   const [expenses, setExpenses] = useState(() => peekExpenses(trip.id) || []);
+  // Expenses a friend just added (live): they glow once.
+  const freshExpenses = useLiveArrivals(expenses, liveKey);
   const [status, setStatus] = useState(() => (peekExpenses(trip.id) ? 'ready' : 'loading')); // loading | ready | error
   // What you see is what the next visit starts from (your own edits too).
   useEffect(() => {
@@ -411,6 +414,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
                       accessibilityRole={editable ? 'button' : undefined}
                       accessibilityLabel={`${e.title}, ${formatMoney(e.amount, currency)}, paid by ${e.paidByName}`}
                     >
+                      <ArrivalGlow active={freshExpenses.has(e.id)} radius={12} style={styles.expenseGlow} />
                       <View style={[styles.expenseIcon, { backgroundColor: c.tint }]}>
                         <Ionicons name={c.icon} size={16} color={c.color} />
                       </View>
@@ -653,6 +657,11 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textMuted,
     textTransform: 'uppercase',
+  },
+  // The "just added by a friend" wash, a little wider than the row.
+  expenseGlow: {
+    left: -8,
+    right: -8,
   },
   expenseRow: {
     flexDirection: 'row',

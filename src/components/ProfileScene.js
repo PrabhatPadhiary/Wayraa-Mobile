@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, Easing, StyleSheet } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Rect, Circle, Path, G, Ellipse } from 'react-native-svg';
+import { useReducedMotion } from 'react-native-reanimated';
 
 /*
  * Profile's header scene: a bright countryside (sky, sun, mountains, rolling
@@ -10,7 +11,8 @@ import Svg, { Defs, LinearGradient, Stop, Rect, Circle, Path, G, Ellipse } from 
  * It comes in two layers so the screen can put your name BETWEEN them, like
  * the iPhone Lock Screen's depth effect (the picture in front of the clock):
  *
- *   <ProfileSceneBack />   sky, sun, clouds, mountains, far hills
+ *   <ProfileSceneBack />   sky, sun (its glow ripples, as in the logo), drifting
+ *                          clouds (some behind the sun), birds, mountains, far hills
  *   …your big name…
  *   <ProfileSceneFront />  near hills, farm and the windmill (its blades turn)
  *
@@ -90,56 +92,293 @@ function useBox(width) {
   return { width, height: (width * SCENE_H) / SCENE_W };
 }
 
+// The sun, on the grid, and its glow rings (they ripple outwards, as in the logo).
+const SUN = { x: 92, y: 96, r: 25, halo: 40 };
+const SUN_RINGS = [
+  { r: 31, color: '#FFC93C' },
+  { r: 37, color: '#FFD15A' },
+  { r: 43, color: '#FFD976' },
+  { r: 49, color: '#FFE291' },
+  { r: 55, color: '#FFEAAD' },
+];
+
+/** A layer the size of the scene, drawn on the same grid. */
+function Layer({ box, style, children }) {
+  return (
+    <Animated.View style={[StyleSheet.absoluteFill, style]} pointerEvents="none">
+      <Svg width={box.width} height={box.height} viewBox={`0 0 ${SCENE_W} ${SCENE_H}`}>
+        {children}
+      </Svg>
+    </Animated.View>
+  );
+}
+
+/** A gentle back-and-forth loop (0 → 1 → 0), or nothing when motion is reduced. */
+function useSwing(value, duration, enabled) {
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(value, { toValue: 1, duration, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(value, { toValue: 0, duration, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [value, duration, enabled]);
+}
+
+/** A soft cloud: a flat base with puffs on top, centred on (x, y). */
+function Cloud({ x, y, s = 1, opacity = 1 }) {
+  return (
+    <G transform={`translate(${x} ${y}) scale(${s})`} fill="#FFFFFF" opacity={opacity}>
+      <Ellipse cx="0" cy="6" rx="30" ry="9" />
+      <Ellipse cx="-12" cy="0" rx="13" ry="9" />
+      <Ellipse cx="6" cy="-3" rx="17" ry="12" />
+      <Ellipse cx="20" cy="2" rx="10" ry="7" />
+    </G>
+  );
+}
+
+// Birds: two little flocks crossing the sky, at different heights and speeds.
+// Each bird is placed relative to its flock's leader (grid units).
+const FLOCKS = [
+  { y: 44, size: 1, duration: 34000, delay: 0, birds: [{ x: 0, y: 0 }, { x: -16, y: 7 }, { x: -28, y: -3 }] },
+  { y: 70, size: 0.75, duration: 46000, delay: 15000, birds: [{ x: 0, y: 0 }, { x: -13, y: 5 }] },
+];
+const BIRD_W = 16; // a bird's width on the grid
+
+/** A distant bird: two curved wings, flapping (squashing up and down). */
+function Bird({ k, x, y, size, flap, phase }) {
+  const w = BIRD_W * size * k;
+  const h = w * 0.6;
+  // The flap goes round 0 → 1; each bird starts at its own point in it.
+  const steps = [0, 0.25, 0.5, 0.75, 1];
+  const wing = (t) => 0.55 + 0.45 * Math.cos((t + phase) * Math.PI * 2); // 1 up … 0.1 down
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        left: x * k - w / 2,
+        top: y * k - h / 2,
+        width: w,
+        height: h,
+        transform: [{ scaleY: flap.interpolate({ inputRange: steps, outputRange: steps.map(wing) }) }],
+      }}
+    >
+      <Svg width={w} height={h} viewBox="-8 -5 16 10">
+        <Path d="M -7 1 Q -3.5 -4 0 1 Q 3.5 -4 7 1" stroke="#4A5D70" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      </Svg>
+    </Animated.View>
+  );
+}
+
+/** A flock flying left to right across the scene, again and again. */
+function Flock({ k, width, flock, flap, moving }) {
+  const fly = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!moving) return undefined;
+    fly.setValue(0);
+    const loop = Animated.loop(Animated.sequence([
+      Animated.delay(flock.delay),
+      Animated.timing(fly, { toValue: 1, duration: flock.duration, easing: Easing.linear, useNativeDriver: true }),
+      Animated.timing(fly, { toValue: 0, duration: 0, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [fly, flock, moving]);
+  // Still (reduced motion): the flock rests in the sky.
+  const restX = width * 0.55;
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, {
+        transform: moving
+          ? [
+            { translateX: fly.interpolate({ inputRange: [0, 1], outputRange: [-40 * k, width + 50 * k] }) },
+            // A slow rise and dip on the way across.
+            { translateY: fly.interpolate({ inputRange: [0, 0.3, 0.6, 1], outputRange: [0, -6 * k, 3 * k, -2 * k] }) },
+          ]
+          : [{ translateX: restX }],
+      }]}
+    >
+      {flock.birds.map((b, i) => (
+        <Bird key={i} k={k} x={b.x} y={flock.y + b.y} size={flock.size} flap={flap} phase={i * 0.33} />
+      ))}
+    </Animated.View>
+  );
+}
+
 export function ProfileSceneBack({ width }) {
   const box = useBox(width);
+  const k = width / SCENE_W; // grid unit, in points
+  const reduceMotion = useReducedMotion();
+  const moving = !reduceMotion;
+
+  // Sun: rings brighten in turn from the sun outwards; the halo breathes.
+  const ripple = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!moving) return undefined;
+    const loop = Animated.loop(Animated.timing(ripple, { toValue: 1, duration: 4200, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [ripple, moving]);
+  const breathe = useRef(new Animated.Value(0)).current;
+  useSwing(breathe, 2600, moving);
+
+  // Clouds drift side to side; the far one slower and less (depth).
+  const drift = useRef(new Animated.Value(0)).current;
+  const driftFar = useRef(new Animated.Value(0)).current;
+  const driftSun = useRef(new Animated.Value(0)).current;
+  const driftHigh = useRef(new Animated.Value(0)).current;
+  useSwing(drift, 9000, moving);
+  useSwing(driftFar, 13000, moving);
+  useSwing(driftSun, 11000, moving);
+  useSwing(driftHigh, 16000, moving);
+
+  // Wings: one beat shared by every bird (each at its own point in it).
+  const flap = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!moving) return undefined;
+    const loop = Animated.loop(Animated.timing(flap, { toValue: 1, duration: 700, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [flap, moving]);
+
+  const haloSize = SUN.halo * 2 * k;
+
   return (
-    <Svg width={box.width} height={box.height} viewBox={`0 0 ${SCENE_W} ${SCENE_H}`} style={StyleSheet.absoluteFill}>
-      <Defs>
-        <LinearGradient id="pSky" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={C.skyTop} />
-          <Stop offset="1" stopColor={C.skyBottom} />
-        </LinearGradient>
-        <LinearGradient id="pBackHill" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor={C.hillBackTop} />
-          <Stop offset="1" stopColor={C.hillBackBottom} />
-        </LinearGradient>
-      </Defs>
-      <Rect x="0" y="0" width={SCENE_W} height={SCENE_H} fill="url(#pSky)" />
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {/* Sky */}
+      <Svg width={box.width} height={box.height} viewBox={`0 0 ${SCENE_W} ${SCENE_H}`} style={StyleSheet.absoluteFill}>
+        <Defs>
+          <LinearGradient id="pSky" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={C.skyTop} />
+            <Stop offset="1" stopColor={C.skyBottom} />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width={SCENE_W} height={SCENE_H} fill="url(#pSky)" />
+      </Svg>
 
-      {/* Sun and clouds */}
-      <Circle cx="92" cy="96" r="40" fill={C.sunHalo} opacity="0.6" />
-      <Circle cx="92" cy="96" r="25" fill={C.sun} />
-      <G fill="#FFFFFF">
-        <Ellipse cx="236" cy="78" rx="30" ry="10" />
-        <Ellipse cx="254" cy="70" rx="18" ry="12" />
-        <Ellipse cx="224" cy="72" rx="13" ry="8" />
-        <Ellipse cx="350" cy="58" rx="20" ry="7" opacity="0.9" />
-      </G>
+      {/* High, thin clouds far back */}
+      <Layer
+        box={box}
+        style={{ transform: [{ translateX: driftHigh.interpolate({ inputRange: [0, 1], outputRange: [-8 * k, 8 * k] }) }] }}
+      >
+        <Cloud x={166} y={40} s={0.55} opacity={0.75} />
+        <Cloud x={20} y={34} s={0.45} opacity={0.7} />
+      </Layer>
 
-      {/* Mountains (behind the name) */}
-      <Path d="M -10 200 L 70 118 L 128 176 L 196 106 L 268 182 L 332 132 L 410 196 L 410 340 L -10 340 Z" fill={C.far} />
-      <Path d="M 196 106 L 268 182 L 226 182 Z" fill={C.farShade} />
-      <Path d="M 70 118 L 128 176 L 98 176 Z" fill={C.farShade} />
-      <Path d="M 70 118 L 86 134 L 76 132 L 68 138 L 60 128 Z" fill={C.snow} />
-      <Path d="M 196 106 L 216 126 L 204 124 L 194 132 L 184 119 Z" fill={C.snow} />
-      <Path d="M 332 132 L 346 144 L 337 143 L 330 148 L 322 140 Z" fill={C.snow} />
+      {/* Clouds behind the sun: they peek out around it */}
+      <Layer
+        box={box}
+        style={{ transform: [{ translateX: driftSun.interpolate({ inputRange: [0, 1], outputRange: [7 * k, -7 * k] }) }] }}
+      >
+        <Cloud x={120} y={108} s={0.9} opacity={0.95} />
+        <Cloud x={58} y={82} s={0.6} opacity={0.85} />
+      </Layer>
 
-      {/* Far hills */}
-      <Path d="M -10 214 C 50 188 120 194 176 208 C 236 224 290 194 350 196 C 380 197 400 204 410 210 L 410 340 L -10 340 Z" fill="url(#pBackHill)" />
-    </Svg>
+      {/* Sun glow rings, rippling outwards */}
+      {SUN_RINGS.map((ring, i) => {
+        const at = (i / SUN_RINGS.length) * 0.6;
+        return (
+          <Layer
+            key={ring.r}
+            box={box}
+            style={{
+              opacity: moving
+                ? ripple.interpolate({
+                  inputRange: [0, at, at + 0.14, at + 0.4, 1],
+                  outputRange: [0.18, 0.18, 0.85, 0.18, 0.18],
+                  extrapolate: 'clamp',
+                })
+                : 0.3,
+            }}
+          >
+            <Circle cx={SUN.x} cy={SUN.y} r={ring.r} stroke={ring.color} strokeWidth="2.2" fill="none" />
+          </Layer>
+        );
+      })}
+
+      {/* Halo, breathing around the sun */}
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: (SUN.x - SUN.halo) * k,
+          top: (SUN.y - SUN.halo) * k,
+          width: haloSize,
+          height: haloSize,
+          opacity: breathe.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.75] }),
+          transform: [{ scale: breathe.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1.06] }) }],
+        }}
+      >
+        <Svg width={haloSize} height={haloSize} viewBox={`0 0 ${SUN.halo * 2} ${SUN.halo * 2}`}>
+          <Circle cx={SUN.halo} cy={SUN.halo} r={SUN.halo} fill={C.sunHalo} />
+        </Svg>
+      </Animated.View>
+
+      {/* Sun */}
+      <Layer box={box}>
+        <Circle cx={SUN.x} cy={SUN.y} r={SUN.r} fill={C.sun} />
+      </Layer>
+
+      {/* Clouds, drifting */}
+      <Layer
+        box={box}
+        style={{ transform: [{ translateX: drift.interpolate({ inputRange: [0, 1], outputRange: [-10 * k, 10 * k] }) }] }}
+      >
+        <G fill="#FFFFFF">
+          <Ellipse cx="236" cy="78" rx="30" ry="10" />
+          <Ellipse cx="254" cy="70" rx="18" ry="12" />
+          <Ellipse cx="224" cy="72" rx="13" ry="8" />
+        </G>
+      </Layer>
+      <Layer
+        box={box}
+        style={{ transform: [{ translateX: driftFar.interpolate({ inputRange: [0, 1], outputRange: [6 * k, -6 * k] }) }] }}
+      >
+        <Ellipse cx="350" cy="58" rx="20" ry="7" fill="#FFFFFF" opacity="0.9" />
+        <Cloud x={302} y={96} s={0.6} opacity={0.9} />
+      </Layer>
+
+      {/* Birds, crossing the sky */}
+      {FLOCKS.map((f, i) => (
+        <Flock key={i} k={k} width={width} flock={f} flap={flap} moving={moving} />
+      ))}
+
+      {/* Mountains (behind the name) and far hills, in front of the sky */}
+      <Svg width={box.width} height={box.height} viewBox={`0 0 ${SCENE_W} ${SCENE_H}`} style={StyleSheet.absoluteFill}>
+        <Defs>
+          <LinearGradient id="pBackHill" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={C.hillBackTop} />
+            <Stop offset="1" stopColor={C.hillBackBottom} />
+          </LinearGradient>
+        </Defs>
+        <Path d="M -10 200 L 70 118 L 128 176 L 196 106 L 268 182 L 332 132 L 410 196 L 410 340 L -10 340 Z" fill={C.far} />
+        <Path d="M 196 106 L 268 182 L 226 182 Z" fill={C.farShade} />
+        <Path d="M 70 118 L 128 176 L 98 176 Z" fill={C.farShade} />
+        <Path d="M 70 118 L 86 134 L 76 132 L 68 138 L 60 128 Z" fill={C.snow} />
+        <Path d="M 196 106 L 216 126 L 204 124 L 194 132 L 184 119 Z" fill={C.snow} />
+        <Path d="M 332 132 L 346 144 L 337 143 L 330 148 L 322 140 Z" fill={C.snow} />
+
+        <Path d="M -10 214 C 50 188 120 194 176 208 C 236 224 290 194 350 196 C 380 197 400 204 410 210 L 410 340 L -10 340 Z" fill="url(#pBackHill)" />
+      </Svg>
+    </View>
   );
 }
 
 export function ProfileSceneFront({ width }) {
   const box = useBox(width);
   const spin = useRef(new Animated.Value(0)).current;
+  // Blades turn, unless motion is reduced (then they rest where they are).
+  const reduceMotion = useReducedMotion();
   useEffect(() => {
+    if (reduceMotion) return undefined;
     const loop = Animated.loop(
       Animated.timing(spin, { toValue: 1, duration: 16000, easing: Easing.linear, useNativeDriver: true }),
     );
     loop.start();
     return () => loop.stop();
-  }, [spin]);
+  }, [spin, reduceMotion]);
 
   const scale = width / SCENE_W;
   const bladeBox = BLADE_SHOWN * 2 * scale;

@@ -1,21 +1,18 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Pressable,
   StatusBar,
   Image,
   Animated,
   Easing,
   TextInput,
   ActivityIndicator,
-  AccessibilityInfo,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
 import { Ionicons } from '@expo/vector-icons';
 import { checkEmailExists } from '../services';
@@ -24,26 +21,13 @@ import { openPrivacyPolicy, openTerms } from '../utils/legal';
 import WayraaLoader from '../components/WayraaLoader';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import { finishSignIn, continueAsGuest } from '../utils/authNavigation';
+import WelcomeScene from '../components/WelcomeScene';
 
 /*
- * First screen for signed-out users: full-screen travel photos that slowly
- * drift and cross-fade, with the brand line and the sign-up buttons over a
- * navy fade at the bottom. Tapping the photo skips to the next one.
- *
- * The photos are bundled (assets/welcome) so they show instantly, offline.
+ * First screen for signed-out users: three pages of one wide illustration
+ * (see WelcomeScene: a plane flies a dotted route across them, each page with
+ * its own headline), then the sign-up buttons on the frost page below.
  */
-const PHOTOS = [
-  { id: 'road', source: require('../../assets/welcome/road.jpg'), caption: 'The long way round' },
-  { id: 'beach', source: require('../../assets/welcome/beach.jpg'), caption: 'Salt, sand & sea' },
-  { id: 'campfire', source: require('../../assets/welcome/campfire.jpg'), caption: 'Nights under the stars' },
-];
-
-const PHOTO_MS = 5500;   // how long each photo stays
-const FADE_MS = 1100;    // cross-fade between photos
-const DRIFT_SCALE = 1.12; // slow zoom ("Ken Burns") over a photo's time
-
-const NAVY = 'rgba(4,50,71,';
-
 
 export default function WelcomeScreen({ navigation }) {
   const { height: screenHeight } = useWindowDimensions();
@@ -52,10 +36,6 @@ export default function WelcomeScreen({ navigation }) {
   // The sign-in sheet sits on top of the keyboard (Android doesn't move it: the
   // app is drawn edge to edge, so the window isn't resized for the keyboard).
   const keyboardHeight = useKeyboardHeight();
-
-  const [active, setActive] = useState(0);
-  const [previous, setPrevious] = useState(null);
-  const [reduceMotion, setReduceMotion] = useState(false);
 
   const [showAuthSheet, setShowAuthSheet] = useState(false);
   const [sheetMode, setSheetMode] = useState('start'); // 'start' | 'signin'
@@ -75,27 +55,12 @@ export default function WelcomeScreen({ navigation }) {
       }
     });
 
-  // One opacity + zoom per photo.
-  const layers = useRef(
-    PHOTOS.map((_, i) => ({
-      opacity: new Animated.Value(i === 0 ? 1 : 0),
-      scale: new Animated.Value(1),
-    })),
-  ).current;
-  // One fill (0-1) per progress bar, animated on the native side so a bar
-  // can never be left half-lit when the photo changes.
-  const fills = useRef(PHOTOS.map(() => new Animated.Value(0))).current;
   const intro = useRef(new Animated.Value(0)).current;
-  const captionOpacity = useRef(new Animated.Value(1)).current;
 
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastTranslateY = useRef(new Animated.Value(20)).current;
   const sheetAnim = useRef(new Animated.Value(screenHeight)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion).catch(() => {});
-  }, []);
 
   // Content rises in once.
   useEffect(() => {
@@ -107,102 +72,6 @@ export default function WelcomeScreen({ navigation }) {
       useNativeDriver: true,
     }).start();
   }, [intro]);
-
-  // Show the active photo: fade it in over the previous one, drift, and run
-  // its progress bar. When the bar fills, move on (unless the sheet is open).
-  useEffect(() => {
-    const layer = layers[active];
-    // Only the outgoing photo stays under the incoming one; the new one
-    // always fades in from clear (even after quick taps).
-    layers.forEach((l, i) => {
-      if (i !== active && i !== previous) {
-        l.opacity.stopAnimation();
-        l.opacity.setValue(0);
-      }
-    });
-    if (previous !== null) {
-      layer.opacity.stopAnimation();
-      layer.opacity.setValue(0);
-    }
-    layer.scale.stopAnimation();
-    layer.scale.setValue(1);
-    const animations = [
-      Animated.timing(layer.opacity, {
-        toValue: 1,
-        duration: previous === null ? 0 : FADE_MS,
-        easing: Easing.inOut(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ];
-    if (!reduceMotion) {
-      animations.push(Animated.timing(layer.scale, {
-        toValue: DRIFT_SCALE,
-        duration: PHOTO_MS + FADE_MS * 2,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }));
-    }
-    Animated.parallel(animations).start();
-
-    captionOpacity.setValue(0);
-    Animated.timing(captionOpacity, {
-      toValue: 1, duration: 600, delay: 300, useNativeDriver: true,
-    }).start();
-
-    // Once the new photo covers it, hide the old one.
-    const hide = setTimeout(() => {
-      if (previous !== null) layers[previous].opacity.setValue(0);
-    }, FADE_MS + 50);
-    return () => clearTimeout(hide);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
-
-  const activeRef = useRef(0);
-  const next = useCallback(() => {
-    const cur = activeRef.current;
-    activeRef.current = (cur + 1) % PHOTOS.length;
-    setPrevious(cur);
-    setActive(activeRef.current);
-  }, []);
-
-  // Bars before the active photo are full, after it empty; the active one
-  // fills over the photo's time, then we move on.
-  useEffect(() => {
-    fills.forEach((f, i) => {
-      if (i !== active) {
-        f.stopAnimation();
-        f.setValue(i < active ? 1 : 0);
-      }
-    });
-    fills[active].setValue(0);
-  }, [active, fills]);
-
-  // Run (or pause, while the sign-in sheet is open) the active bar, picking
-  // up from wherever it was.
-  const runRef = useRef(null);
-  useEffect(() => {
-    const fill = fills[active];
-    if (showAuthSheet) {
-      fill.stopAnimation();
-      return undefined;
-    }
-    let cancelled = false;
-    fill.stopAnimation((value) => {
-      if (cancelled) return;
-      const run = Animated.timing(fill, {
-        toValue: 1,
-        duration: Math.max(0, PHOTO_MS * (1 - value)),
-        easing: Easing.linear,
-        useNativeDriver: true,
-      });
-      runRef.current = run;
-      run.start(({ finished }) => { if (finished && !cancelled) next(); });
-    });
-    return () => {
-      cancelled = true;
-      runRef.current?.stop();
-    };
-  }, [active, showAuthSheet, fills, next]);
 
   const openSheet = (mode) => {
     setSheetMode(mode);
@@ -308,93 +177,30 @@ export default function WelcomeScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
 
-      {/* Photos (last shown on top) */}
-      {PHOTOS.map((photo, i) => (
-        <Animated.View
-          key={photo.id}
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              zIndex: i === active ? 2 : i === previous ? 1 : 0,
-              opacity: layers[i].opacity,
-              transform: [{ scale: layers[i].scale }],
-            },
-          ]}
-        >
-          <Image source={photo.source} style={styles.photo} resizeMode="cover" />
-        </Animated.View>
-      ))}
+      <WelcomeScene style={styles.scene} paused={showAuthSheet} compact={compact} />
 
-      {/* Shade: a little at the top for the status bar, navy at the bottom for the text */}
-      <LinearGradient
+      {/* Brand, over the sky */}
+      <Animated.View
+        style={[styles.brandWrap, { top: insets.top + SIZES.spacing_sm }, rise(-10)]}
         pointerEvents="none"
-        colors={['rgba(0,0,0,0.45)', 'rgba(0,0,0,0)']}
-        style={[styles.topShade, { height: insets.top + 110 }]}
-      />
-      <LinearGradient
-        pointerEvents="none"
-        colors={[`${NAVY}0)`, `${NAVY}0.55)`, `${NAVY}0.92)`, 'rgba(14, 21, 28, 0.98)']}
-        locations={[0, 0.3, 0.65, 1]}
-        style={styles.bottomShade}
-      />
-
-      {/* Tap the photo to see the next one */}
-      <Pressable
-        style={[StyleSheet.absoluteFill, { zIndex: 4 }]}
-        onPress={next}
-        accessibilityRole="button"
-        accessibilityLabel="Next photo"
-      />
-
-      {/* Top: progress bars, brand, caption */}
-      <View style={[styles.top, { paddingTop: insets.top + SIZES.spacing_sm }]} pointerEvents="none">
-        <View style={styles.bars}>
-          {PHOTOS.map((photo, i) => (
-            <View key={photo.id} style={styles.bar}>
-              <Animated.View style={[styles.barFill, { transform: [{ scaleX: fills[i] }] }]} />
-            </View>
-          ))}
+      >
+        <View style={styles.brandRow}>
+          <Image source={require('../../assets/wayraa_logo.png')} style={styles.brandLogo} />
+          <Text style={styles.brandName} maxFontSizeMultiplier={1.2}>
+            wayraa<Text style={styles.brandDot}>.</Text>
+          </Text>
         </View>
-
-        <Animated.View style={[styles.brandWrap, rise(-10)]}>
-          <View style={styles.brandRow}>
-            <Image source={require('../../assets/wayraa_logo.png')} style={styles.brandLogo} />
-            <Text style={styles.brandName} maxFontSizeMultiplier={1.2}>Wayraa</Text>
-          </View>
-        </Animated.View>
-      </View>
+      </Animated.View>
 
       {/* Bottom: line, buttons */}
       <View
         style={[styles.bottom, { paddingBottom: insets.bottom + (compact ? SIZES.spacing_base : SIZES.spacing_lg) }]}
         pointerEvents="box-none"
       >
-        <Animated.Text
-          style={[styles.caption, { opacity: captionOpacity }]}
-          maxFontSizeMultiplier={1.2}
-        >
-          {PHOTOS[active].caption.toUpperCase()}
-        </Animated.Text>
-
         <Animated.View style={rise(30)}>
           <View>
-            <View pointerEvents="none">
-              <Text
-                style={[styles.headline, compact && styles.headlineCompact]}
-                maxFontSizeMultiplier={1.15}
-                accessibilityRole="header"
-              >
-                Plan it <Text style={styles.headlineAccent}>together.</Text>
-                {'\n'}Live it. Share it.
-              </Text>
-              <Text style={styles.subline} maxFontSizeMultiplier={1.3}>
-                Build trips with your crew, map out every day, and share the stories after.
-              </Text>
-            </View>
-
             <View style={[styles.actions, compact && styles.actionsCompact]}>
               <TouchableOpacity
                 style={styles.primaryButton}
@@ -563,133 +369,50 @@ export default function WelcomeScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.backgroundWarm,
   },
-  photo: {
-    width: '100%',
-    height: '100%',
-  },
-  topShade: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 3,
-  },
-  bottomShade: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '68%',
-    zIndex: 3,
+  // The illustration takes whatever height the text and buttons leave.
+  scene: {
+    flex: 1,
   },
 
-  // ── Top ──────────────────────────────────────────────────────────────
-  top: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: SIZES.spacing_lg,
-    zIndex: 5,
-  },
-  bars: {
-    flexDirection: 'row',
-    gap: 5,
-    // A soft shadow keeps the bars visible on bright skies.
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-  },
-  bar: {
-    flex: 1,
-    height: 2.5,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.32)',
-    overflow: 'hidden',
-  },
-  barFill: {
-    ...StyleSheet.absoluteFill,
-    borderRadius: 2,
-    backgroundColor: COLORS.white,
-    transformOrigin: 'left',
-  },
+  // ── Brand ────────────────────────────────────────────────────────────
   brandWrap: {
-    alignSelf: 'flex-start',
-    marginTop: SIZES.spacing_base,
+    position: 'absolute',
+    left: SIZES.spacing_lg,
   },
   brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   brandLogo: {
-    width: 40,
-    height: 40,
+    width: 34,
+    height: 34,
   },
   brandName: {
-    fontSize: 27,
-    fontFamily: 'PlayfairDisplay_800ExtraBold',
-    color: COLORS.white,
-    letterSpacing: 0.5,
-    textShadowColor: 'rgba(0,0,0,0.35)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+    fontSize: 24,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+    letterSpacing: -0.6,
+  },
+  brandDot: {
+    color: COLORS.accent,
   },
 
   // ── Bottom ───────────────────────────────────────────────────────────
   bottom: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     paddingHorizontal: SIZES.spacing_lg,
-    zIndex: 5,
-  },
-  caption: {
-    fontSize: 11,
-    fontFamily: 'Poppins_600SemiBold',
-    color: 'rgba(255,255,255,0.75)',
-    letterSpacing: 2.2,
-    marginBottom: SIZES.spacing_sm,
-    textAlign: 'center',
-  },
-  headline: {
-    fontSize: 40,
-    lineHeight: 48,
-    fontFamily: 'PlayfairDisplay_800ExtraBold',
-    color: COLORS.white,
-    letterSpacing: -0.3,
-    textAlign: 'center',
-  },
-  headlineCompact: {
-    fontSize: 33,
-    lineHeight: 40,
-  },
-  headlineAccent: {
-    color: '#EC7550',
-  },
-  subline: {
-    fontSize: 15,
-    lineHeight: 23,
-    fontFamily: 'Poppins_400Regular',
-    color: 'rgba(255,255,255,0.82)',
-    marginTop: SIZES.spacing_md,
-    maxWidth: 320,
-    alignSelf: 'center',
-    textAlign: 'center',
   },
   actions: {
-    marginTop: SIZES.spacing_lg,
-    gap: 12,
-    width: '80%',
-    maxWidth: 320,
+    marginTop: SIZES.spacing_md,
+    gap: 10,
+    width: '84%',
+    maxWidth: 330,
     alignSelf: 'center',
   },
   actionsCompact: {
-    marginTop: SIZES.spacing_base,
+    marginTop: SIZES.spacing_sm,
   },
   primaryButton: {
     flexDirection: 'row',
@@ -697,13 +420,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SIZES.spacing_sm,
     backgroundColor: COLORS.accent,
-    height: 58,
-    borderRadius: 29,
+    height: 54,
+    borderRadius: 27,
     shadowColor: COLORS.accent,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 6,
   },
   primaryButtonText: {
     color: COLORS.white,
@@ -712,40 +435,44 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   secondaryButton: {
-    height: 54,
+    height: 50,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 27,
+    borderRadius: 25,
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.4)',
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
   },
   secondaryButtonText: {
-    color: COLORS.white,
+    color: COLORS.primary,
     fontSize: SIZES.md + 1,
     fontFamily: 'Poppins_600SemiBold',
     letterSpacing: 0.2,
   },
   signInLink: {
     alignSelf: 'center',
-    marginTop: SIZES.spacing_base,
+    marginTop: SIZES.spacing_sm,
     paddingVertical: SIZES.spacing_xs,
   },
   signInText: {
     fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
-    color: 'rgba(255,255,255,0.75)',
+    color: COLORS.textSecondary,
   },
   signInBold: {
     fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.white,
+    color: COLORS.primary,
     textDecorationLine: 'underline',
   },
 
   // ── Auth bottom sheet ────────────────────────────────────────────────
   overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(28,40,51,0.5)',
     zIndex: 20,
   },
   authSheet: {
@@ -859,7 +586,11 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
     backgroundColor: 'rgba(255,255,255,0.92)',
     justifyContent: 'center',
     alignItems: 'center',

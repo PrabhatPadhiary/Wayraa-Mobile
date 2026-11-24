@@ -63,7 +63,7 @@ async function ensureChannel() {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(TRIP_UPDATES_CHANNEL, {
     name: 'Trip updates',
-    description: 'When friends join, add places, expenses or plans to your trips, announcements, trip reminders, and likes, comments and replies on your stories.',
+    description: 'When friends join, add places, expenses or plans to your trips, announcements, polls, trip reminders, and likes, comments and replies on your stories.',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 200, 120, 200],
     lightColor: '#2B3F51',

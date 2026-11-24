@@ -76,15 +76,15 @@ export default function SignUpScreen({ navigation, route }) {
         style={styles.content}
         behavior="padding"
       >
+        {/* Back: above the form, so it stays put while you scroll. */}
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
+        </TouchableOpacity>
         <ScrollView showsVerticalScrollIndicator={false}>
-          {/* Back Button */}
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-            accessibilityLabel="Go back"
-          >
-            <Ionicons name="arrow-back" size={24} color={COLORS.textPrimary} />
-          </TouchableOpacity>
 
           {/* Header */}
           <Text style={styles.title}>Create your account</Text>

@@ -1,6 +1,7 @@
 import { API_URL } from '../config';
 import { getAuthToken } from './authService';
 import { AuthRequiredError, ForbiddenError } from './errors';
+import { cachedFetch, peekCache, setCache, CacheKeys } from './cache';
 
 /**
  * A trip's announcements: notes from the owner to everyone on the trip.
@@ -34,9 +35,22 @@ async function request(tripId, path = '', options = {}) {
   return response.json();
 }
 
-export async function getAnnouncements(tripId) {
-  const data = await request(tripId);
-  return Array.isArray(data) ? data : [];
+/** The trip's announcements (kept in memory, so coming back to the trip is instant). */
+export function getAnnouncements(tripId) {
+  return cachedFetch(CacheKeys.announcements(tripId), async () => {
+    const data = await request(tripId);
+    return Array.isArray(data) ? data : [];
+  });
+}
+
+/** As last loaded for this trip (instant), or undefined. */
+export function peekAnnouncements(tripId) {
+  return peekCache(CacheKeys.announcements(tripId));
+}
+
+/** What's on screen now (your own posts and edits too) is what the next visit starts from. */
+export function rememberAnnouncements(tripId, items) {
+  if (tripId && Array.isArray(items)) setCache(CacheKeys.announcements(tripId), items);
 }
 
 export function postAnnouncement(tripId, text) {

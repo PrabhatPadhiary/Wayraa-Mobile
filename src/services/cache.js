@@ -31,6 +31,8 @@ export const CacheKeys = {
   itinerary: (tripId) => `itinerary:${tripId}`,
   expenses: (tripId) => `expenses:${tripId}`,
   checklist: (tripId) => `checklist:${tripId}`,
+  polls: (tripId) => `polls:${tripId}`,
+  announcements: (tripId) => `announcements:${tripId}`,
   place: (placeId) => `place:${placeId}`,
 };
 

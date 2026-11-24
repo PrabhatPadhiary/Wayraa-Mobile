@@ -8,6 +8,7 @@ import {
   ScrollView,
   RefreshControl,
   Animated,
+  Easing,
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
@@ -15,12 +16,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { useReducedMotion } from 'react-native-reanimated';
 import RatingRow from '../components/RatingRow';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
 import { SignInPrompt, TripDetailSkeleton, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet, DateRangeSheet } from '../components';
 import { avatarColorFor, initialsFor } from '../components/TripStackCard';
 import TripHero from '../components/TripHero';
 import AnnouncementsCard from '../components/AnnouncementsCard';
+import PollsCard from '../components/PollsCard';
 import { showTripActionMenu, confirmDeleteTrip } from '../utils/tripActions';
 import { useBottomBar } from '../context/BottomBarContext';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
@@ -361,6 +365,7 @@ export default function TripDetailScreen({ navigation, route }) {
       setLiveKey((k) => k + 1);
     }, 300);
     if (change.missed) return;
+    if (change.section === 'polls' && (change.action === 'unvoted' || change.action === 'linked')) return;
     // You were removed: the trip is no longer yours to see.
     if (change.section === 'travellers' && change.action === 'removed' && change.targetIsMe) {
       showAlert('Removed from trip', `${describeTripChange(change)}.`, [
@@ -387,6 +392,26 @@ export default function TripDetailScreen({ navigation, route }) {
   useTripLive(tripId, isFocused && isAuthReady && isAuthenticated, onLiveChange, setViewers);
 
   const tripLoaded = !!trip;
+
+  // ── A trip you just made: a small welcome, once ──────────────────────────
+  // A success buzz, the cover settling in from slightly close, and a note.
+  // Only straight after Create trip (the param is cleared at once).
+  const reduceMotion = useReducedMotion();
+  const heroSettle = useRef(new Animated.Value(1)).current;
+  const justCreated = !!route.params?.justCreated;
+  useEffect(() => {
+    if (!tripLoaded || !justCreated) return undefined;
+    navigation.setParams({ justCreated: undefined });
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    if (!reduceMotion) {
+      heroSettle.setValue(1.04);
+      Animated.timing(heroSettle, { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }
+    setLiveToast({ key: Date.now(), text: 'Your trip is ready. Invite friends or start adding places.', icon: 'sparkles' });
+    clearTimeout(liveTimers.current.toast);
+    liveTimers.current.toast = setTimeout(() => setLiveToast(null), 3500);
+    return undefined;
+  }, [tripLoaded, justCreated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Total spent, for the Overview budget card. Refreshed whenever Overview is
   // shown, so expenses added on the Budget tab are reflected.
@@ -1100,6 +1125,7 @@ export default function TripDetailScreen({ navigation, route }) {
         }
       >
         {/* Hero: stop photos (swipe), title and countdown; scrolls with the page. */}
+        <Animated.View style={{ transform: [{ scale: heroSettle }] }}>
         <TripHero
           title={trip.name}
           countdown={countdown}
@@ -1116,6 +1142,7 @@ export default function TripDetailScreen({ navigation, route }) {
               </View>
           </View>
         </TripHero>
+        </Animated.View>
 
         {/* Sheet overlapping the hero */}
         <View style={styles.sheet}>
@@ -1240,6 +1267,16 @@ export default function TripDetailScreen({ navigation, route }) {
           {/* Announcements from the owner (flight details, meeting points...).
               Owner: post / edit / delete. Others: shown once there's one. */}
           <AnnouncementsCard tripId={trip.id} isOwner={isOwner} liveKey={liveKey} />
+
+          {/* Polls: "Dinner on Day 2: where?". Owner and members start and vote;
+              viewers see them once there are any. */}
+          <PollsCard
+            trip={trip}
+            sortedDests={sortedDestinations}
+            canEdit={canEdit}
+            liveKey={liveKey}
+            onItineraryChanged={(item) => setPlanItems((prev) => (prev ? [...prev, item] : prev))}
+          />
 
           {/* Destinations card: the trip's stops. On multi-stop trips, tapping a stop
               picks whose places the Places card below shows. */}

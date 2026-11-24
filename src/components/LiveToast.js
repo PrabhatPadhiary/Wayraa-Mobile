@@ -1,13 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { showAlert } from './AppDialog';
 
 /**
  * "Satish added Burj Khalifa": a short note at the top of the trip screen when
  * someone else changes the trip. Fades in, stays a few seconds, fades out.
- * Announced to screen readers. Pass `toast` = { key, text, initials } or null.
+ * Announced to screen readers. Pass `toast` = { key, text, initials, icon? }
+ * or null (`icon`: an Ionicons name shown instead of initials).
  */
 export default function LiveToast({ toast, top = 0 }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -25,7 +27,9 @@ export default function LiveToast({ toast, top = 0 }) {
       accessibilityRole="alert"
     >
       <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{toast.initials || '•'}</Text>
+        {toast.icon
+          ? <Ionicons name={toast.icon} size={15} color={COLORS.white} />
+          : <Text style={styles.avatarText}>{toast.initials || '•'}</Text>}
       </View>
       <Text style={styles.text} numberOfLines={2}>{toast.text}</Text>
     </Animated.View>
@@ -70,6 +74,12 @@ export function describeTripChange(change) {
       if (a === 'added') return `${who} posted an announcement`;
       if (a === 'removed') return `${who} removed an announcement`;
       return `${who} edited an announcement`;
+    case 'polls':
+      if (a === 'added') return `${who} started a poll${item ? `: ${item}` : ''}`;
+      if (a === 'voted') return `${who} voted${item ? ` on "${item}"` : ''}`;
+      if (a === 'closed') return `${who} ended the poll${item ? ` "${item}"` : ''}`;
+      if (a === 'removed') return `${who} deleted a poll`;
+      return `${who} updated a poll`;
     case 'trip':
       return `${who} deleted this trip`;
     default:

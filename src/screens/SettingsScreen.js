@@ -253,7 +253,7 @@ export default function SettingsScreen({ navigation }) {
                   />
                 </View>
                 <Text style={styles.sectionHint}>
-                  When friends join your trips or add places, expenses and plans, when the owner posts an announcement, and the day before a trip starts.
+                  When friends join your trips or add places, expenses and plans, when the owner posts an announcement, when a poll starts or closes, and the day before a trip starts.
                 </Text>
               </View>
             )}

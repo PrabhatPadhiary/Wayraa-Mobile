@@ -328,7 +328,8 @@ export default function CreateTripScreen({ navigation, route }) {
       navigation.navigate('Main', created?.id
         ? {
           screen: 'MyTrips',
-          params: { screen: 'TripDetail', params: { tripId: created.id, tripName: created.name }, initial: false },
+          // justCreated: the trip screen greets it once ("Your trip is ready").
+          params: { screen: 'TripDetail', params: { tripId: created.id, tripName: created.name, justCreated: true }, initial: false },
         }
         : { screen: 'MyTrips' });
     } catch (e) {
