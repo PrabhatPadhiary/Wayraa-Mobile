@@ -34,6 +34,7 @@ import useAuth from '../hooks/useAuth';
 import { createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 /**
  * Category filters. `match` lists the backend category values each chip includes.
@@ -155,6 +156,8 @@ export default function FavoritesScreen({ navigation }) {
       setRefreshing(false);
     }
   }, []);
+  // Back online: reload what may have failed.
+  useOnReconnect(loadFavourites);
 
   useFocusEffect(
     useCallback(() => {

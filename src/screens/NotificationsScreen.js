@@ -22,6 +22,7 @@ import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { timeAgo, isToday } from '../utils/timeAgo';
 import RefreshSpinner from '../components/RefreshSpinner';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const PAGE = 30;
 
@@ -78,6 +79,8 @@ export default function NotificationsScreen({ navigation }) {
       setRefreshing(false);
     }
   }, []);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   useFocusEffect(useCallback(() => {
     if (!isAuthReady) return;

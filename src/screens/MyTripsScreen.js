@@ -28,6 +28,7 @@ import useAuth from '../hooks/useAuth';
 import { showAlert } from '../components/AppDialog';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
 import RefreshSpinner from '../components/RefreshSpinner';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 /**
  * Filter tabs. `match` maps a filter to the backend status values it includes.
@@ -145,6 +146,8 @@ export default function MyTripsScreen({ navigation }) {
       setRefreshing(false);
     }
   }, []);
+  // Back online: reload what may have failed.
+  useOnReconnect(loadTrips);
 
   // Reload whenever the tab regains focus (it stays mounted in the tab navigator).
   useFocusEffect(

@@ -14,6 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { forgetGuestBrowsing } from '../utils/authNavigation';
 import { unregisterPushNotifications } from './notificationsService';
 import { clearAllCaches, hydrateCache } from './cache';
+import { isOffline } from '../hooks/useNetwork';
 
 const USER_STORAGE_KEY = 'wayraa_user';
 
@@ -29,6 +30,7 @@ let storedUserMemo;
 function isNetworkError(error) {
   return (
     error?.code === 'auth/network-request-failed' ||
+    error?.isNetworkError === true || // reworded by config/offlineFetch
     (error instanceof TypeError && /network request failed/i.test(error.message || ''))
   );
 }
@@ -62,7 +64,10 @@ function describeAuthError(context, error, fallback, known = {}) {
   }
   // Our API didn't answer (the Firebase step already worked).
   if (error?.code === 'backend/unreachable') {
-    return `Can't reach the Wayraa server (${API_URL}). Check that this phone is on the same Wi-Fi as the server.`;
+    if (isOffline()) return 'No internet connection. Please check your connection and try again.';
+    // Development: say which server, to spot a wrong address or Wi-Fi.
+    if (__DEV__) return `Can't reach the Wayraa server (${API_URL}). Check that this phone is on the same Wi-Fi as the server.`;
+    return "Can't reach Wayraa right now. Please try again in a moment.";
   }
   // Firebase itself couldn't be reached.
   if (isNetworkError(error)) {

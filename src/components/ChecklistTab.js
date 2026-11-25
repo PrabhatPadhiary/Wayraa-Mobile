@@ -25,6 +25,7 @@ import { setCache, CacheKeys } from '../services/cache';
 import { formatDay } from '../utils/tripDates';
 import { showAlert } from './AppDialog';
 import { ChecklistSkeleton } from './skeletons';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 // A ticked row gliding to its new place.
 const ROW_GLIDE = LinearTransition.duration(260).easing(REasing.bezier(0.2, 0.8, 0.2, 1));
@@ -92,9 +93,13 @@ export default function ChecklistTab({ tripId, canEdit, liveKey = 0 }) {
       setItems(data);
       setStatus('ready');
     } catch (e) {
-      setStatus('error');
+      // Offline or the server didn't answer: keep showing the saved copy if
+      // there is one; only show the error when there's nothing to show.
+      setStatus(peekChecklist(tripId) ? 'ready' : 'error');
     }
   }, [tripId]);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   useEffect(() => {
     if (!peekChecklist(tripId)) setStatus('loading');

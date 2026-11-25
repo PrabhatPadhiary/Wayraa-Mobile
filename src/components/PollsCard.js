@@ -6,6 +6,7 @@ import PollCard, { pickFocusPoll } from './PollCard';
 import PollComposer from './PollComposer';
 import { getPolls, peekPolls, rememberPolls } from '../services/pollsService';
 import { useLiveArrivals } from './Motion';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 // Which polls were open on each trip, so coming back keeps them open.
 const openByTrip = new Map(); // tripId -> Set of poll ids
@@ -48,6 +49,8 @@ export default function PollsCard({ trip, sortedDests, canEdit, liveKey, onItine
       .then((list) => { setPolls(list); setLoaded(true); })
       .catch(() => setLoaded(true));
   }, [tripId]);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
   useEffect(() => { load(); }, [load, liveKey]);
 
   useEffect(() => {

@@ -28,6 +28,7 @@ import {
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { timeAgo } from '../utils/timeAgo';
 import { ArrivalGlow, useLiveArrivals } from './Motion';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 /**
  * Announcements on the trip's Overview: notes from the owner to everyone
@@ -59,6 +60,8 @@ export default function AnnouncementsCard({ tripId, isOwner, liveKey }) {
       .then((list) => { setItems(list); setLoaded(true); })
       .catch(() => setLoaded(true));
   }, [tripId]);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   useEffect(() => { load(); }, [load, liveKey]);
 

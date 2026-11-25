@@ -11,9 +11,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  *  - setCache(key, value)       screens write back what they show (after
  *    your own edits), so the next visit starts from that.
  *
- * Keys in PERSISTED are also saved on the phone (AsyncStorage), so they're
- * there on the next app start too: your trips list, favourites, profile.
- * Everything else is memory only, gone when the app is closed.
+ * Some keys are also saved on the phone (AsyncStorage), so they're there on
+ * the next app start, and offline: your trips list, favourites, profile, and
+ * each trip you've opened with its plan, budget, checklist, polls and
+ * announcements (so a trip still opens with no internet). Everything else is
+ * memory only, gone when the app is closed. Saved trips that are no longer
+ * in your trips list (deleted, or you left) are removed when the list loads.
  *
  * Saved copies are tagged with the account; clearAllCaches() on log out and
  * account deletion wipes everything, so the next person never sees them.
@@ -21,6 +24,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_PREFIX = 'wayraa_cache:';
 const PERSISTED = new Set(['trips', 'favourites', 'profile']);
+// Per-trip keys ("trip:<id>", "itinerary:<id>", ...) that are saved too.
+const TRIP_PREFIXES = ['trip', 'itinerary', 'expenses', 'checklist', 'polls', 'announcements'];
+
+const tripIdOf = (key) => {
+  const i = key.indexOf(':');
+  return i > 0 && TRIP_PREFIXES.includes(key.slice(0, i)) ? key.slice(i + 1) : null;
+};
+const isPersisted = (key) => PERSISTED.has(key) || tripIdOf(key) !== null;
 
 /** The cache keys, in one place. */
 export const CacheKeys = {
@@ -45,23 +56,49 @@ export function peekCache(key) {
   return entries.get(key)?.value;
 }
 
+/** How old the saved copy of `key` is, in ms (Infinity if there's none). */
+export function cacheAge(key) {
+  const entry = entries.get(key);
+  return entry ? Date.now() - (entry.at || 0) : Infinity;
+}
+
 export function setCache(key, value) {
   if (value === undefined) return;
   const entry = { value, at: Date.now() };
   entries.set(key, entry);
-  if (PERSISTED.has(key) && ownerUid) {
+  if (isPersisted(key) && ownerUid) {
     AsyncStorage.setItem(STORAGE_PREFIX + key, JSON.stringify({ uid: ownerUid, ...entry })).catch(() => {});
   }
+  if (key === CacheKeys.trips && Array.isArray(value)) pruneSavedTrips(value);
+}
+
+/**
+ * Your trips list just loaded: remove saved copies of trips that aren't in
+ * it any more (deleted, or you left), on the phone and in memory.
+ */
+function pruneSavedTrips(trips) {
+  const keep = new Set(trips.map((t) => String(t?.id)));
+  for (const key of [...entries.keys()]) {
+    const id = tripIdOf(key);
+    if (id !== null && !keep.has(id)) entries.delete(key);
+  }
+  AsyncStorage.getAllKeys()
+    .then((all) => all.filter((k) => {
+      if (!k.startsWith(STORAGE_PREFIX)) return false;
+      const id = tripIdOf(k.slice(STORAGE_PREFIX.length));
+      return id !== null && !keep.has(id);
+    }))
+    .then((gone) => (gone.length ? AsyncStorage.multiRemove(gone) : null))
+    .catch(() => {});
 }
 
 /** Forget one key, or every key starting with `prefix` + ':' (e.g. 'trip'). */
 export function dropCache(keyOrPrefix) {
   for (const key of [...entries.keys()]) {
-    if (key === keyOrPrefix || key.startsWith(`${keyOrPrefix}:`)) {
-      entries.delete(key);
-      if (PERSISTED.has(key)) AsyncStorage.removeItem(STORAGE_PREFIX + key).catch(() => {});
-    }
+    if (key === keyOrPrefix || key.startsWith(`${keyOrPrefix}:`)) entries.delete(key);
   }
+  // The saved copy too, even if it was never loaded into memory.
+  if (isPersisted(keyOrPrefix)) AsyncStorage.removeItem(STORAGE_PREFIX + keyOrPrefix).catch(() => {});
 }
 
 /**
@@ -92,15 +129,18 @@ export function cachedFetch(key, fetcher, { maxAge = 0, keepIf } = {}) {
 }
 
 /**
- * App start, signed in: load the saved copies (trips, favourites, profile)
- * into memory, so the first screens can show them at once. Copies saved by
- * another account are thrown away.
+ * App start, signed in: load the saved copies (trips, favourites, profile,
+ * and the trips you've opened) into memory, so screens can show them at once,
+ * even offline. Copies saved by another account are thrown away.
  */
 export async function hydrateCache(uid) {
   ownerUid = uid || null;
   if (!uid) return;
   try {
-    const keys = [...PERSISTED];
+    const keys = (await AsyncStorage.getAllKeys())
+      .filter((k) => k.startsWith(STORAGE_PREFIX))
+      .map((k) => k.slice(STORAGE_PREFIX.length))
+      .filter(isPersisted);
     const pairs = await AsyncStorage.multiGet(keys.map((k) => STORAGE_PREFIX + k));
     pairs.forEach(([storageKey, raw], i) => {
       if (!raw) return;

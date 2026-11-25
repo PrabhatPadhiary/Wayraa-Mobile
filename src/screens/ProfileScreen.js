@@ -47,6 +47,7 @@ import RankCelebration from '../components/RankCelebration';
 import useRankUp from '../hooks/useRankUp';
 import { rankFromProfile } from '../utils/ranks';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
@@ -124,6 +125,8 @@ export default function ProfileScreen({ navigation }) {
       setRefreshing(false);
     }
   }, []);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   // Reload on focus so stats reflect trips/favourites changed elsewhere.
   useFocusEffect(

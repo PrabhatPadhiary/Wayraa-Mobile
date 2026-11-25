@@ -29,6 +29,7 @@ import { formatDay, dayCount } from '../utils/tripDates';
 import ExpenseSheet, { EXPENSE_CATEGORIES } from './ExpenseSheet';
 import { isoToDay, todayDay } from './DateRangeCalendar';
 import { BudgetSkeleton } from './skeletons';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const CATEGORY_BY_KEY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 
@@ -181,9 +182,13 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
       setExpenses(data);
       setStatus('ready');
     } catch (e) {
-      setStatus('error');
+      // Offline or the server didn't answer: keep showing the saved copy if
+      // there is one; only show the error when there's nothing to show.
+      setStatus(peekExpenses(trip.id) ? 'ready' : 'error');
     }
   }, [trip.id]);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   useEffect(() => {
     if (!peekExpenses(trip.id)) setStatus('loading');

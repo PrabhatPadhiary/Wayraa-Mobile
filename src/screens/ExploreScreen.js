@@ -82,6 +82,7 @@ import CommunityHighlights from '../components/CommunityHighlights';
 import LocationSheet from '../components/LocationSheet';
 import { getExploreCity, setExploreCity } from '../services/exploreCity';
 import RefreshSpinner from '../components/RefreshSpinner';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 // Home's background, top to bottom: a light slate tint, alpine frost, then
@@ -797,6 +798,8 @@ export default function ExploreScreen({ route, navigation }) {
     await Promise.all(jobs);
     setRefreshing(false);
   };
+  // Back online: reload what may have failed.
+  useOnReconnect(refreshHome);
 
   const clearRecentSearches = async () => {
     setRecentSearches([]);

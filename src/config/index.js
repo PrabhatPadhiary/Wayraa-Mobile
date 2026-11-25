@@ -1,3 +1,5 @@
+import Constants from 'expo-constants';
+
 export { app, auth, googleProvider } from './firebase';
 
 // Backend address.
@@ -5,10 +7,15 @@ export { app, auth, googleProvider } from './firebase';
 //  - Development (Expo Go / dev builds) uses your Mac's backend on the LAN.
 //  - EXPO_PUBLIC_API_URL (set in eas.json or the shell) overrides both.
 export const PROD_API_URL = 'https://wanderlust-backend-8qn5.onrender.com/api';
-const LOCAL_API_URL = 'http://192.168.1.6:5273/api'; // Home wifi (current IP)
-//const LOCAL_API_URL = 'http://192.168.1.9:5273/api'; // Home wifi (previous IP)
-//const LOCAL_API_URL = 'http://172.20.10.9:5273/api'; // Mobile hotspot
-//const LOCAL_API_URL = 'http://localhost:5273/api';
+
+// Development: the Mac's address is the one the app already loaded its code
+// from (Metro's host, e.g. "192.168.1.4:8081"), so it follows the Mac when the
+// router gives it a new IP or you switch to a hotspot. Fallback: localhost
+// (emulator with `adb reverse tcp:5273 tcp:5273`).
+const LOCAL_API_PORT = 5273;
+const metroHost = (Constants.expoConfig?.hostUri || '').split(':')[0];
+const isLanHost = /^(\d{1,3}\.){3}\d{1,3}$/.test(metroHost) || metroHost === 'localhost';
+const LOCAL_API_URL = `http://${isLanHost ? metroHost : 'localhost'}:${LOCAL_API_PORT}/api`;
 
 export const API_URL = process.env.EXPO_PUBLIC_API_URL || (__DEV__ ? LOCAL_API_URL : PROD_API_URL);
 

@@ -13,7 +13,12 @@ import { cachedFetch, peekCache, setCache, dropCache, CacheKeys } from './cache'
  * and a genuinely empty list.
  */
 export function getMyTrips() {
-  return cachedFetch(CacheKeys.trips, fetchMyTrips);
+  return cachedFetch(CacheKeys.trips, fetchMyTrips).then((trips) => {
+    // Quietly keep ongoing and upcoming trips ready for offline (see
+    // offlineTrips.js). Loaded lazily: that module imports this one.
+    try { require('./offlineTrips').saveTripsForOffline(trips); } catch { /* never block the list */ }
+    return trips;
+  });
 }
 
 /** Your trips as last loaded (instant), or undefined. */
@@ -392,4 +397,6 @@ export function forgetTrip(tripId) {
   dropCache(CacheKeys.itinerary(tripId));
   dropCache(CacheKeys.expenses(tripId));
   dropCache(CacheKeys.checklist(tripId));
+  dropCache(CacheKeys.polls(tripId));
+  dropCache(CacheKeys.announcements(tripId));
 }

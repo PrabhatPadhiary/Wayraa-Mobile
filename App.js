@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useFonts } from 'expo-font';
+import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   Poppins_400Regular,
   Poppins_500Medium,
@@ -16,6 +17,8 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
 import { getStoredUser, setupNotificationHandler, onNotificationOpened, likesAccountChanged } from './src/services';
 import { hydrateCache } from './src/services/cache';
+import OfflineBanner from './src/components/OfflineBanner';
+import './src/config/offlineFetch';
 import { AppDialogHost } from './src/components/AppDialog';
 import { TipsHost } from './src/components/Tips';
 import WayraaLoader from './src/components/WayraaLoader';
@@ -27,18 +30,29 @@ import { MainTabs } from './src/navigation';
 import { BottomBarProvider } from './src/context/BottomBarContext';
 import { COLORS, SIZES } from './src/constants';
 
-/** Branded loading screen — shown while fonts and Firebase auth state load. */
-function LoadingScreen() {
+/**
+ * Branded loading screen — shown while fonts and Firebase auth state load.
+ * The words wait for the fonts: before Poppins is loaded, Android would draw
+ * "wayraa." in its default font for a moment (the logo shows meanwhile).
+ */
+function LoadingScreen({ fontsReady }) {
   return (
     <SafeAreaProvider>
       <View style={styles.loading}>
         <View style={styles.loadingContent}>
           {/* The logo, animated: rings ripple, the sun bobs, the waves sway. */}
           <WayraaLoader size={220} />
-          <Text style={styles.loadingBrand}>
-            wayraa<Text style={styles.loadingBrandDot}>.</Text>
-          </Text>
-          <Text style={styles.loadingTagline}>Plan. Explore. Share.</Text>
+          {/* Kept the same height either way, so the logo doesn't jump. */}
+          <View style={[styles.loadingWords, !fontsReady && styles.loadingWordsHidden]}>
+            {fontsReady && (
+              <>
+                <Text style={styles.loadingBrand}>
+                  wayraa<Text style={styles.loadingBrandDot}>.</Text>
+                </Text>
+                <Text style={styles.loadingTagline}>Plan trips together</Text>
+              </>
+            )}
+          </View>
         </View>
       </View>
     </SafeAreaProvider>
@@ -161,6 +175,12 @@ export default function App() {
     Poppins_500Medium,
     Poppins_600SemiBold,
     Poppins_700Bold,
+    // The icon fonts too, up front: otherwise each loads the first time a
+    // screen uses it (icons pop in late; in a dev build that's a download
+    // from Metro, which fails offline).
+    ...Ionicons.font,
+    ...Feather.font,
+    ...MaterialCommunityIcons.font,
   });
 
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -222,7 +242,7 @@ export default function App() {
   if (!fontsLoaded || !isAuthReady || !preloadDone) {
     return (
       <SafeAreaProvider>
-        <LoadingScreen />
+        <LoadingScreen fontsReady={fontsLoaded} />
       </SafeAreaProvider>
     );
   }
@@ -269,6 +289,8 @@ export default function App() {
             />
           </Stack.Navigator>
         </NavigationContainer>
+        {/* "You're offline" pill, above the screens (touches pass through). */}
+        <OfflineBanner />
         {/* One-time tips (useTip): a spotlight on a button, above the screens. */}
         <TipsHost />
         {/* Wayraa's own alerts and menus (showAlert), above everything. */}
@@ -293,6 +315,13 @@ const styles = StyleSheet.create({
   // the same whether or not you're signed in.
   loadingContent: {
     alignItems: 'center',
+  },
+  loadingWords: {
+    alignItems: 'center',
+    minHeight: 104, // wordmark (24 gap + 56) + tagline (~22)
+  },
+  loadingWordsHidden: {
+    opacity: 0,
   },
   loadingBrand: {
     marginTop: SIZES.spacing_lg,

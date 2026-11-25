@@ -32,6 +32,7 @@ import { openStoryMenu, isMyStory } from '../utils/storyActions';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
 import { useTip } from '../components/Tips';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const SORTS = [
   { key: 'recent', label: 'Recent' },
@@ -138,6 +139,8 @@ export default function CommunityScreen({ navigation }) {
       setRefreshing(false);
     }
   }, []);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   // Background story upload (started from the composer): show its progress
   // at the top of the feed, then refresh so the new story appears.

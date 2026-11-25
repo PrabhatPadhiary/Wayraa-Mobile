@@ -68,6 +68,7 @@ import { DragSource, createZones } from './ItineraryDrag';
 import { showAlert } from './AppDialog';
 import { ItinerarySkeleton } from './skeletons';
 import { areaFromAddress } from '../utils/address';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const TOAST_MS = 4000;
 const SCREEN_H = Dimensions.get('window').height;
@@ -251,9 +252,13 @@ export default function ItineraryTab({
       setItems(data);
       setStatus('ready');
     } catch (e) {
-      setStatus('error');
+      // Offline or the server didn't answer: keep showing the saved copy if
+      // there is one; only show the error when there's nothing to show.
+      setStatus(peekItinerary(trip.id) ? 'ready' : 'error');
     }
   }, [trip.id]);
+  // Back online: reload what may have failed.
+  useOnReconnect(load);
 
   useEffect(() => {
     if (!peekItinerary(trip.id)) setStatus('loading');

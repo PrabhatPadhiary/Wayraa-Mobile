@@ -42,6 +42,7 @@ import { JournalDetailSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
@@ -126,11 +127,14 @@ export default function JournalDetailScreen({ navigation, route }) {
     try {
       setJournal(await getJournal(journalId));
     } catch (e) {
-      setError(e?.message || 'Couldn\'t load this story.');
+      // No internet: a clear "offline" state (it reloads when you're back).
+      setError(e?.isNetworkError ? 'offline' : (e?.message || 'Couldn\'t load this story.'));
     } finally {
       setLoading(false);
     }
   }, [journalId]);
+  // Back online: reload the story if it couldn't load.
+  useOnReconnect(() => { if (!journal) load(); });
 
   useEffect(() => {
     load();
@@ -364,8 +368,18 @@ export default function JournalDetailScreen({ navigation, route }) {
     return (
       <View style={[styles.container, styles.center]}>
         <StatusBar barStyle="dark-content" />
-        <Feather name="book-open" size={40} color={COLORS.textMuted} />
-        <Text style={styles.stateTitle}>{error || 'Story not found'}</Text>
+        {error === 'offline' ? (
+          <>
+            <Ionicons name="cloud-offline-outline" size={44} color={COLORS.textMuted} />
+            <Text style={styles.stateTitle}>You're offline</Text>
+            <Text style={styles.stateText}>Connect to the internet to read this story.</Text>
+          </>
+        ) : (
+          <>
+            <Feather name="book-open" size={40} color={COLORS.textMuted} />
+            <Text style={styles.stateTitle}>{error || 'Story not found'}</Text>
+          </>
+        )}
         <TouchableOpacity style={styles.retry} onPress={() => { setLoading(true); load(); }}>
           <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
@@ -1126,6 +1140,13 @@ const styles = StyleSheet.create({
     fontSize: SIZES.lg,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textPrimary,
+  },
+  stateText: {
+    marginTop: SIZES.spacing_xs,
+    textAlign: 'center',
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
   },
   retry: {
     marginTop: SIZES.spacing_lg,

@@ -57,6 +57,7 @@ import useTripLive from '../hooks/useTripLive';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
 import { useTip } from '../components/Tips';
+import { useOnReconnect } from '../hooks/useNetwork';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
@@ -308,7 +309,7 @@ export default function TripDetailScreen({ navigation, route }) {
   const [brokenPlaceImages, setBrokenPlaceImages] = useState({});
   const [loading, setLoading] = useState(() => !peekTrip(tripId));
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null); // null | 'load' | 'notFound'
+  const [error, setError] = useState(null); // null | 'load' | 'offline' | 'notFound'
 
   const loadTrip = useCallback(async () => {
     setError(null);
@@ -330,13 +331,16 @@ export default function TripDetailScreen({ navigation, route }) {
         setTrip(null); // deleted, or you're no longer on it: drop the saved copy
         setError('notFound');
       } else {
-        setError('load');
+        // No internet and no saved copy of this trip: say so plainly.
+        setError(e?.isNetworkError ? 'offline' : 'load');
       }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [tripId]);
+  // Back online: reload what may have failed.
+  useOnReconnect(loadTrip);
 
   // Reload on focus so places added elsewhere show up when returning here.
   useFocusEffect(
@@ -946,8 +950,13 @@ export default function TripDetailScreen({ navigation, route }) {
           color={COLORS.textMuted}
         />
         <Text style={styles.stateTitle}>
-          {error === 'notFound' ? 'Trip not found' : "Couldn't load this trip"}
+          {error === 'notFound' ? 'Trip not found' : error === 'offline' ? "You're offline" : "Couldn't load this trip"}
         </Text>
+        {error === 'offline' && (
+          <Text style={styles.stateSubtitle}>
+            This trip isn't saved on this phone yet. Open it once while you're online and it'll be here next time.
+          </Text>
+        )}
         {error === 'notFound' ? (
           <Text style={styles.stateSubtitle}>It may have been deleted.</Text>
         ) : (
@@ -2783,6 +2792,9 @@ const styles = StyleSheet.create({
   },
   stateSubtitle: {
     marginTop: SIZES.spacing_xs,
+    maxWidth: 300,
+    textAlign: 'center',
+    lineHeight: 21,
     fontSize: SIZES.md,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
