@@ -9,7 +9,23 @@ import {
   hideJournal,
   unhideJournal,
   blockUser,
+  getStoredUser,
+  reportUser,
 } from '../services';
+
+/**
+ * Open a story author's (or commenter's) profile. Yourself: your own
+ * Profile page (in the Home tab), not a second copy of it.
+ */
+export async function openTraveller(navigation, person) {
+  if (!person?.id) return;
+  const me = await getStoredUser().catch(() => null);
+  if (me?.id && me.id === person.id) {
+    navigation.navigate('Explore', { screen: 'Profile', initial: false });
+    return;
+  }
+  navigation.navigate('UserProfile', { userId: person.id, name: person.name, photoUrl: person.photoUrl });
+}
 
 /** Is this story yours? (`myUserId` is the signed-in user's id, from getStoredUser.) */
 export function isMyStory(journal, myUserId) {
@@ -166,6 +182,29 @@ async function sendReport(journal, reason, onRemoved) {
   } catch (e) {
     showAlert('Couldn\'t send the report', e?.message || 'Please try again.');
   }
+}
+
+/**
+ * Report someone's profile: pick a reason, then send. Moderators review it.
+ *
+ * @param {{ id, name }} person
+ */
+export function reportProfile(person) {
+  showAlert(`Why are you reporting ${person.name}?`, 'Your report is anonymous.', [
+    ...REPORT_REASONS.map((r) => ({
+      text: r.label,
+      icon: 'flag-outline',
+      onPress: async () => {
+        try {
+          await reportUser(person.id, r.key);
+          showAlert('Thanks for letting us know', 'We\'ll review this profile within 24 hours. You can also block them so you don\'t see their stories.');
+        } catch (e) {
+          showAlert('Couldn\'t send the report', e?.message || 'Please try again.');
+        }
+      },
+    })),
+    { text: 'Cancel', style: 'cancel' },
+  ]);
 }
 
 /**

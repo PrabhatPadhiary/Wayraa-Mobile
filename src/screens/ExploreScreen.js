@@ -539,7 +539,7 @@ export default function ExploreScreen({ route, navigation }) {
     return (
       <View style={[styles.avatarRing, outer]}>
         {profilePhoto ? (
-          <Image source={{ uri: profilePhoto }} style={[styles.avatarInner, inner]} />
+          <Image source={{ uri: profilePhoto }} style={[styles.avatarInner, inner]} cachePolicy="memory-disk" transition={0} />
         ) : (
           <LinearGradient
             colors={[COLORS.primary, COLORS.primaryLight]}

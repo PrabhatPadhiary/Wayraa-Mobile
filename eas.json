@@ -14,13 +14,15 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://wanderlust-backend-8qn5.onrender.com/api"
+        "EXPO_PUBLIC_API_URL": "https://wanderlust-backend-8qn5.onrender.com/api",
+        "EXPO_PUBLIC_APP_ENV": "preview"
       },
       "environment": "preview"
     },
     "production": {
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://wanderlust-backend-8qn5.onrender.com/api"
+        "EXPO_PUBLIC_API_URL": "https://wanderlust-backend-8qn5.onrender.com/api",
+        "EXPO_PUBLIC_APP_ENV": "production"
       },
       "environment": "production"
     }

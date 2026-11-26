@@ -28,6 +28,7 @@ import { TRIP_CATEGORIES, toTripCategory, buildTripPlaceDto } from '../utils/tri
 import { formatDateRange } from '../utils/tripDates';
 import { FAR_FROM_TRIP_KM, placePoint, nearestStop, formatFarKm } from '../utils/tripDistance';
 import { RowListSkeleton } from './skeletons';
+import { useRetryHint } from '../hooks/useNetwork';
 
 const MAX_SHEET_HEIGHT = Dimensions.get('window').height * 0.86;
 
@@ -67,6 +68,7 @@ export default function AddToTripSheet({
   onViewTrip,
   onAdded,
 }) {
+  const retryHint = useRetryHint();
   const insets = useSafeAreaInsets();
 
   const [status, setStatus] = useState('loading'); // loading | ready | signin | error | done
@@ -406,7 +408,7 @@ export default function AddToTripSheet({
         <View style={styles.center}>
           <Ionicons name="cloud-offline-outline" size={36} color={COLORS.textMuted} />
           <Text style={styles.stateTitle}>Couldn't load your trips</Text>
-          <Text style={styles.stateText}>{message || 'Check your connection and try again.'}</Text>
+          <Text style={styles.stateText}>{message || retryHint}</Text>
           <TouchableOpacity style={styles.primaryButton} onPress={onClose} activeOpacity={0.9}>
             <Text style={styles.primaryButtonText}>Close</Text>
           </TouchableOpacity>

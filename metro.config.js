@@ -1,7 +1,9 @@
 // Learn more: https://docs.expo.dev/guides/customizing-metro/
-const { getDefaultConfig } = require('expo/metro-config');
+// Sentry's version of Expo's default config: the same, plus Debug IDs on the
+// bundle and source maps so crash reports show the real file and line.
+const { getSentryExpoConfig } = require('@sentry/react-native/metro');
 
-const config = getDefaultConfig(__dirname);
+const config = getSentryExpoConfig(__dirname);
 
 // RN 0.88 (SDK 58) exposes subpaths like `react-native/asset-registry` ONLY
 // through the "exports" field, so package-exports resolution must stay ENABLED

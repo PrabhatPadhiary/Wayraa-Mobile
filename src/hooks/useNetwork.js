@@ -77,3 +77,27 @@ export function useOnReconnect(fn) {
     return () => { listeners.delete(l); };
   }, []);
 }
+
+/**
+ * The hint under a "Couldn't load ..." message: check your connection when
+ * the phone is offline, else say our server isn't responding (the phone's
+ * internet is fine, so that advice would be wrong). Updates live.
+ */
+export function useRetryHint() {
+  const offline = useIsOffline();
+  return offline
+    ? 'Check your connection and try again.'
+    : 'Wayraa isn\'t responding right now. Try again in a moment.';
+}
+
+/**
+ * Why a load failed: 'offline' (the phone has no internet), 'server' (our
+ * server didn't answer or had an error, e.g. down or restarting), or null
+ * (anything else: not found, not allowed, ...).
+ */
+export function loadFailureKind(error) {
+  if (isOffline() || error?.isOffline) return 'offline';
+  if (error?.isNetworkError) return 'server';
+  const status = Number(error?.status) || Number(/\((5\d\d)\)/.exec(error?.message || '')?.[1]) || 0;
+  return status >= 500 ? 'server' : null;
+}

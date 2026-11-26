@@ -57,7 +57,7 @@ import useTripLive from '../hooks/useTripLive';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
 import { useTip } from '../components/Tips';
-import { useOnReconnect } from '../hooks/useNetwork';
+import { useOnReconnect, loadFailureKind } from '../hooks/useNetwork';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
@@ -331,8 +331,9 @@ export default function TripDetailScreen({ navigation, route }) {
         setTrip(null); // deleted, or you're no longer on it: drop the saved copy
         setError('notFound');
       } else {
-        // No internet and no saved copy of this trip: say so plainly.
-        setError(e?.isNetworkError ? 'offline' : 'load');
+        // No saved copy of this trip: say why plainly (no internet, or
+        // our server is down).
+        setError(loadFailureKind(e) || 'load');
       }
     } finally {
       setLoading(false);
@@ -950,11 +951,16 @@ export default function TripDetailScreen({ navigation, route }) {
           color={COLORS.textMuted}
         />
         <Text style={styles.stateTitle}>
-          {error === 'notFound' ? 'Trip not found' : error === 'offline' ? "You're offline" : "Couldn't load this trip"}
+          {error === 'notFound' ? 'Trip not found' : error === 'offline' ? "You're offline" : error === 'server' ? "Wayraa isn't responding" : "Couldn't load this trip"}
         </Text>
         {error === 'offline' && (
           <Text style={styles.stateSubtitle}>
             This trip isn't saved on this phone yet. Open it once while you're online and it'll be here next time.
+          </Text>
+        )}
+        {error === 'server' && (
+          <Text style={styles.stateSubtitle}>
+            Our server is having trouble right now. Try again in a moment.
           </Text>
         )}
         {error === 'notFound' ? (

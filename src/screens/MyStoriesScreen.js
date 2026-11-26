@@ -9,6 +9,15 @@ import { openStoryMenu } from '../utils/storyActions';
 import { RowListSkeleton } from '../components/skeletons';
 import RefreshSpinner from '../components/RefreshSpinner';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
+import { loadFailureKind } from '../hooks/useNetwork';
+
+// Why it failed, in words (no internet vs our server down vs anything else).
+function failureText(e, fallback) {
+  const kind = loadFailureKind(e);
+  if (kind === 'offline') return 'You\'re offline. Connect to the internet and try again.';
+  if (kind === 'server') return 'Wayraa isn\'t responding right now. Try again in a moment.';
+  return e?.message || fallback;
+}
 
 /**
  * Your stories: everything you've posted, including ones hidden from
@@ -30,7 +39,7 @@ export default function MyStoriesScreen({ navigation }) {
       // Unfinished uploads (drafts) aren't stories yet.
       setStories((await getMyJournals()).filter((j) => j.status === 'published'));
     } catch (e) {
-      setError(e?.message || 'Couldn\'t load your stories.');
+      setError(failureText(e, 'Couldn\'t load your stories.'));
     } finally {
       setLoading(false);
       setRefreshing(false);

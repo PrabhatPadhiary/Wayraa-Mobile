@@ -37,12 +37,12 @@ import {
 } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { useFocusEffect } from '@react-navigation/native';
-import { openStoryMenu, isMyStory, confirmBlock } from '../utils/storyActions';
+import { openStoryMenu, isMyStory, confirmBlock, openTraveller } from '../utils/storyActions';
 import { JournalDetailSkeleton } from '../components/skeletons';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
-import { useOnReconnect } from '../hooks/useNetwork';
+import { useOnReconnect, loadFailureKind } from '../hooks/useNetwork';
 
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
@@ -128,7 +128,7 @@ export default function JournalDetailScreen({ navigation, route }) {
       setJournal(await getJournal(journalId));
     } catch (e) {
       // No internet: a clear "offline" state (it reloads when you're back).
-      setError(e?.isNetworkError ? 'offline' : (e?.message || 'Couldn\'t load this story.'));
+      setError(loadFailureKind(e) || e?.message || 'Couldn\'t load this story.');
     } finally {
       setLoading(false);
     }
@@ -374,6 +374,12 @@ export default function JournalDetailScreen({ navigation, route }) {
             <Text style={styles.stateTitle}>You're offline</Text>
             <Text style={styles.stateText}>Connect to the internet to read this story.</Text>
           </>
+        ) : error === 'server' ? (
+          <>
+            <Ionicons name="cloud-offline-outline" size={44} color={COLORS.textMuted} />
+            <Text style={styles.stateTitle}>Wayraa isn't responding</Text>
+            <Text style={styles.stateText}>Our server is having trouble right now. Try again in a moment.</Text>
+          </>
         ) : (
           <>
             <Feather name="book-open" size={40} color={COLORS.textMuted} />
@@ -420,11 +426,26 @@ export default function JournalDetailScreen({ navigation, route }) {
     const name = c.author?.name || 'Traveller';
     return (
       <View key={c.id} style={[styles.comment, isReply && styles.commentReply]}>
-        <Avatar name={c.author?.name} photoUrl={c.author?.photoUrl} size={isReply ? 26 : 32} />
+        <TouchableOpacity
+          onPress={() => openTraveller(navigation, c.author)}
+          disabled={!c.author?.id}
+          hitSlop={6}
+          accessibilityRole="link"
+          accessibilityLabel={`${name}'s profile`}
+        >
+          <Avatar name={c.author?.name} photoUrl={c.author?.photoUrl} size={isReply ? 26 : 32} />
+        </TouchableOpacity>
         <View style={styles.commentMain}>
           <View style={styles.commentBubble}>
             <View style={styles.commentHead}>
-              <Text style={styles.commentAuthor} numberOfLines={1}>{name}</Text>
+              <Text
+                style={styles.commentAuthor}
+                numberOfLines={1}
+                onPress={c.author?.id ? () => openTraveller(navigation, c.author) : undefined}
+                suppressHighlighting
+              >
+                {name}
+              </Text>
               <Text style={styles.commentTime}>{timeAgo(c.createdAt)}</Text>
               {mine && (
                 deletingId === c.id ? (
@@ -548,13 +569,21 @@ export default function JournalDetailScreen({ navigation, route }) {
               </View>
             )}
 
-            <View style={styles.authorRow}>
+            <TouchableOpacity
+              style={styles.authorRow}
+              onPress={() => openTraveller(navigation, journal.author)}
+              disabled={!journal.author?.id}
+              activeOpacity={0.7}
+              accessibilityRole="link"
+              accessibilityLabel={`${author}'s profile`}
+            >
               <Avatar name={author} photoUrl={journal.author?.photoUrl} />
               <View style={styles.flex}>
                 <Text style={styles.authorName}>{author}</Text>
                 <Text style={styles.posted}>Shared {timeAgo(journal.publishedAt || journal.createdAt)}</Text>
               </View>
-            </View>
+              {!!journal.author?.id && <Feather name="chevron-right" size={18} color={COLORS.textMuted} />}
+            </TouchableOpacity>
 
             {facts.length > 0 && (
               <View style={styles.facts}>

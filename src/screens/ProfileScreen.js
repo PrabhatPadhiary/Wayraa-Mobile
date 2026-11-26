@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -27,7 +27,11 @@ import useAuth from '../hooks/useAuth';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import {
   getMyProfile,
+  getTravellerProfile,
+  peekTravellerProfile,
   updateMyName,
+  updateMyBio,
+  MAX_BIO,
   uploadProfilePhoto,
   removeProfilePhoto,
   useMyPhoto,
@@ -48,10 +52,13 @@ import useRankUp from '../hooks/useRankUp';
 import { rankFromProfile } from '../utils/ranks';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import { useOnReconnect } from '../hooks/useNetwork';
+import { useStoryPlaces, TravelStyle, WhereBeen, StoryGrid, placeOf } from '../components/TravellerSections';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
 const MAX_NAME = 60;
+// Stories shown on your profile (the rest are in "Your stories").
+const PROFILE_STORIES = 6;
 const AVATAR_SIZE = 96;
 // How much of the profile drawing shows (scene units, of SCENE_H = 340).
 const SCENE_SHOWN = 262;
@@ -107,6 +114,24 @@ export default function ProfileScreen({ navigation }) {
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState('');
+  const [editingBio, setEditingBio] = useState(false);
+  const [bioDraft, setBioDraft] = useState('');
+  const [savingBio, setSavingBio] = useState(false);
+  const [bioError, setBioError] = useState('');
+
+  // Your public stories (what others see on your profile): travel style,
+  // where you've been, and the stories grid. The last copy shows at once.
+  const [publicMe, setPublicMe] = useState(() => {
+    const id = peekMyProfile()?.id;
+    return id ? peekTravellerProfile(id) : null;
+  });
+  const [activePlace, setActivePlace] = useState(null);
+  const myStories = useMemo(() => publicMe?.stories || [], [publicMe]);
+  const { places, vibes, mapPlaces } = useStoryPlaces(myStories);
+  const shownStories = useMemo(
+    () => (activePlace ? myStories.filter((x) => placeOf(x).toLowerCase() === activePlace) : myStories).slice(0, PROFILE_STORIES),
+    [myStories, activePlace]
+  );
 
   const load = useCallback(async () => {
     setError('');
@@ -117,6 +142,7 @@ export default function ProfileScreen({ navigation }) {
       ]);
       setProfile(me);
       setNextTrip(pickNextTrip(trips));
+      if (me?.id) getTravellerProfile(me.id).then((p) => { if (p) setPublicMe(p); }).catch(() => {});
     } catch (e) {
       if (e instanceof AuthRequiredError) setNeedsAuth(true);
       else setError('Couldn\'t load your profile. Pull down to try again.');
@@ -262,6 +288,26 @@ export default function ProfileScreen({ navigation }) {
     }
   };
 
+  const openBioEditor = () => {
+    setBioDraft(profile?.bio || '');
+    setBioError('');
+    setEditingBio(true);
+  };
+
+  const saveBio = async () => {
+    setSavingBio(true);
+    setBioError('');
+    try {
+      const saved = await updateMyBio(bioDraft.trim());
+      setProfile((p) => ({ ...(p || {}), bio: saved }));
+      setEditingBio(false);
+    } catch (e) {
+      setBioError(e?.message || 'Could not save. Please try again.');
+    } finally {
+      setSavingBio(false);
+    }
+  };
+
   const openTrip = (trip) => navigation.navigate('MyTrips', {
     screen: 'TripDetail',
     params: { tripId: trip.id, tripName: trip.name },
@@ -353,7 +399,7 @@ export default function ProfileScreen({ navigation }) {
             accessibilityLabel={photo ? 'Change or remove your profile photo' : 'Add a profile photo'}
           >
             {photo ? (
-              <Image source={{ uri: photo }} style={styles.avatar} onError={() => setPhotoFailed(true)} />
+              <Image source={{ uri: photo }} style={styles.avatar} cachePolicy="memory-disk" onError={() => setPhotoFailed(true)} />
             ) : (
               <View style={[styles.avatar, { backgroundColor: avatarColorFor(name) }]}>
                 <Text style={styles.avatarText}>{initialsFor(name)}</Text>
@@ -398,6 +444,23 @@ export default function ProfileScreen({ navigation }) {
               <Text style={styles.sinceText} numberOfLines={1}>
                 Exploring since {MONTHS[since.getMonth()]} {since.getFullYear()}
               </Text>
+            )}
+            {/* Bio: shown on your public profile. Tap to write or edit it. */}
+            {!!profile && (
+              <TouchableOpacity
+                style={styles.bioRow}
+                onPress={openBioEditor}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={profile.bio ? `Your bio: ${profile.bio}. Edit bio` : 'Add a bio'}
+              >
+                {profile.bio ? (
+                  <Text style={styles.bioText}>{profile.bio}</Text>
+                ) : (
+                  <Text style={styles.bioAdd}>Add a bio</Text>
+                )}
+                <Feather name="edit-2" size={12} color={COLORS.textMuted} />
+              </TouchableOpacity>
             )}
           </View>
         </View>
@@ -464,6 +527,54 @@ export default function ProfileScreen({ navigation }) {
               </View>
               <Feather name="chevron-right" size={18} color={COLORS.textMuted} />
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* The same as your public profile: travel style, where you've been
+            (stamps + map) and your stories. */}
+        {vibes.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Travel style</Text>
+            <View style={styles.sectionBody}>
+              <TravelStyle vibes={vibes} />
+            </View>
+          </View>
+        )}
+
+        {places.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Where I've been</Text>
+            <View style={styles.sectionBody}>
+              <WhereBeen
+                places={places}
+                mapPlaces={mapPlaces}
+                activeKey={activePlace}
+                onSelect={setActivePlace}
+                bleed={SIZES.spacing_base + SIZES.spacing_xs}
+              />
+            </View>
+          </View>
+        )}
+
+        {myStories.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHead}>
+              <Text style={[styles.sectionTitle, styles.sectionTitleInline]} numberOfLines={1}>
+                {activePlace ? `Stories from ${places.find((p) => p.key === activePlace)?.label || ''}` : 'Stories'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => (activePlace ? setActivePlace(null) : navigation.navigate('MyStories'))}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Text style={styles.sectionLink}>{activePlace ? 'Show all' : 'See all'}</Text>
+              </TouchableOpacity>
+            </View>
+            <StoryGrid
+              stories={shownStories}
+              width={windowWidth - SIZES.spacing_base * 2}
+              onOpen={(item) => navigation.navigate('JournalDetail', { journalId: item.id, title: item.title })}
+            />
           </View>
         )}
 
@@ -561,6 +672,41 @@ export default function ProfileScreen({ navigation }) {
               accessibilityRole="button"
             >
               {savingName ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.saveText}>Save</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit bio */}
+      <Modal visible={editingBio} transparent animationType="slide" onRequestClose={() => setEditingBio(false)}>
+        <View style={styles.backdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setEditingBio(false)} accessibilityLabel="Close" />
+          <View style={[styles.sheet, { marginBottom: keyboardHeight, paddingBottom: (keyboardHeight ? 0 : insets.bottom) + SIZES.spacing_lg }]}>
+            <View style={styles.grabber} />
+            <Text style={styles.sheetTitle}>Your bio</Text>
+            <Text style={styles.sheetHint}>A line or two about you and how you travel. Shown on your profile to other travellers.</Text>
+            <TextInput
+              style={[styles.input, styles.bioInput]}
+              value={bioDraft}
+              onChangeText={(t) => { setBioDraft(t); setBioError(''); }}
+              placeholder="e.g. Slow travel, street food and early-morning walks."
+              placeholderTextColor={COLORS.textMuted}
+              maxLength={MAX_BIO}
+              multiline
+              autoFocus
+              textAlignVertical="top"
+              accessibilityLabel="Your bio"
+            />
+            <Text style={styles.bioCounter}>{bioDraft.length}/{MAX_BIO}</Text>
+            {!!bioError && <Text style={styles.nameError}>{bioError}</Text>}
+            <TouchableOpacity
+              style={[styles.saveButton, savingBio && styles.saveButtonDisabled]}
+              onPress={saveBio}
+              disabled={savingBio}
+              activeOpacity={0.9}
+              accessibilityRole="button"
+            >
+              {savingBio ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.saveText}>Save</Text>}
             </TouchableOpacity>
           </View>
         </View>
@@ -732,6 +878,36 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textMuted,
   },
+  bioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: SIZES.spacing_sm,
+    paddingHorizontal: SIZES.spacing_lg,
+  },
+  bioText: {
+    flexShrink: 1,
+    fontSize: SIZES.md,
+    lineHeight: 20,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  bioAdd: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.accentDeep,
+  },
+  bioInput: {
+    minHeight: 96,
+  },
+  bioCounter: {
+    alignSelf: 'flex-end',
+    marginTop: 4,
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+  },
 
   statsCard: {
     flexDirection: 'row',
@@ -776,6 +952,25 @@ const styles = StyleSheet.create({
   section: {
     marginTop: SIZES.spacing_lg,
     marginHorizontal: SIZES.spacing_base,
+  },
+  sectionBody: {
+    paddingHorizontal: SIZES.spacing_xs,
+  },
+  sectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SIZES.spacing_sm,
+  },
+  sectionTitleInline: {
+    flexShrink: 1,
+    marginBottom: 0,
+  },
+  sectionLink: {
+    marginRight: SIZES.spacing_xs,
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
   },
   sectionTitle: {
     marginLeft: SIZES.spacing_xs,

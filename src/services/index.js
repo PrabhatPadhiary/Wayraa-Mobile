@@ -23,7 +23,7 @@ export {
   getPlacesByFilter,
   getPlacesByTheme,
 } from './placesService';
-export { getCurrentLocation, getLocationPermission, getNearbyPlaces, reverseGeocode } from './locationService';
+export { getCurrentLocation, getLocationPermission, getNearbyPlaces, reverseGeocode, geocodePlaceName } from './locationService';
 export {
   getMyTrips,
   createTrip,
@@ -87,10 +87,11 @@ export {
   changeMemberRole,
   removeMember,
 } from './invitationsService';
-export { getMyProfile, peekMyProfile, updateMyName, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto } from './profileService';
+export { getMyProfile, peekMyProfile, updateMyName, updateMyBio, MAX_BIO, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto, seedMyPhoto } from './profileService';
 export {
   JOURNAL_VIBES,
   vibeLabel,
+  vibeIcon,
   getJournalFeed,
   peekJournalFeed,
   getJournal,
@@ -109,6 +110,7 @@ export {
   REPORT_REASONS,
   reportJournal,
   reportComment,
+  reportUser,
   hideJournal,
   unhideJournal,
   blockUser,
@@ -119,5 +121,7 @@ export {
   dismissReports,
   suspendUser,
   getJournalsForPlace,
+  getTravellerProfile,
+  peekTravellerProfile,
 } from './journalsService';
 export { toggleLike, setLiked, likeStateOf, useLikeState, useLikes } from './likesStore';

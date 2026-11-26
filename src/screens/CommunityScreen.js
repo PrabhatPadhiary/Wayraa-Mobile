@@ -28,11 +28,11 @@ import { COLORS, SIZES } from '../constants';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import { ScreenHeader, FilterChips, Skeleton, JournalCard, EmptyState } from '../components';
 import { getJournalFeed, peekJournalFeed, toggleLike, setLiked, vibeLabel, getStoredUser } from '../services';
-import { openStoryMenu, isMyStory } from '../utils/storyActions';
+import { openStoryMenu, isMyStory, openTraveller } from '../utils/storyActions';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
 import { useTip } from '../components/Tips';
-import { useOnReconnect } from '../hooks/useNetwork';
+import { useOnReconnect, useRetryHint } from '../hooks/useNetwork';
 
 const SORTS = [
   { key: 'recent', label: 'Recent' },
@@ -78,6 +78,7 @@ export default function CommunityScreen({ navigation }) {
   // The "Share a trip story" row's height: the header panel ends above it once collapsed.
   const [shareRowHeight, setShareRowHeight] = useState(0);
   const onBarScroll = useHideTabBarOnScroll();
+  const retryHint = useRetryHint();
   const onListScroll = (e) => {
     onBarScroll(e);   // the tab bar hides on scroll down, returns on scroll up
     const y = e.nativeEvent.contentOffset.y;
@@ -273,9 +274,9 @@ export default function CommunityScreen({ navigation }) {
     if (error) {
       return (
         <View style={styles.state}>
-          <Feather name="wifi-off" size={40} color={COLORS.textMuted} />
+          <Feather name="cloud-off" size={40} color={COLORS.textMuted} />
           <Text style={styles.stateTitle}>Couldn't load stories</Text>
-          <Text style={styles.stateText}>Check your connection and try again.</Text>
+          <Text style={styles.stateText}>{retryHint}</Text>
           <TouchableOpacity style={styles.retry} onPress={() => { setLoading(true); load(); }}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
@@ -322,6 +323,7 @@ export default function CommunityScreen({ navigation }) {
             onDoubleTapLike={() => likeOnDoubleTap(item)}
             onLongPress={() => setPreviewId(item.id)}
             onMore={() => openMenu(item)}
+            onAuthorPress={item.author?.id ? () => openTraveller(navigation, item.author) : undefined}
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.gap} />}

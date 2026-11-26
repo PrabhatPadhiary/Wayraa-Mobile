@@ -28,7 +28,7 @@ import useAuth from '../hooks/useAuth';
 import { showAlert } from '../components/AppDialog';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
 import RefreshSpinner from '../components/RefreshSpinner';
-import { useOnReconnect } from '../hooks/useNetwork';
+import { useOnReconnect, useRetryHint } from '../hooks/useNetwork';
 
 /**
  * Filter tabs. `match` maps a filter to the backend status values it includes.
@@ -61,6 +61,7 @@ const MORE_TRIPS_ITEM = { id: '__more-trips__', isMoreCard: true };
 export default function MyTripsScreen({ navigation }) {
   // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
   const onBarScroll = useHideTabBarOnScroll();
+  const retryHint = useRetryHint();
   const { isAuthenticated, isAuthReady } = useAuth();
   // Your trips as last loaded, at once; fresh ones load behind them.
   const [trips, setTrips] = useState(() => peekMyTrips() || []);
@@ -331,7 +332,7 @@ export default function MyTripsScreen({ navigation }) {
         <View style={styles.stateContainer}>
           <Ionicons name="cloud-offline-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.stateTitle}>Couldn't load your trips</Text>
-          <Text style={styles.stateSubtitle}>Check your connection and try again.</Text>
+          <Text style={styles.stateSubtitle}>{retryHint}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadTrips}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>

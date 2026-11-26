@@ -20,6 +20,25 @@ export function vibeLabel(vibe) {
     || v.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// An outline icon for each vibe (Ionicons), e.g. on a traveller's profile.
+const VIBE_ICONS = {
+  adventure: 'trail-sign-outline',
+  relaxing: 'sunny-outline',
+  foodie: 'restaurant-outline',
+  cultural: 'library-outline',
+  budget: 'wallet-outline',
+  luxury: 'diamond-outline',
+  solo: 'person-outline',
+  group: 'people-outline',
+  'road trip': 'car-outline',
+  nature: 'leaf-outline',
+};
+
+/** "foodie" -> "restaurant-outline" (a compass for anything unknown). */
+export function vibeIcon(vibe) {
+  return VIBE_ICONS[(vibe || '').trim().toLowerCase()] || 'compass-outline';
+}
+
 /** Feed sends vibes as "a,b,c"; detail sends an array. Normalise to an array. */
 function vibesOf(raw) {
   if (Array.isArray(raw)) return raw.filter(Boolean);
@@ -305,6 +324,10 @@ export const reportComment = (journalId, commentId, reason, details) =>
     'Couldn\'t send the report',
   );
 
+/** Report someone's profile (name, photo or bio). Backend: POST /api/users/{id}/report */
+export const reportUser = (userId, reason, details) =>
+  safetyCall(`/users/${encodeURIComponent(userId)}/report`, 'POST', { reason, details: details || null }, 'Couldn\'t send the report');
+
 /** "Not interested": hide a story from your feed. Backend: POST /api/Journals/{id}/hide */
 export const hideJournal = (id) => safetyCall(`/Journals/${encodeURIComponent(id)}/hide`, 'POST', null, 'Couldn\'t hide the story');
 
@@ -384,4 +407,50 @@ export async function getJournalsForPlace(googlePlaceId, limit = 10) {
   const list = (Array.isArray(data) ? data : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
   seedLikes(list, !!h.Authorization);
   return list;
+}
+
+/**
+ * A traveller's public profile: { author: { id, name, photoUrl, joinedAt },
+ * isBlocked, storyCount, photosCount, stories } — stories in the feed's shape.
+ * Works signed out. Null when the account doesn't exist or is suspended.
+ * Backend: GET /api/Journals/by-author/{userId}
+ */
+export async function getTravellerProfile(userId) {
+  const h = await headers();
+  const account = h.Authorization ? auth.currentUser?.uid || null : null;
+  const response = await fetch(`${API_URL}/Journals/by-author/${encodeURIComponent(userId)}`, { headers: h });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Couldn't load this profile (${response.status})`);
+  const data = await response.json();
+  const stories = (Array.isArray(data?.stories) ? data.stories : []).map((j) => ({ ...j, vibes: vibesOf(j.vibes) }));
+  seedLikes(stories, !!h.Authorization);
+  const profile = { ...data, stories };
+  travellerCache.set(userId, { account, profile });
+  return profile;
+}
+
+// Profiles opened this session (memory only), for whoever was signed in.
+const travellerCache = new Map();
+
+/**
+ * Something to show at once while a profile loads: the last copy opened
+ * this session, else a partial one from the Community feed already in
+ * memory (their stories there; `partial: true`, counts null). Null if
+ * there's nothing (e.g. opened from a comment, no feed yet).
+ */
+export function peekTravellerProfile(userId) {
+  const account = auth.currentUser?.uid || null;
+  const cached = travellerCache.get(userId);
+  if (cached && cached.account === account) return cached.profile;
+  if (!lastFeed || lastFeedAccount !== account) return null;
+  const theirs = lastFeed.filter((j) => j.author?.id === userId);
+  if (!theirs.length) return null;
+  return {
+    author: { ...theirs[0].author },
+    isBlocked: false,
+    storyCount: null,
+    photosCount: null,
+    stories: theirs,
+    partial: true,
+  };
 }

@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '../config';
 
 // One location lookup at a time: callers that ask while one is running share
@@ -97,4 +98,41 @@ export async function reverseGeocode(lat, lng) {
   } catch (error) {
     return null;
   }
+}
+
+// ── Place name -> coordinates (on the phone, free) ────────────────────────
+// For maps of places we only know by name ("Kyoto, Japan"). Uses the phone's
+// own geocoder (no permission or API key), remembered on the phone so each
+// name is looked up once. Null when it can't be found.
+const GEO_KEY = 'wayraa_geocode_v1';
+let geoCache = null; // name (lower case) -> { lat, lng } | null
+let geoSaveTimer = null;
+
+async function loadGeoCache() {
+  if (geoCache) return geoCache;
+  try {
+    geoCache = JSON.parse((await AsyncStorage.getItem(GEO_KEY)) || '{}') || {};
+  } catch {
+    geoCache = {};
+  }
+  return geoCache;
+}
+
+export async function geocodePlaceName(name) {
+  const key = (name || '').trim().toLowerCase();
+  if (!key) return null;
+  const cache = await loadGeoCache();
+  if (key in cache) return cache[key];
+  let point = null;
+  try {
+    const results = await Location.geocodeAsync(name);
+    const r = results?.[0];
+    if (r && Number.isFinite(r.latitude) && Number.isFinite(r.longitude)) point = { lat: r.latitude, lng: r.longitude };
+  } catch {
+    return null; // a failed lookup (offline, ...) isn't remembered
+  }
+  cache[key] = point;
+  clearTimeout(geoSaveTimer);
+  geoSaveTimer = setTimeout(() => AsyncStorage.setItem(GEO_KEY, JSON.stringify(cache)).catch(() => {}), 500);
+  return point;
 }

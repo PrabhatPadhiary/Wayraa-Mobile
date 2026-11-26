@@ -34,7 +34,7 @@ import useAuth from '../hooks/useAuth';
 import { createTripParamsForPlace } from '../utils/tripPlaces';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
-import { useOnReconnect } from '../hooks/useNetwork';
+import { useOnReconnect, useRetryHint } from '../hooks/useNetwork';
 
 /**
  * Category filters. `match` lists the backend category values each chip includes.
@@ -92,6 +92,7 @@ function toMasonry(items) {
 export default function FavoritesScreen({ navigation }) {
   // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
   const onBarScroll = useHideTabBarOnScroll();
+  const retryHint = useRetryHint();
   const { isAuthenticated, isAuthReady } = useAuth();
   // Your favourites as last loaded, at once; fresh ones load behind them.
   const [favourites, setFavourites] = useState(() => peekFavourites() || []);
@@ -210,7 +211,7 @@ export default function FavoritesScreen({ navigation }) {
         next.splice(Math.max(0, index), 0, item);
         return next;
       });
-      showAlert('Could not remove', 'Please check your connection and try again.');
+      showAlert('Could not remove', retryHint);
       return;
     }
     showToast({ item, index });
@@ -407,7 +408,7 @@ export default function FavoritesScreen({ navigation }) {
         <View style={styles.stateContainer}>
           <Ionicons name="cloud-offline-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.stateTitle}>Couldn't load favourites</Text>
-          <Text style={styles.stateSubtitle}>Check your connection and try again.</Text>
+          <Text style={styles.stateSubtitle}>{retryHint}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadFavourites}>
             <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>

@@ -115,7 +115,9 @@ export function preloadPublic(staticImages = []) {
  */
 export function preloadSignedIn(profilePhoto, userId) {
   snapshotOwner = userId || null;
-  if (profilePhoto) Image.prefetch(profilePhoto, 'memory-disk').catch(() => {});
+  // The exact photo Home shows, in memory before the logo goes (the splash
+  // waits for it like the trips' photos).
+  if (profilePhoto) tasks.profilePhoto = Image.prefetch(profilePhoto, 'memory-disk').catch(() => {});
   run('trips', getMyTrips, (trips) => pickActiveTrips(trips).slice(0, 3).map((t) =>
     placePhotoUrl(t.primaryPlaceId, 800) || normalizePhotoUrl(t.coverPhotoUrl, 800)));
   run('favourites', getFavourites, (favs) => favs.slice(0, 8).map((f) =>

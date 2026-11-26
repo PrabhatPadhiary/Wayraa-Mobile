@@ -12,9 +12,11 @@ import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
 const REASON_LABEL = Object.fromEntries(REPORT_REASONS.map((r) => [r.key, r.label]));
 
+const KIND_LABEL = { story: 'Story', comment: 'Comment', profile: 'Profile' };
+
 /**
  * Reports to review (moderators only, from Settings or a "New report" push):
- * every reported story and comment, with Remove or Dismiss.
+ * every reported story, comment and profile, with Remove (or Clear bio) or Dismiss.
  */
 export default function ReportsScreen({ navigation }) {
   // The bottom bar slides away while scrolling down, back on scroll up.
@@ -62,16 +64,19 @@ export default function ReportsScreen({ navigation }) {
   };
 
   const confirmRemove = (item) => {
+    const profile = item.kind === 'profile';
     const what = item.kind === 'story' ? 'story' : 'comment';
     showAlert(
-      `Remove this ${what}?`,
-      item.kind === 'story'
-        ? 'The story, its photos, likes and comments are deleted for everyone. This can\'t be undone.'
-        : 'The comment and its replies are deleted for everyone. This can\'t be undone.',
+      profile ? `Clear ${item.authorName || 'their'}'s bio?` : `Remove this ${what}?`,
+      profile
+        ? 'Their bio is removed. Their name and photo stay; suspend the account if those are the problem.'
+        : item.kind === 'story'
+          ? 'The story, its photos, likes and comments are deleted for everyone. This can\'t be undone.'
+          : 'The comment and its replies are deleted for everyone. This can\'t be undone.',
       [
-        { text: 'Remove', style: 'destructive', icon: 'trash-outline', onPress: () => act(item, 'remove') },
+        { text: profile ? 'Clear bio' : 'Remove', style: 'destructive', icon: 'trash-outline', onPress: () => act(item, 'remove') },
         {
-          text: `Remove and suspend ${item.authorName || 'author'}`,
+          text: profile ? `Clear bio and suspend ${item.authorName || 'them'}` : `Remove and suspend ${item.authorName || 'author'}`,
           style: 'destructive',
           icon: 'ban-outline',
           onPress: () => act(item, 'suspend'),
@@ -84,6 +89,10 @@ export default function ReportsScreen({ navigation }) {
 
   const openStory = (item) => {
     // Same stack (Home's), so back comes here.
+    if (item.kind === 'profile') {
+      navigation.navigate('UserProfile', { userId: item.targetId, name: item.authorName });
+      return;
+    }
     navigation.navigate('JournalDetail', {
       journalId: item.journalId,
       title: item.journalTitle,
@@ -97,8 +106,8 @@ export default function ReportsScreen({ navigation }) {
     return (
       <View style={styles.card}>
         <View style={styles.cardHead}>
-          <View style={[styles.kind, item.kind === 'story' ? styles.kindStory : styles.kindComment]}>
-            <Text style={styles.kindText}>{item.kind === 'story' ? 'Story' : 'Comment'}</Text>
+          <View style={[styles.kind, item.kind === 'story' ? styles.kindStory : item.kind === 'profile' ? styles.kindProfile : styles.kindComment]}>
+            <Text style={styles.kindText}>{KIND_LABEL[item.kind] || 'Report'}</Text>
           </View>
           <Text style={styles.meta} numberOfLines={1}>
             {item.reports} {item.reports === 1 ? 'report' : 'reports'} · {timeAgo(item.lastReportedAt)}
@@ -108,12 +117,13 @@ export default function ReportsScreen({ navigation }) {
 
         <TouchableOpacity onPress={() => openStory(item)} activeOpacity={0.7} accessibilityRole="link">
           <Text style={styles.by} numberOfLines={1}>
-            {item.kind === 'story' ? 'By' : 'Comment by'} {item.authorName || 'a traveller'}
+            {item.kind === 'story' ? 'By' : item.kind === 'profile' ? 'Profile of' : 'Comment by'} {item.authorName || 'a traveller'}
             {item.kind === 'comment' && item.journalTitle ? ` on “${item.journalTitle}”` : ''}
           </Text>
           {item.kind === 'story' && !!item.journalTitle && <Text style={styles.title}>{item.journalTitle}</Text>}
           {!!item.content && <Text style={styles.content} numberOfLines={6}>{item.content}</Text>}
-          <Text style={styles.open}>Open {item.kind === 'story' ? 'story' : 'in story'} ›</Text>
+          {item.kind === 'profile' && !item.content && <Text style={styles.content}>No bio. Check their name and photo.</Text>}
+          <Text style={styles.open}>Open {item.kind === 'story' ? 'story' : item.kind === 'profile' ? 'profile' : 'in story'} ›</Text>
         </TouchableOpacity>
 
         {(item.details || []).length > 0 && (
@@ -131,7 +141,7 @@ export default function ReportsScreen({ navigation }) {
                 <Text style={styles.dismissText}>Dismiss</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.button, styles.remove]} onPress={() => confirmRemove(item)} accessibilityRole="button">
-                <Text style={styles.removeText}>Remove</Text>
+                <Text style={styles.removeText}>{item.kind === 'profile' ? 'Clear bio' : 'Remove'}</Text>
               </TouchableOpacity>
             </>
           )}
@@ -210,6 +220,7 @@ const styles = StyleSheet.create({
   kind: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: SIZES.radius_full },
   kindStory: { backgroundColor: '#FDEBDD' },
   kindComment: { backgroundColor: '#E6EEF5' },
+  kindProfile: { backgroundColor: '#EDE6F5' },
   kindText: { fontSize: SIZES.sm, fontFamily: 'Poppins_600SemiBold', color: COLORS.textPrimary },
   meta: { flex: 1, fontSize: SIZES.sm, fontFamily: 'Poppins_400Regular', color: COLORS.textSecondary },
   reasons: { fontSize: SIZES.md, fontFamily: 'Poppins_600SemiBold', color: COLORS.error },

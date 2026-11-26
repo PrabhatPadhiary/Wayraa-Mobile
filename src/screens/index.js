@@ -21,3 +21,4 @@ export { default as BlockedPeopleScreen } from './BlockedPeopleScreen';
 export { default as ReportsScreen } from './ReportsScreen';
 export { default as SettingsScreen } from './SettingsScreen';
 export { default as NotificationsScreen } from './NotificationsScreen';
+export { default as UserProfileScreen } from './UserProfileScreen';

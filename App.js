@@ -15,7 +15,7 @@ import * as Linking from 'expo-linking';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './src/config';
-import { getStoredUser, setupNotificationHandler, onNotificationOpened, likesAccountChanged } from './src/services';
+import { getStoredUser, setupNotificationHandler, onNotificationOpened, likesAccountChanged, seedMyPhoto } from './src/services';
 import { hydrateCache } from './src/services/cache';
 import OfflineBanner from './src/components/OfflineBanner';
 import './src/config/offlineFetch';
@@ -197,13 +197,15 @@ export default function App() {
       if (firebaseUser) {
         // Your saved trips, favourites and profile, so screens open filled.
         await hydrateCache(firebaseUser.uid);
+        // Your photo from the saved profile, so Home has it from the start.
+        const savedPhoto = seedMyPhoto();
         // User is signed in — check for stored user data
         const user = await getStoredUser();
         if (user) {
           setStoredUser(user);
           setInitialRoute('Main');
           // Your trips and favourites for the home page, while the logo shows.
-          preloadSignedIn(firebaseUser.photoURL || user.photoUrl, firebaseUser.uid);
+          preloadSignedIn(savedPhoto !== undefined ? savedPhoto : (firebaseUser.photoURL || user.photoUrl), firebaseUser.uid);
           setHasSnapshot(await restoreHomeSnapshot(firebaseUser.uid));
         } else {
           setHasSnapshot(await restoreHomeSnapshot(null));

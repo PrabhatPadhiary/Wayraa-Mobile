@@ -17,6 +17,7 @@ import {
   JournalDetailScreen,
   DestinationPlacesScreen,
   NearbyPlacesScreen,
+  UserProfileScreen,
   MyStoriesScreen,
   BlockedPeopleScreen,
   ReportsScreen,
@@ -53,6 +54,8 @@ function ExploreStack({ route }) {
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
+      {/* A story's author: their public profile. */}
+      <Stack.Screen name="UserProfile" component={UserProfileScreen} />
       {/* Opened from the avatar on Home. */}
       <Stack.Screen name="Profile" component={ProfileScreen} />
       {/* Your stories (from Profile): everything you've shared, hidden ones too. */}
@@ -77,6 +80,8 @@ function MyTripsStack() {
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
+      {/* A story's author: their public profile. */}
+      <Stack.Screen name="UserProfile" component={UserProfileScreen} />
       {/* "Add place" on a trip opens the destination here, in picking mode, so
           back returns to the trip instead of switching to the Explore tab. */}
       <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
@@ -96,6 +101,8 @@ function FavoritesStack() {
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
+      {/* A story's author: their public profile. */}
+      <Stack.Screen name="UserProfile" component={UserProfileScreen} />
     </Stack.Navigator>
   );
 }
@@ -105,6 +112,8 @@ function CommunityStack() {
     <Stack.Navigator screenOptions={commonStackOptions}>
       <Stack.Screen name="CommunityHome" component={CommunityScreen} />
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
+      {/* A story's author: their public profile. */}
+      <Stack.Screen name="UserProfile" component={UserProfileScreen} />
       {/* Places mentioned in a journal open the shared place page. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
     </Stack.Navigator>

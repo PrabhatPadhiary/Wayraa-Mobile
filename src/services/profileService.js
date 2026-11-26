@@ -44,6 +44,18 @@ export function useMyPhoto(fallback) {
   return photo === undefined ? (fallback || null) : photo;
 }
 
+/**
+ * App start, after the saved copies are loaded (hydrateCache): your photo
+ * from the saved profile, so Home shows it at once instead of waiting for
+ * the fresh profile. Returns what's known (undefined if nothing saved).
+ */
+export function seedMyPhoto() {
+  if (myPhoto !== undefined) return myPhoto;
+  const saved = peekCache(CacheKeys.profile)?.photoUrl;
+  if (saved !== undefined) setMyPhoto(saved || null);
+  return myPhoto;
+}
+
 async function syncPhotoElsewhere(url) {
   setMyPhoto(url);
   try {
@@ -138,6 +150,34 @@ async function fetchMyProfile() {
  * locally stored user.
  * Backend: PUT /api/users/me
  */
+/** Longest bio, as the backend allows. */
+export const MAX_BIO = 160;
+
+/**
+ * Set your bio (shown on your public profile); empty clears it.
+ * Backend: PUT /api/users/me/bio
+ * @returns {Promise<string|null>} the saved bio
+ */
+export async function updateMyBio(bio) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+  const response = await fetch(`${API_URL}/users/me/bio`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ bio }),
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) {
+    let message = '';
+    try { message = (await response.text()).replace(/^"|"$/g, ''); } catch { /* ignore */ }
+    throw new Error(message || `Could not save your bio (${response.status})`);
+  }
+  const { bio: saved } = await response.json();
+  const cached = peekCache(CacheKeys.profile);
+  if (cached) setCache(CacheKeys.profile, { ...cached, bio: saved ?? null });
+  return saved ?? null;
+}
+
 export async function updateMyName(name) {
   const token = await getAuthToken();
   if (!token) throw new AuthRequiredError();

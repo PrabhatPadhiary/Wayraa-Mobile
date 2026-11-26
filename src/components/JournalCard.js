@@ -62,9 +62,10 @@ const LIKE_RED = '#E05024';
  * @param {() => void} [onDoubleTapLike]  like (never unlike) from a double tap
  * @param {() => void} [onLongPress]
  * @param {() => void} [onMore]   the ⋯ menu (edit, share, delete, ...)
+ * @param {() => void} [onAuthorPress]  tap the author's photo or name (their profile)
  * @param {string} [badge]        a tag on the photo, e.g. "Hidden"
  */
-export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTapLike, onLongPress, onMore, badge }) {
+export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTapLike, onLongPress, onMore, onAuthorPress, badge }) {
   // Hearts and counts from the shared like state: a like anywhere shows here at once.
   const likes = useLikeState(journal);
   const [failed, setFailed] = useState(false);
@@ -200,15 +201,24 @@ export default function JournalCard({ journal, onPress, onToggleLike, onDoubleTa
         )}
 
         <View style={styles.footer}>
-          <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
-            {journal.author?.photoUrl
-              ? <Image source={{ uri: cloudinarySized(journal.author?.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
-              : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
-          </View>
-          <View style={styles.authorText}>
-            <Text style={styles.authorName} numberOfLines={1}>{author}</Text>
-            <Text style={styles.posted}>{timeAgo(journal.publishedAt || journal.createdAt)}</Text>
-          </View>
+          <Pressable
+            style={styles.authorLink}
+            onPress={onAuthorPress || onPress}
+            disabled={!onAuthorPress && !onPress}
+            hitSlop={{ top: 6, bottom: 6 }}
+            accessibilityRole={onAuthorPress ? 'link' : undefined}
+            accessibilityLabel={onAuthorPress ? `${author}'s profile` : undefined}
+          >
+            <View style={[styles.avatar, { backgroundColor: avatarColorFor(author) }]}>
+              {journal.author?.photoUrl
+                ? <Image source={{ uri: cloudinarySized(journal.author?.photoUrl, IMAGE_WIDTH.AVATAR) }} style={[StyleSheet.absoluteFill, { borderRadius: 999 }]} contentFit="cover" />
+                : <Text style={styles.avatarText}>{initialsFor(author)}</Text>}
+            </View>
+            <View style={styles.authorText}>
+              <Text style={styles.authorName} numberOfLines={1}>{author}</Text>
+              <Text style={styles.posted}>{timeAgo(journal.publishedAt || journal.createdAt)}</Text>
+            </View>
+          </Pressable>
 
           <TouchableOpacity
             style={styles.stat}
@@ -378,6 +388,13 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
+  },
+  authorLink: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
   },
   authorText: {
     flex: 1,
