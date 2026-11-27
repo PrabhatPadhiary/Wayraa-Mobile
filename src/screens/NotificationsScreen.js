@@ -14,7 +14,7 @@ import { Image } from 'expo-image';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { ScreenHeader, SignInPrompt, EmptyState } from '../components';
-import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { RowListSkeleton } from '../components/skeletons';
 import useAuth from '../hooks/useAuth';
 import { getNotifications, markNotificationsRead } from '../services/inboxService';

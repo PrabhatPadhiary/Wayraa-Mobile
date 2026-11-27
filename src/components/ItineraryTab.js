@@ -63,6 +63,7 @@ import {
   travelLabel,
 } from '../utils/itinerary';
 import DateRangeSheet from './DateRangeSheet';
+import BookTicketsChip from './BookTicketsChip';
 import { DayMapBackground, openDirections } from './DayMap';
 import { DragSource, createZones } from './ItineraryDrag';
 import { showAlert } from './AppDialog';
@@ -1224,6 +1225,15 @@ export default function ItineraryTab({
                   />
                 )}
               </TouchableOpacity>
+              {/* Activities with a place: "Book tickets" when Viator has tours for it. */}
+              {item.category === 'activity' && !open && !saving && coordsOf(item) && (
+                <BookTicketsChip
+                  name={placeById.get(item.tripPlaceId)?.placeName || item.title}
+                  lat={coordsOf(item).latitude}
+                  lng={coordsOf(item).longitude}
+                  style={styles.itemTickets}
+                />
+              )}
               {open && (
                 <ItemEditor
                   item={item}
@@ -2264,6 +2274,12 @@ const styles = StyleSheet.create({
   itemText: {
     flex: 1,
     minWidth: 0,
+  },
+  // Lines up with the title (row padding 10 + stop number 26 + gap 8).
+  itemTickets: {
+    marginLeft: 44,
+    marginTop: -2,
+    marginBottom: 8,
   },
   itemTitle: {
     fontSize: SIZES.md,

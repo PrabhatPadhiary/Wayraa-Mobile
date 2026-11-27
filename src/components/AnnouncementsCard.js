@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
-import { avatarColorFor, initialsFor } from './TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { showAlert } from './AppDialog';
 import {
   ANNOUNCEMENT_MAX_LENGTH,

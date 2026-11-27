@@ -157,6 +157,27 @@ export async function addJournalComment(id, body, parentCommentId = null) {
 }
 
 /**
+ * Edit one of your comments or replies.
+ * Backend: PUT /api/Journals/{id}/comments/{commentId}  { body }
+ * Resolves to { id, body, createdAt, updatedAt }.
+ */
+export async function updateJournalComment(id, commentId, body) {
+  const token = await requireToken();
+  const response = await fetch(
+    `${API_URL}/Journals/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ body }),
+    }
+  );
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 404) throw new Error('That comment was deleted.');
+  if (!response.ok) throw new Error(`Couldn't save your comment (${response.status})`);
+  return response.json();
+}
+
+/**
  * Backend: DELETE /api/Journals/{id}/comments/{commentId} (own comments; its
  * replies go too). Resolves to the story's new comment count when the server
  * says it (null when the comment was already gone).

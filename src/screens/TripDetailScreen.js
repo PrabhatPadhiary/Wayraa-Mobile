@@ -9,19 +9,20 @@ import {
   RefreshControl,
   Animated,
   Easing,
+  Dimensions,
   ActivityIndicator,
   BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Image } from 'expo-image';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useReducedMotion } from 'react-native-reanimated';
 import RatingRow from '../components/RatingRow';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
 import { SignInPrompt, TripDetailSkeleton, TripMap, DestinationSheet, ChecklistTab, BudgetTab, ItineraryTab, ScreenHeader, EditTripSheet, TravellersSheet, DateRangeSheet } from '../components';
-import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import TripHero from '../components/TripHero';
 import AnnouncementsCard from '../components/AnnouncementsCard';
 import PollsCard from '../components/PollsCard';
@@ -34,8 +35,9 @@ import {
   getExpenses,
   getItinerary,
   getStoredUser,
-  deleteTrip,
-  getMyTrips,
+  getShareLinks,
+  deleteTripInBackground,
+  peekMyTrips,
   addTripDestination,
   removeTripPlace,
   removeTripDestination,
@@ -51,6 +53,12 @@ import { areaFromAddress, formatCentreDistance, cityCentre } from '../utils/addr
 import { summarizePlan, nightsLabel } from '../utils/planSummary';
 import { tripDays, isoToDay as itinDay, todayDay as itinToday, dayLabel as itinDayLabel, compareByTime, distanceKm } from '../utils/itinerary';
 import { showAlert } from '../components/AppDialog';
+import { registerPassTarget, onPassLanded } from '../components/PassPrintOverlay';
+import TripTicket, { TICKET_TEAR_FROM_RIGHT } from '../components/TripTicket';
+import InviteQrSheet from '../components/InviteQrSheet';
+import TornEdge from '../components/TornEdge';
+import { shareInvite } from '../components/TravellersSheet';
+import { ripTicket, RIP_FALL_AT } from '../components/TicketRipOverlay';
 import { LoaderOverlay } from '../components/WayraaLoader';
 import LiveToast, { describeTripChange, ViewerFaces } from '../components/LiveToast';
 import useTripLive from '../hooks/useTripLive';
@@ -138,21 +146,6 @@ function SectionTitle({ icon, tint, color, title }) {
   );
 }
 
-/** Same status labels and colors as the My Trips list. */
-function statusStyle(status) {
-  switch ((status || '').toLowerCase()) {
-    case 'completed':
-      return { label: 'Completed', bg: '#EEF1F3', color: COLORS.textSecondary };
-    case 'in_progress':
-      return { label: 'Ongoing', bg: '#E8F5EE', color: COLORS.success };
-    case 'planning':
-      return { label: 'Upcoming', bg: '#FDEFEA', color: COLORS.accent };
-    case 'draft':
-    default:
-      return { label: 'Draft', bg: '#EEF3F7', color: COLORS.primaryLight };
-  }
-}
-
 /** Icon colors for the countdown pill on the hero, by tone. */
 const COUNTDOWN_TONES = {
   soon: { tint: '#FDEFEA', color: COLORS.accent },
@@ -208,7 +201,8 @@ function formatBudget(amount, currency) {
 /**
  * TripDetailScreen - overview of one trip: hero, summary and saved places.
  *
- * Route params: { tripId, tripName }
+ * Route params: { tripId, tripName, initialTab? }  initialTab: overview |
+ * itinerary | budget | checklist (My Trips' quick buttons open a tab directly).
  */
 export default function TripDetailScreen({ navigation, route }) {
   const { tripId } = route.params || {};
@@ -229,7 +223,9 @@ export default function TripDetailScreen({ navigation, route }) {
   const darkStatusBarRef = useRef(false);
 
   // ── Section tabs in the bottom bar ─────────────────────────────────────
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => (
+    TRIP_TABS.some((t) => t.key === route.params?.initialTab) ? route.params.initialTab : 'overview'
+  ));
   // The trip's tab bar hides while you scroll down and returns on scroll up; a new section starts with it showing.
   const onBarScroll = useHideTabBarOnScroll(activeTab);
   // Itinerary drag and drop: a layer above the page (drag card, drop bar,
@@ -369,6 +365,10 @@ export default function TripDetailScreen({ navigation, route }) {
       setLiveKey((k) => k + 1);
     }, 300);
     if (change.missed) return;
+    // Someone joined while you're showing the QR: say so on it.
+    if (change.section === 'travellers' && change.action === 'joined' && qrOpenRef.current) {
+      setQrJoined((cur) => [...cur, (change.actorName || 'Someone').split(' ')[0]]);
+    }
     if (change.section === 'polls' && (change.action === 'unvoted' || change.action === 'linked')) return;
     // You were removed: the trip is no longer yours to see.
     if (change.section === 'travellers' && change.action === 'removed' && change.targetIsMe) {
@@ -403,19 +403,50 @@ export default function TripDetailScreen({ navigation, route }) {
   const reduceMotion = useReducedMotion();
   const heroSettle = useRef(new Animated.Value(1)).current;
   const justCreated = !!route.params?.justCreated;
+  // Opened under the boarding-pass print (PassPrintOverlay): the pass flies
+  // onto the summary card and becomes it. The card stays hidden until then,
+  // and the welcome waits for it (the print has its own buzz and motion).
+  const printLanding = useRef(!!route.params?.printLanding).current;
+  const summaryRef = useRef(null);
+  const summaryReveal = useRef(new Animated.Value(printLanding ? 0 : 1)).current;
+  const targetSent = useRef(false);
+  const [landed, setLanded] = useState(!printLanding);
   useEffect(() => {
-    if (!tripLoaded || !justCreated) return undefined;
-    navigation.setParams({ justCreated: undefined });
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    if (!reduceMotion) {
-      heroSettle.setValue(1.04);
-      Animated.timing(heroSettle, { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    if (!printLanding) return undefined;
+    const reveal = () => {
+      Animated.timing(summaryReveal, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      setLanded(true);
+    };
+    const off = onPassLanded(reveal);
+    // Never left hidden, whatever happens to the print.
+    const safety = setTimeout(reveal, 8000);
+    return () => { off(); clearTimeout(safety); };
+  }, [printLanding, summaryReveal]);
+  // Lets the pass find the ticket (once it's laid out). It measures when it
+  // flies, after this page has finished sliding in, so it lands exactly.
+  const sendPassTarget = () => {
+    if (!printLanding || targetSent.current) return;
+    targetSent.current = true;
+    registerPassTarget((cb) => {
+      const view = ticketPassRef.current || summaryRef.current;
+      if (!view?.measureInWindow) { cb(null); return; }
+      view.measureInWindow((x, y, width, height) => cb({ x, y, width, height }));
+    });
+  };
+  const welcomeShown = useRef(false);
+  useEffect(() => {
+    if (!tripLoaded || !(justCreated || printLanding) || !landed || welcomeShown.current) return undefined;
+    welcomeShown.current = true;
+    navigation.setParams({ justCreated: undefined, printLanding: undefined });
+    if (!printLanding) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      if (!reduceMotion) {
+        heroSettle.setValue(1.04);
+        Animated.timing(heroSettle, { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      }
     }
-    setLiveToast({ key: Date.now(), text: 'Your trip is ready. Invite friends or start adding places.', icon: 'sparkles' });
-    clearTimeout(liveTimers.current.toast);
-    liveTimers.current.toast = setTimeout(() => setLiveToast(null), 3500);
     return undefined;
-  }, [tripLoaded, justCreated]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tripLoaded, justCreated, landed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Total spent, for the Overview budget card. Refreshed whenever Overview is
   // shown, so expenses added on the Budget tab are reflected.
@@ -426,6 +457,33 @@ export default function TripDetailScreen({ navigation, route }) {
   const [tripDatesOpen, setTripDatesOpen] = useState(false);
   // Travellers sheet: who's on the trip, and inviting friends.
   const [travellersOpen, setTravellersOpen] = useState(false);
+  // The ticket's invite QR, for people who can invite; tapping it shows it big.
+  const [inviteLink, setInviteLink] = useState(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  // Who joined while the QR was up (shown on it, live).
+  const [qrJoined, setQrJoined] = useState([]);
+  const qrOpenRef = useRef(false);
+  qrOpenRef.current = qrOpen;
+  // Invite: straight to the share sheet with the trip's editor link.
+  const inviteNow = async () => {
+    try {
+      const link = inviteLink || (await getShareLinks(trip.id))?.member?.link;
+      if (!link) throw new Error('Could not load the invite link. Please try again.');
+      setInviteLink(link);
+      await shareInvite(trip.name, { role: 'member', link });
+    } catch (e) {
+      showAlert('Could not share the invite', e?.message || 'Please try again.');
+    }
+  };
+  const canShareQr = ['owner', 'member'].includes((trip?.myRole || '').toLowerCase());
+  useEffect(() => {
+    if (!trip?.id || !canShareQr) { setInviteLink(null); return undefined; }
+    let alive = true;
+    getShareLinks(trip.id)
+      .then((links) => { if (alive) setInviteLink(links?.member?.link || null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [trip?.id, canShareQr]);
   const [deletingTrip, setDeletingTrip] = useState(false);
   // Itinerary items, for the Overview "Next up" card.
   const [planItems, setPlanItems] = useState(null);
@@ -482,24 +540,36 @@ export default function TripDetailScreen({ navigation, route }) {
     text: 'Invite friends to this trip. Everyone can add places, plans and expenses, and you see changes live.',
   });
 
-  const removeTrip = async () => {
+  // Deleting is instant: leave straight away and let the server catch up in
+  // the background (if it fails, the trip comes back in My Trips with a note).
+  // Its ticket rips in half on the way out (TicketRipOverlay plays over the
+  // screen change).
+  const ticketPassRef = useRef(null);
+  const ticketCopy = useRef(null);
+  const removeTrip = () => {
+    const { id, name } = trip;
     setDeletingTrip(true);
-    try {
-      await deleteTrip(trip.id);
-      // Other trips left: back to the My Trips list. That was the only one:
-      // Home (My Trips is reset underneath, showing its empty state next time).
-      let left = 1;
-      try {
-        left = (await getMyTrips()).length;
-      } catch {
-        // Couldn't check: My Trips is a safe place to land.
-      }
+    deleteTripInBackground(id).catch((e) => {
+      showAlert(`Could not delete "${name}"`, e?.message || 'It\'s back in your trips. Please try again.');
+    });
+    // Other trips left: back to the My Trips list. That was the only one:
+    // Home (My Trips shows its empty state next time).
+    const left = (peekMyTrips() || []).length;
+    const leave = () => {
       navigation.popToTop();
       if (left === 0) navigation.getParent()?.navigate('Explore');
-    } catch (e) {
-      setDeletingTrip(false);
-      showAlert('Could not delete trip', e?.message || 'Please try again.');
-    }
+    };
+    const view = ticketPassRef.current;
+    if (!view?.measureInWindow || !ticketCopy.current) { leave(); return; }
+    view.measureInWindow((x, y, width, height) => {
+      if (width && y < Dimensions.get('window').height && y + height > 0) {
+        ripTicket({ rect: { x, y, width, height }, splitFromRight: TICKET_TEAR_FROM_RIGHT, content: ticketCopy.current });
+        summaryReveal.setValue(0); // the copy is ripping in its place
+        setTimeout(leave, RIP_FALL_AT); // once it has torn; the halves fall over the next screen
+      } else {
+        leave(); // scrolled out of sight: just go
+      }
+    });
   };
 
   const openTripMenu = () => {
@@ -997,9 +1067,19 @@ export default function TripDetailScreen({ navigation, route }) {
     }
   };
 
-  const badge = statusStyle(trip.status);
-  const dateRange = formatDateRange(trip.startDate, trip.endDate);
-  const days = dayCount(trip.startDate, trip.endDate);
+  // The summary ticket: the trip as a boarding pass (its stops for the place
+  // name, everyone for the crew), with the same cover photo as the printed
+  // one so the hand-off from the print matches.
+  const ticketProps = {
+    trip,
+    places: sortedDestinations.length ? sortedDestinations.map((d) => d.name) : [trip.primaryDestination],
+    stops: sortedDestinations.length || 1,
+    spots: allPlaces.length,
+    members,
+    memberCount: Math.max(members.length, trip.travelersCount || 1),
+  };
+  // A copy for the rip when the trip is deleted (see removeTrip).
+  ticketCopy.current = <TripTicket {...ticketProps} qrValue={inviteLink} notchColor={SHEET_BG} />;
   // Countdown pill on the hero ("9 days to go", "Day 3 of 8", ...), with its
   // icon color picked by tone.
   const countdownBase = countdownInfo(trip);
@@ -1218,54 +1298,32 @@ export default function TripDetailScreen({ navigation, route }) {
           <>
           {/* Summary: status + dates, three key numbers, and who's going
               (opens the Travellers sheet to see everyone and invite friends). */}
-          <View style={[styles.card, styles.summaryCard]}>
-            <View style={styles.summaryTop}>
-              <View style={styles.summaryDateIcon}>
-                <Ionicons name="calendar" size={18} color={COLORS.accent} />
-              </View>
-              <TouchableOpacity
-                style={styles.summaryDateText}
-                onPress={openTripDates}
-                disabled={!canEdit}
-                activeOpacity={0.6}
-                accessibilityRole={canEdit ? 'button' : undefined}
-                accessibilityLabel={canEdit
-                  ? `${dateRange || 'Dates not set'}. Tap to ${dateRange ? 'change' : 'set'} dates.`
-                  : undefined}
-              >
-                <View style={styles.summaryDatesRow}>
-                  <Text style={[styles.summaryDates, styles.summaryDatesShrink]} numberOfLines={1}>{dateRange || 'Dates not set'}</Text>
-                  {canEdit && <MaterialCommunityIcons name="pencil" size={14} color={COLORS.accent} style={styles.summaryDatesPencil} />}
-                </View>
-                <Text style={styles.summaryDatesSub} numberOfLines={1}>
-                  {days ? `${days} ${days === 1 ? 'day' : 'days'}` : (canEdit ? 'Tap to add dates and plan each day' : 'Add dates to plan each day')}
-                </Text>
-              </TouchableOpacity>
-              <View style={[styles.statusBadge, styles.statusBadgeInline, { backgroundColor: badge.bg }]}>
-                <View style={[styles.statusDot, { backgroundColor: badge.color }]} />
-                <Text style={[styles.statusText, { color: badge.color }]}>{badge.label}</Text>
-              </View>
+          <Animated.View
+            ref={summaryRef}
+            style={[styles.ticket, { opacity: summaryReveal }]}
+            onLayout={sendPassTarget}
+          >
+            {/* The trip's ticket (the same one that prints when it's
+                created): its route, dates, stops, spots and crew, and a stub
+                with the countdown and the invite QR. Tap the dates to change them. */}
+            <View ref={ticketPassRef} collapsable={false}>
+              <TripTicket
+                {...ticketProps}
+                qrValue={inviteLink}
+                flatBottom
+                notchColor={SHEET_BG}
+                onPressDates={canEdit ? openTripDates : undefined}
+                onPressCrew={() => setTravellersOpen(true)}
+                onPressQr={() => setQrOpen(true)}
+              />
             </View>
-
+            {/* The ticket's torn bottom edge, a small gap, then the card
+                torn from it (matching edge): who's going and Invite. */}
+            <TornEdge side="bottom" seed={11} />
+            <View style={styles.ticketGap} />
+            <TornEdge side="top" seed={11} />
+            <View style={styles.ticketBottom}>
             {!!trip.description && <Text style={styles.description}>{trip.description}</Text>}
-
-            <View style={styles.summaryStats}>
-              {[
-                { key: 'days', value: days || '–', label: days === 1 ? 'Day' : 'Days' },
-                { key: 'stops', value: sortedDestinations.length || 1, label: sortedDestinations.length === 1 ? 'Stop' : 'Stops' },
-                { key: 'spots', value: allPlaces.length, label: allPlaces.length === 1 ? 'Spot' : 'Spots' },
-              ].map((stat, i) => (
-                <View
-                  key={stat.key}
-                  style={[styles.summaryStat, i > 0 && styles.summaryStatDivider]}
-                  accessible
-                  accessibilityLabel={`${stat.value} ${stat.label}`}
-                >
-                  <Text style={styles.summaryStatValue}>{stat.value}</Text>
-                  <Text style={styles.summaryStatLabel}>{stat.label}</Text>
-                </View>
-              ))}
-            </View>
 
             <TouchableOpacity
               ref={inviteTipRef}
@@ -1321,15 +1379,23 @@ export default function TripDetailScreen({ navigation, route }) {
                 )}
               </View>
               {canInvite ? (
-                <View style={styles.inviteButton}>
+                <TouchableOpacity
+                  style={styles.inviteButton}
+                  onPress={inviteNow}
+                  activeOpacity={0.85}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel="Invite friends"
+                >
                   <Ionicons name="person-add" size={14} color={COLORS.white} />
                   <Text style={styles.inviteButtonText}>Invite</Text>
-                </View>
+                </TouchableOpacity>
               ) : (
                 <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
               )}
             </TouchableOpacity>
-          </View>
+            </View>
+          </Animated.View>
 
           {/* Announcements from the owner (flight details, meeting points...).
               Owner: post / edit / delete. Others: shown once there's one. */}
@@ -1880,6 +1946,14 @@ export default function TripDetailScreen({ navigation, route }) {
       {/* iPhone: the refresh spinner, below the status bar (see RefreshSpinner). */}
       <RefreshSpinner refreshing={refreshing} top={insets.top} />
       {editSheet}
+      <InviteQrSheet
+        visible={qrOpen}
+        tripName={trip?.name || ''}
+        link={inviteLink}
+        joined={qrJoined}
+        onShare={() => { setQrOpen(false); inviteNow(); }}
+        onClose={() => { setQrOpen(false); setQrJoined([]); }}
+      />
       <TravellersSheet
         visible={travellersOpen}
         trip={trip}
@@ -2033,75 +2107,23 @@ const styles = StyleSheet.create({
     paddingBottom: 150,
     flexGrow: 1,
   },
-  // ── Overview: summary ──
-  summaryCard: {
+  // Summary as a ticket: the boarding pass with a torn-off half below.
+  ticket: {
+    marginBottom: SIZES.spacing_md,
+  },
+  ticketGap: { height: 10 },
+  ticketBottom: {
+    backgroundColor: COLORS.white,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingTop: SIZES.spacing_sm,
     paddingBottom: SIZES.spacing_md,
-  },
-  summaryTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing_md,
-  },
-  summaryDateIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: SIZES.radius_md,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FDEFEA',
-  },
-  summaryDateText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  summaryDates: {
-    fontSize: SIZES.base,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  summaryDatesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  summaryDatesShrink: {
-    flexShrink: 1,
-  },
-  summaryDatesPencil: {
-    marginLeft: 5,
-  },
-  summaryDatesSub: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-  },
-  // Three numbers split by hairlines.
-  summaryStats: {
-    flexDirection: 'row',
-    marginTop: SIZES.spacing_base,
-    paddingVertical: SIZES.spacing_md,
-    borderRadius: SIZES.radius_md,
-    backgroundColor: COLORS.cardBackground,
-  },
-  summaryStat: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  summaryStatDivider: {
-    borderLeftWidth: 1,
-    borderLeftColor: COLORS.border,
-  },
-  summaryStatValue: {
-    fontSize: SIZES.xl,
-    lineHeight: 28,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.primary,
-  },
-  summaryStatLabel: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_500Medium',
-    color: COLORS.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    shadowColor: '#1C2833',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 2,
   },
   travellersRow: {
     flexDirection: 'row',
@@ -2138,9 +2160,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
   },
-  statusBadgeInline: {
-    marginBottom: 0,
-  },
   avatarSmall: {
     width: 26,
     height: 26,
@@ -2164,9 +2183,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.accentDeep,
     backgroundColor: '#FDEFEA',
-  },
-  flex: {
-    flex: 1,
   },
   flexShrink: {
     flexShrink: 1,
@@ -2481,23 +2497,6 @@ const styles = StyleSheet.create({
     zIndex: 30,
     elevation: 9,
   },
-  comingSoon: {
-    alignItems: 'center',
-    paddingVertical: SIZES.spacing_xl,
-    gap: SIZES.spacing_xs,
-  },
-  comingSoonTitle: {
-    marginTop: SIZES.spacing_sm,
-    fontSize: SIZES.lg,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textPrimary,
-  },
-  comingSoonText: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-  },
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2510,37 +2509,6 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: 4,
-    borderRadius: SIZES.radius_full,
-    marginBottom: SIZES.spacing_sm,
-  },
-  statusText: {
-    fontSize: SIZES.sm,
-    fontFamily: 'Poppins_600SemiBold',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
-  },
-  metaText: {
-    flexShrink: 1,
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_400Regular',
-    color: COLORS.textSecondary,
   },
   description: {
     marginTop: SIZES.spacing_md,

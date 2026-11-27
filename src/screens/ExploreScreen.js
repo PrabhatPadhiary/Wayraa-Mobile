@@ -55,6 +55,7 @@ import { API_URL } from '../config';
 import useAuth from '../hooks/useAuth';
 import useUnreadNotifications from '../hooks/useUnreadNotifications';
 import { pickActiveTrips, daysUntil, dayCount, formatDateRange } from '../utils/tripDates';
+import { distanceKm, stopForDay, todayDay } from '../utils/itinerary';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Reanimated, {
@@ -73,12 +74,13 @@ const SEARCH_MORPH_EASE = REasing.bezier(0.2, 0.8, 0.2, 1);
 const SEARCH_FIELD_H = 54;
 import { BlurView, BlurTargetView } from 'expo-blur';
 import { ANDROID_BLUR, ANDROID_BLUR_METHOD } from '../utils/glass';
-import { initialsFor } from '../components/TripStackCard';
+import { initialsFor } from '../utils/avatars';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
 import { useBottomBar } from '../context/BottomBarContext';
 import { useTip } from '../components/Tips';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
 import CommunityHighlights from '../components/CommunityHighlights';
+import BookableActivities from '../components/BookableActivities';
 import LocationSheet from '../components/LocationSheet';
 import { getExploreCity, setExploreCity } from '../services/exploreCity';
 import RefreshSpinner from '../components/RefreshSpinner';
@@ -501,6 +503,75 @@ export default function ExploreScreen({ route, navigation }) {
     const line = lineFor(trip);
     if (line) { headlineTrip = trip; tripLine = line; break; }
   }
+  // "Things to book": for your trip when one starts within a month (or is
+  // on now), else around where you are (or the city you're exploring).
+  // Hidden with neither, and never asks for location just for this.
+  //
+  // During a trip it follows the stop you're at:
+  //  1. where you really are, when that's within 50 km of one of its stops;
+  //  2. else the stop whose dates cover today (stopForDay: same rule as the
+  //     itinerary, e.g. a day trip inside a longer stay wins);
+  //  3. else the trip's main stop.
+  // A trip with a start date but no end date counts as on for 14 days.
+  const TOURS_TRIP_DAYS = 30;
+  const TOURS_OPEN_ENDED_DAYS = 14;
+  const TOURS_NEAR_STOP_KM = 50;
+  const hasCoords = (p) => Number.isFinite(p?.latitude) && Number.isFinite(p?.longitude);
+  const tripPhase = (trip) => {
+    const until = trip.startDate ? daysUntil(trip.startDate) : null;
+    if (until === null) return null;
+    if (until > 0) return until <= TOURS_TRIP_DAYS ? 'upcoming' : null;
+    if (until === 0) return 'ongoing';
+    if (trip.endDate) return lineFor(trip) ? 'ongoing' : null; // null: over
+    return -until < TOURS_OPEN_ENDED_DAYS ? 'ongoing' : null;
+  };
+  const tourTrip = activeTrips.find((trip) => {
+    if (!tripPhase(trip)) return false;
+    return hasCoords(trip.primaryStop) || (trip.stops || []).some(hasCoords);
+  }) || null;
+  const tourStop = (() => {
+    if (!tourTrip) return null;
+    const stops = (tourTrip.stops || []).filter(hasCoords);
+    const main = hasCoords(tourTrip.primaryStop) ? tourTrip.primaryStop : stops[0];
+    if (tripPhase(tourTrip) !== 'ongoing' || stops.length === 0) return main;
+    if (!exploring && nearbyCoords) {
+      const here = { latitude: nearbyCoords.lat, longitude: nearbyCoords.lng };
+      const near = stops
+        .map((st) => ({ st, km: distanceKm(here, st) }))
+        .filter((x) => x.km != null && x.km <= TOURS_NEAR_STOP_KM)
+        .sort((a, b) => a.km - b.km)[0];
+      if (near) return near.st;
+    }
+    if (stops.some((st) => st.startDate)) return stopForDay(todayDay(), stops) || main;
+    return main;
+  })();
+  const tourOngoing = !!tourTrip && tripPhase(tourTrip) === 'ongoing';
+  const tourStopName = tourStop?.name || tourTrip?.primaryDestination || null;
+  const toursSource = tourStop
+    ? { kind: 'destination', name: tourStopName || '', lat: tourStop.latitude, lng: tourStop.longitude }
+    : nearbyCoords
+      ? { kind: 'destination', name: exploring ? exploring.name : (nearbyLabel || ''), lat: nearbyCoords.lat, lng: nearbyCoords.lng }
+      : null;
+  const toursTitle = (r) => {
+    if (tourStop) {
+      if (tourOngoing) return `Things to do today in ${tourStopName || r.areaName || 'your trip'}`;
+      return `Things to book for your ${tourStopName || 'next'} trip`;
+    }
+    const area = r.areaName || (exploring ? exploring.name : nearbyLabel);
+    return area ? `Things to do in ${area}` : 'Things to do near you';
+  };
+  // The row itself: placed under the trip card for a trip, else under "Near you".
+  const toursRow = toursSource ? (
+    <BookableActivities
+      variant="plain"
+      inset={SIZES.spacing_lg}
+      style={styles.section}
+      titleStyle={styles.toursTitle}
+      source={toursSource}
+      title={toursTitle}
+    />
+  ) : null;
+
   // Its second line: dates, who's going, what's saved.
   const tripDetails = headlineTrip ? [
     formatDateRange(headlineTrip.startDate, headlineTrip.endDate),
@@ -1313,6 +1384,9 @@ export default function ExploreScreen({ route, navigation }) {
         )}
 
 
+        {/* Tours and tickets for your upcoming / ongoing trip, right under its card. */}
+        {!!tourStop && toursRow}
+
         {/* From the community: real travellers' stories, early on the page. */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -1331,6 +1405,9 @@ export default function ExploreScreen({ route, navigation }) {
           </View>
           <CommunityHighlights journals={journals} loading={journalsLoading} navigation={navigation} />
         </View>
+
+        {/* Tours and tickets nearby (Viator), when there's no trip coming up. */}
+        {!tourStop && toursRow}
 
         {/* Near You */}
         <View style={styles.section}>
@@ -2218,6 +2295,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: SIZES.spacing_lg,
+    marginBottom: SIZES.spacing_base,
+  },
+  // Same look as sectionTitle (the row adds its own side padding).
+  toursTitle: {
+    fontSize: SIZES.lg + 1,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
     marginBottom: SIZES.spacing_base,
   },
   sectionTitle: {

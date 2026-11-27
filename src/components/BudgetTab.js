@@ -9,12 +9,12 @@ import {
   Modal,
   Pressable,
   KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ArrivalGlow, useLiveArrivals } from './Motion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
+import { formatMoney } from '../utils/money';
 import {
   getExpenses,
   createExpense,
@@ -36,12 +36,6 @@ const CATEGORY_BY_KEY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key,
 /** Same currency list as the website. */
 const CURRENCIES = ['₹', '$', '€', '£', '¥', 'A$', 'S$', 'AED', 'THB฿'];
 
-/** Symbols that read better with a space before the number ("AED 1,200"). */
-function formatMoney(amount, currency) {
-  const n = Math.round(Number(amount) || 0).toLocaleString();
-  const cur = currency || '₹';
-  return /^[A-Z]{2,}/.test(cur) ? `${cur} ${n}` : `${cur}${n}`;
-}
 
 function dayHeading(iso) {
   const day = isoToDay(iso);
@@ -520,9 +514,6 @@ const styles = StyleSheet.create({
     fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.primary,
-  },
-  loader: {
-    marginVertical: SIZES.spacing_lg,
   },
   errorBox: {
     flexDirection: 'row',

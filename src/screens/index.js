@@ -6,6 +6,7 @@ export { default as CommunityScreen } from './CommunityScreen';
 export { default as DestinationDetailScreen } from './DestinationDetailScreen';
 export { default as CategoryResultsScreen } from './CategoryResultsScreen';
 export { default as PlaceDetailScreen } from './PlaceDetailScreen';
+export { default as ActivityDetailScreen } from './ActivityDetailScreen';
 export { default as LoginScreen } from './LoginScreen';
 export { default as SignUpScreen } from './SignUpScreen';
 export { default as CreateTripScreen } from './CreateTripScreen';

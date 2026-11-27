@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Pressable } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -9,6 +10,7 @@ import Animated, {
   withDelay,
   Easing,
   useReducedMotion,
+  cubicBezier,
 } from 'react-native-reanimated';
 
 /*
@@ -156,4 +158,56 @@ const styles = StyleSheet.create({
     right: -8,
     borderRadius: 12,
   },
+});
+
+/**
+ * Press feedback for anything tappable: the content dips to `scale` the
+ * moment a finger lands (120ms, strong ease-out) and comes back on release,
+ * so a tap reads as physical before the screen changes. A CSS transition on
+ * the UI thread; React only renders on press in / out. With reduced motion
+ * it dims a little instead of shrinking.
+ *
+ * Takes Pressable's props (onPress, onLongPress, accessibility...). `style`
+ * goes on the moving view, so backgrounds and radii shrink with it;
+ * `containerStyle` on the Pressable (e.g. flex: 1 in a row). `haptic` adds a
+ * light selection tick on press.
+ */
+export function PressScale({ children, style, containerStyle, scale = 0.97, haptic = false, onPress, onPressIn, onPressOut, ...rest }) {
+  const reduceMotion = useReducedMotion();
+  const [pressed, setPressed] = useState(false);
+  return (
+    <Pressable
+      {...rest}
+      style={containerStyle}
+      onPress={(e) => {
+        if (haptic) Haptics.selectionAsync().catch(() => {});
+        onPress?.(e);
+      }}
+      onPressIn={(e) => { setPressed(true); onPressIn?.(e); }}
+      onPressOut={(e) => { setPressed(false); onPressOut?.(e); }}
+      pressRetentionOffset={16}
+    >
+      <Animated.View
+        style={[
+          style,
+          pressStyles.base,
+          pressed && (reduceMotion ? pressStyles.dim : { transform: [{ scale }] }),
+        ]}
+      >
+        {children}
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+const pressStyles = StyleSheet.create({
+  base: {
+    transform: [{ scale: 1 }],
+    opacity: 1,
+    transitionProperty: ['transform', 'opacity'],
+    transitionDuration: '120ms',
+    // A string 'cubic-bezier(...)' isn't accepted here; it must be built.
+    transitionTimingFunction: cubicBezier(0.23, 1, 0.32, 1),
+  },
+  dim: { opacity: 0.75 },
 });

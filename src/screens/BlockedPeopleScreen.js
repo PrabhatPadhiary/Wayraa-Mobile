@@ -5,7 +5,7 @@ import { Image } from 'expo-image';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { ScreenHeader } from '../components';
-import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { getBlockedUsers, unblockUser } from '../services';
 import { showAlert } from '../components/AppDialog';
 import { RowListSkeleton } from '../components/skeletons';

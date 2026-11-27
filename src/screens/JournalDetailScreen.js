@@ -20,7 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { fallbackGradientFor } from '../components/PlaceTile';
-import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { timeAgo, tripWhen } from '../components/JournalCard';
 import PhotoViewer from '../components/PhotoViewer';
 import {
@@ -28,6 +28,7 @@ import {
   toggleLike,
   useLikeState,
   addJournalComment,
+  updateJournalComment,
   deleteJournalComment,
   getStoredUser,
   vibeLabel,
@@ -91,6 +92,8 @@ export default function JournalDetailScreen({ navigation, route }) {
   const likes = useLikeState(journal);
   // Replying: { threadId, name } (the top-level comment it goes under).
   const [replyTo, setReplyTo] = useState(null);
+  // Editing one of your comments / replies: { id, original } (the box holds the new text).
+  const [editing, setEditing] = useState(null);
   const [openThreads, setOpenThreads] = useState(() => new Set());
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
@@ -179,6 +182,10 @@ export default function JournalDetailScreen({ navigation, route }) {
   const postComment = async () => {
     const body = comment.trim();
     if (!body || posting) return;
+    if (editing) {
+      saveEdit(body);
+      return;
+    }
     setPosting(true);
     const threadId = replyTo?.threadId || null;
     try {
@@ -206,6 +213,62 @@ export default function JournalDetailScreen({ navigation, route }) {
     }
   };
 
+  // Save an edit to one of your comments / replies.
+  const saveEdit = async (body) => {
+    const { id } = editing;
+    if (body === editing.original.trim()) {
+      cancelEdit();
+      return;
+    }
+    setPosting(true);
+    try {
+      const saved = await updateJournalComment(journal.id, id, body);
+      setJournal((j) => ({
+        ...j,
+        comments: (j.comments || []).map((x) => (x.id === id
+          ? { ...x, body: saved?.body ?? body, updatedAt: saved?.updatedAt ?? new Date().toISOString() }
+          : x)),
+      }));
+      setEditing(null);
+      setComment('');
+      Keyboard.dismiss();
+    } catch (e) {
+      if (e instanceof AuthRequiredError) askToSignIn('edit comments');
+      else {
+        showAlert('Couldn\'t save', e?.message || 'Please try again.');
+        if (/deleted/i.test(e?.message || '')) {
+          cancelEdit();
+          load();
+        }
+      }
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  // "Edit" on your own comment: its text goes into the box below.
+  const startEdit = (c) => {
+    setReplyTo(null);
+    setEditing({ id: c.id, original: c.body || '' });
+    setComment(c.body || '');
+    if (c.parentCommentId) setOpenThreads((open) => new Set(open).add(c.parentCommentId));
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setComment('');
+  };
+
+  // ⋯ on your own comment: edit or delete it.
+  const openMyCommentMenu = (c) => {
+    showAlert(c.parentCommentId ? 'Your reply' : 'Your comment', undefined, [
+      { text: 'Edit', icon: 'create-outline', onPress: () => startEdit(c) },
+      { text: 'Delete', style: 'destructive', icon: 'trash-outline', onPress: () => removeComment(c) },
+      { text: 'Cancel', style: 'cancel' },
+    ], { sheet: true });
+  };
+
   // "Reply" under a comment. A reply to a reply goes in the same thread and
   // starts with @Name, so it's clear who it answers.
   const startReply = (c) => {
@@ -213,12 +276,18 @@ export default function JournalDetailScreen({ navigation, route }) {
       askToSignIn('reply');
       return;
     }
+    // Was editing: drop that, the box is for the reply now.
+    if (editing) {
+      setEditing(null);
+      setComment('');
+    }
     const name = c.author?.name || 'Traveller';
     const threadId = c.parentCommentId || c.id;
     setReplyTo({ threadId, name });
     setOpenThreads((open) => new Set(open).add(threadId));
     const first = firstNameOf(name);
-    if (c.parentCommentId && c.author?.id !== myUserId && first && !comment.trim()) {
+    const draft = editing ? '' : comment;
+    if (c.parentCommentId && c.author?.id !== myUserId && first && !draft.trim()) {
       setComment(`@${first} `);
     }
     setTimeout(() => inputRef.current?.focus(), 50);
@@ -326,6 +395,11 @@ export default function JournalDetailScreen({ navigation, route }) {
               };
             });
             if (replyTo?.threadId === c.id) setReplyTo(null);
+            // Was editing it (or a reply under it): nothing left to edit.
+            if (editing) {
+              const edited = (journal.comments || []).find((x) => x.id === editing.id);
+              if (edited && (edited.id === c.id || edited.parentCommentId === c.id)) cancelEdit();
+            }
           } catch (e) {
             showAlert('Couldn\'t delete', e?.message || 'Please try again.');
           } finally {
@@ -446,13 +520,19 @@ export default function JournalDetailScreen({ navigation, route }) {
               >
                 {name}
               </Text>
-              <Text style={styles.commentTime}>{timeAgo(c.createdAt)}</Text>
+              <Text style={styles.commentTime} numberOfLines={1}>
+                {timeAgo(c.createdAt)}{c.updatedAt ? ' · edited' : ''}
+              </Text>
               {mine && (
                 deletingId === c.id ? (
                   <ActivityIndicator size="small" color={COLORS.error} />
                 ) : (
-                  <TouchableOpacity onPress={() => removeComment(c)} hitSlop={8} accessibilityLabel="Delete your comment">
-                    <Feather name="trash-2" size={14} color={COLORS.textMuted} />
+                  <TouchableOpacity
+                    onPress={() => openMyCommentMenu(c)}
+                    hitSlop={8}
+                    accessibilityLabel={c.parentCommentId ? 'Edit or delete your reply' : 'Edit or delete your comment'}
+                  >
+                    <Feather name="more-horizontal" size={15} color={COLORS.textMuted} />
                   </TouchableOpacity>
                 )
               )}
@@ -703,7 +783,18 @@ export default function JournalDetailScreen({ navigation, route }) {
               );
             })}
 
-            {replyTo && (
+            {editing && (
+              <View style={styles.replyingBar}>
+                <Feather name="edit-2" size={14} color={COLORS.textSecondary} />
+                <Text style={styles.replyingText} numberOfLines={1}>
+                  <Text style={styles.replyingName}>Editing</Text> your comment
+                </Text>
+                <TouchableOpacity onPress={cancelEdit} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cancel editing">
+                  <Feather name="x" size={16} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+            {replyTo && !editing && (
               <View style={styles.replyingBar}>
                 <Feather name="corner-down-right" size={14} color={COLORS.textSecondary} />
                 <Text style={styles.replyingText} numberOfLines={1}>
@@ -720,20 +811,22 @@ export default function JournalDetailScreen({ navigation, route }) {
                 style={styles.composerInput}
                 value={comment}
                 onChangeText={setComment}
-                placeholder={replyTo ? `Reply to ${firstNameOf(replyTo.name) || 'them'}…` : 'Add a comment…'}
+                placeholder={editing ? 'Edit your comment…' : replyTo ? `Reply to ${firstNameOf(replyTo.name) || 'them'}…` : 'Add a comment…'}
                 placeholderTextColor={COLORS.textMuted}
                 multiline
                 maxLength={MAX_COMMENT}
-                accessibilityLabel={replyTo ? `Reply to ${replyTo.name}` : 'Add a comment'}
+                accessibilityLabel={editing ? 'Edit your comment' : replyTo ? `Reply to ${replyTo.name}` : 'Add a comment'}
               />
               <TouchableOpacity
                 style={[styles.send, (!comment.trim() || posting) && styles.sendOff]}
                 onPress={postComment}
                 disabled={!comment.trim() || posting}
                 accessibilityRole="button"
-                accessibilityLabel={replyTo ? 'Post reply' : 'Post comment'}
+                accessibilityLabel={editing ? 'Save comment' : replyTo ? 'Post reply' : 'Post comment'}
               >
-                {posting ? <ActivityIndicator size="small" color={COLORS.white} /> : <Feather name="send" size={16} color={COLORS.white} />}
+                {posting
+                  ? <ActivityIndicator size="small" color={COLORS.white} />
+                  : <Feather name={editing ? 'check' : 'send'} size={16} color={COLORS.white} />}
               </TouchableOpacity>
             </View>
           </View>

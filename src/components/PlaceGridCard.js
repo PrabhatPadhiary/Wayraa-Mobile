@@ -18,6 +18,7 @@ import { PopOnTrue } from './Motion';
  * @param {number} [reviews]
  * @param {string} [subtitle]   address / country, up to two lines
  * @param {string} [distance]   e.g. "3.2 km away", shown with a pin
+ * @param {string} [kicker]     small label over the name, e.g. "Stay" in mixed search results
  * @param {React.ReactNode} [corner]  control over the photo's top-right
  *   (favourite heart, add-to-trip toggle)
  * @param {() => void} onPress
@@ -31,6 +32,7 @@ export default function PlaceGridCard({
   reviews,
   subtitle,
   distance,
+  kicker,
   corner,
   onPress,
   accessibilityLabel,
@@ -65,6 +67,7 @@ export default function PlaceGridCard({
         {corner}
       </View>
       <View style={styles.content}>
+        {!!kicker && <Text style={styles.kicker} numberOfLines={1}>{kicker}</Text>}
         <Text style={styles.name} numberOfLines={1}>{name}</Text>
         {!!subtitle && <Text style={styles.subtitle} numberOfLines={2}>{subtitle}</Text>}
         {!!distance && (
@@ -140,6 +143,14 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: SIZES.spacing_md,
+  },
+  kicker: {
+    fontSize: SIZES.xs,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 1,
   },
   name: {
     fontSize: SIZES.base,

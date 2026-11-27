@@ -13,10 +13,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { COLORS, SIZES } from '../constants';
 import { PALETTE } from '../constants/theme';
-import { avatarColorFor, initialsFor } from './TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { showAlert } from './AppDialog';
 import { getStoredUser } from '../services/authService';
-import { votePoll, unvotePoll, closePoll, deletePoll, linkPollToItinerary } from '../services/pollsService';
+import { castVote, closePoll, deletePoll, linkPollToItinerary } from '../services/pollsService';
 import { createItineraryItem } from '../services/itineraryService';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { normalizePhotoUrl } from '../utils/placePhotos';
@@ -68,34 +68,6 @@ export function pickFocusPoll(openPolls) {
   return [...openPolls].sort(newest)[0];
 }
 
-/** The poll as it looks after my vote moves to `optionId` (null: taken back). */
-function withMyVote(poll, optionId, me) {
-  const prev = poll.myOptionId;
-  if (prev === optionId) return poll;
-  const voter = me ? { id: me.id, name: me.name, photoUrl: me.photoUrl } : null;
-  const options = poll.options.map((o) => {
-    let { votes, voters } = o;
-    if (o.id === prev) {
-      votes -= 1;
-      voters = voters.filter((v) => v.id !== me?.id);
-    }
-    if (o.id === optionId) {
-      votes += 1;
-      voters = voter ? [...voters, voter] : voters;
-    }
-    return { ...o, votes, voters };
-  });
-  const totalVotes = poll.totalVotes + (prev ? 0 : 1) - (optionId ? 0 : 1);
-  const top = Math.max(0, ...options.map((o) => o.votes));
-  return {
-    ...poll,
-    options,
-    totalVotes,
-    myOptionId: optionId,
-    leadingOptionIds: top > 0 ? options.filter((o) => o.votes === top).map((o) => o.id) : [],
-  };
-}
-
 /**
  * One poll, as its own card. The header (question, where it stands, a Vote
  * or Closed badge) is always there; the options open and fold beneath it.
@@ -126,8 +98,6 @@ export default function PollCard({
   const [busy, setBusy] = useState(null); // null | 'close' | 'add'
   const meRef = useRef(null);
   useEffect(() => { getStoredUser().then((u) => { meRef.current = u; }).catch(() => {}); }, []);
-  // Votes go out one at a time; a fast second tap waits for the first.
-  const voting = useRef(Promise.resolve());
 
   // ── Open / fold ──────────────────────────────────────────────────────────
   const reduceMotion = useReducedMotion();
@@ -147,20 +117,18 @@ export default function PollCard({
   }));
   const collapsible = !!onToggle;
 
+  // The screen follows every tap at once; only your last choice is sent, a
+  // moment after you stop (see castVote), so the vote never flips back.
   const vote = (option) => {
     if (!poll.canVote) return;
     Haptics.selectionAsync().catch(() => {});
-    const next = poll.myOptionId === option.id ? null : option.id;
-    const before = poll;
-    onChange(withMyVote(poll, next, meRef.current));
-    voting.current = voting.current.then(async () => {
-      try {
-        const saved = next ? await votePoll(tripId, poll.id, next) : await unvotePoll(tripId, poll.id);
-        if (saved) onChange(saved);
-      } catch (e) {
-        onChange(before);
-        showAlert('Couldn\'t save your vote', e?.message || 'Please try again.');
-      }
+    castVote({
+      tripId,
+      poll,
+      optionId: poll.myOptionId === option.id ? null : option.id,
+      me: meRef.current,
+      onUpdate: onChange,
+      onError: (e) => showAlert('Couldn\'t save your vote', e?.message || 'Please try again.'),
     });
   };
 

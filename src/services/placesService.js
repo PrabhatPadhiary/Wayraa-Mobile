@@ -101,6 +101,39 @@ export function journalCategoryFor(types = []) {
   return 'other';
 }
 
+/**
+ * What kind of place it is, for search: 'stay' | 'food' | 'activity' | null.
+ * Same rule as the backend's category search: lodging is always a stay (a
+ * hotel with a restaurant isn't "food"); a plain shop is none of them.
+ */
+const FOOD_TYPES = ['restaurant', 'cafe', 'bar', 'bakery', 'food', 'meal_takeaway', 'meal_delivery'];
+const SHOP_TYPES = ['store', 'clothing_store', 'jewelry_store', 'shoe_store', 'electronics_store', 'furniture_store', 'home_goods_store', 'supermarket', 'convenience_store'];
+const ACTIVITY_TYPES = ['tourist_attraction', 'museum', 'park', 'natural_feature', 'amusement_park', 'zoo', 'aquarium',
+  'art_gallery', 'church', 'hindu_temple', 'mosque', 'synagogue', 'place_of_worship', 'stadium', 'night_club', 'shopping_mall'];
+export function placeKindFor(types = []) {
+  const has = (list) => list.some((t) => types.includes(t));
+  if (has(['lodging', 'campground', 'rv_park'])) return 'stay';
+  if (has(FOOD_TYPES)) return 'food';
+  if (has(ACTIVITY_TYPES)) return 'activity';
+  return null;
+}
+
+/**
+ * Whether a place belongs in a category's search ("restaurants" | "stays" |
+ * "activities"): matches the backend. Things to do = anything that isn't a
+ * stay, food or a plain shop (so places with only general types still show).
+ */
+export function inPlaceCategory(category, types = []) {
+  const kind = placeKindFor(types);
+  if (category === 'stays') return kind === 'stay';
+  if (category === 'restaurants') return kind === 'food';
+  if (category === 'activities') {
+    if (kind === 'stay' || kind === 'food') return false;
+    return kind === 'activity' || !SHOP_TYPES.some((t) => types.includes(t));
+  }
+  return true;
+}
+
 /** Build our backend photo-proxy URL for a Google photo_reference. */
 function proxyPhotoUrl(reference, maxWidth = 400) {
   return `${API_URL}/Destinations/photo?reference=${encodeURIComponent(reference)}&maxWidth=${maxWidth}`;
@@ -189,8 +222,11 @@ export async function getPlacesByCategory(placeId, category) {
  */
 export async function searchInDestination({ placeId, query, filter, category, page = 0 }) {
   const params = new URLSearchParams({ placeId, page: String(page) });
-  if (query) params.set('query', query);
-  else if (filter) params.set('filter', filter);
+  // A query with a category searches inside it ("See all food" → search).
+  if (query) {
+    params.set('query', query);
+    if (category) params.set('category', category);
+  } else if (filter) params.set('filter', filter);
   else if (category) params.set('category', category);
   const response = await fetch(`${API_URL}/Destinations/places/search?${params.toString()}`);
   if (!response.ok) throw new Error(`Couldn't load places (${response.status})`);

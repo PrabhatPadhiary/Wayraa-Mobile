@@ -11,6 +11,7 @@ import {
   DestinationDetailScreen,
   CategoryResultsScreen,
   PlaceDetailScreen,
+  ActivityDetailScreen,
   TripDetailScreen,
   JoinTripScreen,
   ProfileScreen,
@@ -52,6 +53,7 @@ function ExploreStack({ route }) {
       {/* Home's "Near you" → See all. */}
       <Stack.Screen name="NearbyPlaces" component={NearbyPlacesScreen} />
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      <Stack.Screen name="ActivityDetail" component={ActivityDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
       {/* A story's author: their public profile. */}
@@ -78,6 +80,7 @@ function MyTripsStack() {
       <Stack.Screen name="TripDetail" component={TripDetailScreen} />
       {/* Saved places on a trip open the shared place page from this stack. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      <Stack.Screen name="ActivityDetail" component={ActivityDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
       {/* A story's author: their public profile. */}
@@ -99,6 +102,7 @@ function FavoritesStack() {
       <Stack.Screen name="FavoritesHome" component={FavoritesScreen} />
       {/* Tapping a saved place opens its details. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      <Stack.Screen name="ActivityDetail" component={ActivityDetailScreen} />
       {/* Stories that tag a place open from its page. */}
       <Stack.Screen name="JournalDetail" component={JournalDetailScreen} />
       {/* A story's author: their public profile. */}
@@ -116,6 +120,7 @@ function CommunityStack() {
       <Stack.Screen name="UserProfile" component={UserProfileScreen} />
       {/* Places mentioned in a journal open the shared place page. */}
       <Stack.Screen name="PlaceDetail" component={PlaceDetailScreen} />
+      <Stack.Screen name="ActivityDetail" component={ActivityDetailScreen} />
     </Stack.Navigator>
   );
 }

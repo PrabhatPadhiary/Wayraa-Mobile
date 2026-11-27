@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import PlaceGridCard, { CardCornerButton } from '../components/PlaceGridCard';
 import { FilterChips, GridSkeleton } from '../components';
+import BookableActivities from '../components/BookableActivities';
 import FilterSheet from '../components/FilterSheet';
 import PickToggle from '../components/PickToggle';
 import { useBottomBar } from '../context/BottomBarContext';
@@ -114,6 +115,29 @@ export default function DestinationDetailScreen({ navigation, route }) {
 
   // ── "See all" and "Search in <destination>" (not while picking for a trip) ──
   const destinationName = name || details?.name || 'this place';
+  // Activities tab: bookable tours (Viator) above the places; Food tab: food
+  // tours, cooking classes and tastings. Not while picking places for a trip
+  // (that's about adding, not booking).
+  const destCoords = placeCoords(details);
+  const offersTheme = activeCategory === 'activities' ? 'all' : activeCategory === 'food' ? 'food' : null;
+  const activitiesHeader = offersTheme && !pickForTrip && destCoords ? (
+    <BookableActivities
+      key={offersTheme}
+      variant="plain"
+      inset={SIZES.spacing_base}
+      style={styles.activitiesOffers}
+      source={{
+        kind: 'destination',
+        name: name || details?.name,
+        lat: destCoords.lat,
+        lng: destCoords.lng,
+        theme: offersTheme === 'food' ? 'food' : undefined,
+      }}
+      title={(r) => (offersTheme === 'food'
+        ? `Food tours & cooking classes in ${r.areaName || destinationName}`
+        : `Top things to book in ${r.areaName || destinationName}`)}
+    />
+  ) : null;
   const categoryMeta = CATEGORIES.find((c) => c.key === activeCategory) || CATEGORIES[0];
   const openSearch = () => navigation.navigate('DestinationPlaces', {
     placeId,
@@ -505,7 +529,10 @@ export default function DestinationDetailScreen({ navigation, route }) {
             : [styles.listContent, { paddingTop: contentTop }]
         }
         ListEmptyComponent={renderListState}
-        ListFooterComponent={pickForTrip || activeResults.length === 0 ? null : (
+        ListHeaderComponent={activitiesHeader}
+        // "See all" also while adding to a trip stop: that list has the same
+        // add / added toggles and returns here with the picks in sync.
+        ListFooterComponent={activeResults.length === 0 ? null : (
           <TouchableOpacity
             style={styles.seeAll}
             onPress={openSeeAll}
@@ -590,7 +617,7 @@ export default function DestinationDetailScreen({ navigation, route }) {
               style={styles.searchIconButton}
               onPress={openSearch}
               accessibilityRole="button"
-              accessibilityLabel={`Search in ${destinationName}`}
+              accessibilityLabel={`Search anything in ${destinationName}`}
               accessibilityElementsHidden={!headerCollapsed}
               importantForAccessibility={headerCollapsed ? 'auto' : 'no-hide-descendants'}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
@@ -629,10 +656,10 @@ export default function DestinationDetailScreen({ navigation, route }) {
               onPress={openSearch}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel={`Search in ${destinationName}`}
+              accessibilityLabel={`Search anything in ${destinationName}`}
             >
               <Ionicons name="search" size={18} color={COLORS.textMuted} />
-              <Text style={styles.searchPillText} numberOfLines={1}>Search in {destinationName}</Text>
+              <Text style={styles.searchPillText} numberOfLines={1}>Search anything in {destinationName}</Text>
             </TouchableOpacity>
             {renderFiltersButton(44)}
           </View>
@@ -845,6 +872,11 @@ const styles = StyleSheet.create({
   },
   column: {
     gap: SIZES.spacing_base,
+  },
+  // Full width (the list has side padding): the tour row scrolls edge to edge.
+  activitiesOffers: {
+    marginHorizontal: -SIZES.spacing_base,
+    marginBottom: SIZES.spacing_lg,
   },
 
 

@@ -56,9 +56,7 @@ export default function NearbyPlaceCard({ place, onPress }) {
       )}
 
       {place.rating > 0 && (
-        <View style={styles.ratingPill}>
-          <RatingRow rating={place.rating} reviews={place.userRatingsTotal} tone="light" size={SIZES.xs + 1} />
-        </View>
+        <RatingRow rating={place.rating} reviews={place.userRatingsTotal} variant="soft" style={styles.ratingBadge} />
       )}
 
       <LinearGradient
@@ -91,17 +89,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  ratingPill: {
+  // The same white rating badge as the place cards ("4.6 ★ (2.3k)"), on the photo.
+  ratingBadge: {
     position: 'absolute',
     top: SIZES.spacing_sm,
     left: SIZES.spacing_sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: SIZES.spacing_sm,
-    paddingVertical: 3,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: COLORS.white,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
   },
   ratingText: {
     fontSize: SIZES.xs,

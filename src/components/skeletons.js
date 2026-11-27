@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { COLORS, SIZES, TRIP_HERO_HEIGHT } from '../constants';
 import Skeleton from './Skeleton';
-import { TRIP_CARD_HEIGHT, TRIP_CARD_OVERLAP } from './TripStackCard';
+import { PASS_HEIGHT } from './TripBoardingPass';
 
 /**
  * Ready-made loading placeholders shaped like the real content they stand in
@@ -74,17 +74,12 @@ export function JournalRowSkeleton({ count = 2 }) {
   );
 }
 
-/** My Trips: stacked photo cards, same size and overlap as TripStackCard. */
+/** My Trips: boarding passes, the same size and spacing as the real ones. */
 export function TripListSkeleton({ count = 3 }) {
   return (
     <Group label="Loading your trips" style={styles.list}>
       {Array.from({ length: count }, (_, i) => (
-        <View
-          key={i}
-          style={[styles.tripStackCard, i > 0 && { marginTop: -TRIP_CARD_OVERLAP }]}
-        >
-          <Skeleton width="100%" height={TRIP_CARD_HEIGHT} radius={28} />
-        </View>
+        <Skeleton key={i} width="100%" height={PASS_HEIGHT} radius={20} style={styles.passGap} />
       ))}
     </Group>
   );
@@ -185,13 +180,8 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: SIZES.spacing_base,
   },
-  // Each card gets a white edge so the overlapping placeholders stay
-  // distinguishable while pulsing.
-  tripStackCard: {
-    borderRadius: 28,
-    borderWidth: 2,
-    borderColor: COLORS.white,
-    backgroundColor: COLORS.white,
+  passGap: {
+    marginBottom: SIZES.spacing_md,
   },
 
   gridRow: {

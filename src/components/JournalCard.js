@@ -5,7 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { fallbackGradientFor } from './PlaceTile';
-import { avatarColorFor, initialsFor } from './TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { vibeLabel } from '../services/journalsService';
 import { useLikeState } from '../services/likesStore';
 import { dayCount } from '../utils/tripDates';

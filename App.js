@@ -20,6 +20,8 @@ import { hydrateCache } from './src/services/cache';
 import OfflineBanner from './src/components/OfflineBanner';
 import './src/config/offlineFetch';
 import { AppDialogHost } from './src/components/AppDialog';
+import { PassPrintHost } from './src/components/PassPrintOverlay';
+import { TicketRipHost } from './src/components/TicketRipOverlay';
 import { TipsHost } from './src/components/Tips';
 import WayraaLoader from './src/components/WayraaLoader';
 import { preloadPublic, preloadSignedIn, waitForHomePreload, restoreHomeSnapshot } from './src/services/homePreload';
@@ -295,6 +297,10 @@ export default function App() {
         <OfflineBanner />
         {/* One-time tips (useTip): a spotlight on a button, above the screens. */}
         <TipsHost />
+        {/* A new trip's boarding pass printing (showPassPrint), over the screens. */}
+        <PassPrintHost />
+        {/* A deleted trip's ticket ripping in half (ripTicket). */}
+        <TicketRipHost />
         {/* Wayraa's own alerts and menus (showAlert), above everything. */}
         <AppDialogHost />
       </BottomBarProvider>

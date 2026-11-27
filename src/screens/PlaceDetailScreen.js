@@ -21,6 +21,8 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { AddToTripSheet, PhotoViewer } from '../components';
 import PlaceStories from '../components/PlaceStories';
+import BookableActivities from '../components/BookableActivities';
+import { openOffer } from '../services/offersService';
 import RatingRow from '../components/RatingRow';
 import {
   getPlaceDetails,
@@ -357,6 +359,11 @@ export default function PlaceDetailScreen({ navigation, route }) {
   };
   const handleCall = () => { if (displayPhone) Linking.openURL(`tel:${displayPhone}`); };
   const handleWebsite = () => { if (displayWebsite) Linking.openURL(displayWebsite); };
+  // Their own booking: the website in the in-app browser, else a call.
+  const handleReserve = () => {
+    if (displayWebsite) openOffer(displayWebsite);
+    else handleCall();
+  };
   const handleShare = () => {
     const link = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(displayName)}&query_place_id=${encodeURIComponent(placeId)}`;
     Share.share(
@@ -556,6 +563,23 @@ export default function PlaceDetailScreen({ navigation, route }) {
                 </TouchableOpacity>
               )}
             </View>
+            {/* Takes reservations (Google): book on the restaurant's own site,
+                in the in-app browser, or call. */}
+            {details?.reservable === true && (!!displayWebsite || !!displayPhone) && (
+              <TouchableOpacity
+                style={styles.reserve}
+                onPress={handleReserve}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel={displayWebsite ? 'Reserve a table on their website' : 'Reserve a table by phone'}
+              >
+                <Feather name="calendar" size={16} color={COLORS.accentDeep} />
+                <Text style={styles.reserveText}>Reserve a table</Text>
+                <Text style={styles.reserveHow} numberOfLines={1}>
+                  {displayWebsite ? 'on their website' : 'by phone'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Stories from Wayraa travellers: ours, so it comes first. */}
@@ -565,6 +589,21 @@ export default function PlaceDetailScreen({ navigation, route }) {
             navigation={navigation}
             prefill={{ placeId, name: displayName, address: displayAddress, coords: displayCoords, category }}
           />
+
+          {/* Tours and tickets (Viator). Sights and activities fall back to the
+              area's top tours; for stays and food only tours of the place
+              itself are worth showing. Hidden when there are none. */}
+          {displayCoords && (
+            <BookableActivities
+              source={{
+                kind: 'place',
+                name: displayName,
+                lat: displayCoords.lat,
+                lng: displayCoords.lng,
+                exact: toTripCategory(category) === 'stay' || toTripCategory(category) === 'food',
+              }}
+            />
+          )}
 
           {/* Good to know: address, hours, phone, website, map */}
           <View style={styles.card}>
@@ -1026,6 +1065,28 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.primary,
+  },
+  reserve: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    height: 44,
+    marginTop: SIZES.spacing_sm,
+    borderRadius: SIZES.radius_full,
+    borderWidth: 1,
+    borderColor: '#F7DDD2',
+    backgroundColor: '#FDF1EC',
+  },
+  reserveText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.accentDeep,
+  },
+  reserveHow: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
   },
 
   // Good to know

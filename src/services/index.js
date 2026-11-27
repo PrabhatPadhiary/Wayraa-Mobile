@@ -11,6 +11,8 @@ export {
 export {
   searchPlaces,
   searchAnyPlace,
+  placeKindFor,
+  inPlaceCategory,
   isRegionResult,
   journalCategoryFor,
   searchRadiusFor,
@@ -39,6 +41,9 @@ export {
   peekMyTrips,
   peekTrip,
   forgetTrip,
+  duplicateTrip,
+  deleteTripInBackground,
+  onMyTripsChanged,
 } from './tripsService';
 export { getFavourites, peekFavourites, addFavourite, removeFavourite } from './favouritesService';
 export {
@@ -98,6 +103,7 @@ export {
   toggleJournalLike,
   likesAccountChanged,
   addJournalComment,
+  updateJournalComment,
   deleteJournalComment,
   createJournal,
   updateJournal,
@@ -125,3 +131,10 @@ export {
   peekTravellerProfile,
 } from './journalsService';
 export { toggleLike, setLiked, likeStateOf, useLikeState, useLikes } from './likesStore';
+export {
+  getDestinationActivities,
+  getPlaceActivities,
+  peekDestinationActivities,
+  peekPlaceActivities,
+  openOffer,
+} from './offersService';

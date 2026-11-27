@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SIZES } from '../constants';
 import Skeleton from './Skeleton';
 import { fallbackGradientFor } from './PlaceTile';
-import { avatarColorFor, initialsFor } from './TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { useLikes } from '../services/likesStore';
 

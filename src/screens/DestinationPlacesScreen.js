@@ -29,6 +29,8 @@ import {
   removeFavourite,
   getPlaceDetails,
   journalCategoryFor,
+  placeKindFor,
+  inPlaceCategory,
   AuthRequiredError,
   peekFavourites,
 } from '../services';
@@ -43,6 +45,9 @@ function tripCategoryFromTypes(types = []) {
   if (c === 'stay') return 'stay';
   return 'activity';
 }
+
+/** Labels on mixed search results. */
+const KIND_LABEL = { stay: 'Stay', food: 'Food', activity: 'Things to do' };
 
 const SEARCH_IDEAS = ['Rooftop bars', 'Breakfast', 'Street food', 'Bookstores', 'Parks', 'Live music'];
 // Live suggestions: wait this long after typing, show this many places.
@@ -93,6 +98,11 @@ export default function DestinationPlacesScreen({ navigation, route }) {
     city = null, // { name, lat, lng }: passed on so place pages show "km from centre"
   } = route.params || {};
   const isSearch = mode === 'search';
+  // "See all" (browse) has its own search, kept inside its category:
+  // "Search food in Goa" finds only food. The destination's own search
+  // (isSearch) looks for anything, with each result labelled.
+  const CATEGORY_NOUN = { restaurants: 'food', stays: 'stays', activities: 'things to do' };
+  const categoryNoun = CATEGORY_NOUN[apiCategory] || 'places';
 
   // ── Adding to a trip stop (pickForTrip) ──
   // placeId -> trip place id for the stop's saved places ('' = saved, id not
@@ -181,7 +191,9 @@ export default function DestinationPlacesScreen({ navigation, route }) {
 
   const criteria = isSearch
     ? (query ? { query } : null)
-    : (filter && filter !== 'All' ? { filter } : { category: apiCategory });
+    : query
+      ? { query, category: apiCategory } // searching inside "See all"
+      : (filter && filter !== 'All' ? { filter } : { category: apiCategory });
 
   const loadPage = useCallback(async (nextPage) => {
     if (!criteria || !placeId) return;
@@ -264,7 +276,9 @@ export default function DestinationPlacesScreen({ navigation, route }) {
       const near = coords ? { ...coords, radius: SUGGEST_RADIUS } : null;
       const found = await searchAnyPlace(q, { near });
       if (latestTyped.current !== q) return; // a newer search is on its way
-      setSuggestions(found.slice(0, MAX_SUGGESTIONS));
+      // In "See all", only suggest places of that category.
+      const fitting = isSearch ? found : found.filter((sg) => inPlaceCategory(apiCategory, sg.types || []));
+      setSuggestions(fitting.slice(0, MAX_SUGGESTIONS));
       setSuggesting(false);
     }, SUGGEST_DEBOUNCE_MS);
   };
@@ -322,6 +336,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
         rating={item.rating}
         reviews={item.userRatingsTotal}
         subtitle={item.vicinity}
+        kicker={isSearch ? KIND_LABEL[placeKindFor(item.types || [])] : undefined}
         accessibilityLabel={`${item.name}${item.rating ? `, rated ${item.rating}` : ''}`}
         onPress={() => navigation.navigate('PlaceDetail', {
           placeId: item.placeId,
@@ -366,7 +381,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
     if (!hasMore) {
       return (
         <Text style={styles.footerEnd}>
-          {isSearch
+          {isSearch || query
             ? `That's everything we found for "${query}" in ${destinationName}.`
             : `That's the top ${places.length}. Try a filter or search for something specific.`}
         </Text>
@@ -399,6 +414,25 @@ export default function DestinationPlacesScreen({ navigation, route }) {
           <Text style={styles.stateTitle}>Couldn't load places</Text>
           <TouchableOpacity style={styles.retry} onPress={() => loadPage(0)} accessibilityRole="button">
             <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    if (!isSearch && query) {
+      // Nothing of this category: offer the same search across everything.
+      return (
+        <View style={styles.state}>
+          <Feather name="search" size={36} color={COLORS.textMuted} />
+          <Text style={styles.stateTitle}>No {categoryNoun} match "{query}"</Text>
+          <Text style={styles.stateText}>It may be a different kind of place in {destinationName}.</Text>
+          <TouchableOpacity
+            style={styles.retry}
+            onPress={() => navigation.push('DestinationPlaces', {
+              placeId, destinationName, mode: 'search', query, coords, pickForTrip, createTrip, city,
+            })}
+            accessibilityRole="button"
+          >
+            <Text style={styles.retryText}>Search all of {destinationName}</Text>
           </TouchableOpacity>
         </View>
       );
@@ -438,12 +472,12 @@ export default function DestinationPlacesScreen({ navigation, route }) {
                 onChangeText={onType}
                 onFocus={() => setShowSuggestions(input.trim().length >= 2)}
                 onSubmitEditing={() => submitSearch()}
-                placeholder={`Search in ${destinationName}`}
+                placeholder={`Search anything in ${destinationName}`}
                 placeholderTextColor={COLORS.textMuted}
                 returnKeyType="search"
                 autoFocus={!startQuery}
                 autoCorrect={false}
-                accessibilityLabel={`Search in ${destinationName}`}
+                accessibilityLabel={`Search anything in ${destinationName}`}
               />
               {!!input && (
                 <TouchableOpacity onPress={() => onType('')} hitSlop={8} accessibilityLabel="Clear search">
@@ -467,7 +501,35 @@ export default function DestinationPlacesScreen({ navigation, route }) {
             </Text>
           </View>
         )}
-        {!isSearch && filters.length > 1 && (
+        {/* "See all": search inside this category. */}
+        {!isSearch && (
+          <View style={[styles.searchBox, styles.browseSearch]}>
+            <Feather name="search" size={17} color={COLORS.textMuted} />
+            <TextInput
+              ref={inputRef}
+              style={styles.searchInput}
+              value={input}
+              onChangeText={onType}
+              onFocus={() => setShowSuggestions(input.trim().length >= 2)}
+              onSubmitEditing={() => submitSearch()}
+              placeholder={`Search ${categoryNoun} in ${destinationName}`}
+              placeholderTextColor={COLORS.textMuted}
+              returnKeyType="search"
+              autoCorrect={false}
+              accessibilityLabel={`Search ${categoryNoun} in ${destinationName}`}
+            />
+            {!!input && (
+              <TouchableOpacity
+                onPress={() => { onType(''); setQuery(''); }}
+                hitSlop={8}
+                accessibilityLabel="Clear search"
+              >
+                <Feather name="x-circle" size={17} color={COLORS.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+        {!isSearch && !query && filters.length > 1 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
             {filters.map((f) => {
               const on = f === filter;
@@ -489,7 +551,7 @@ export default function DestinationPlacesScreen({ navigation, route }) {
 
       <View style={styles.body}>
       {/* Live suggestions, over the results while typing. */}
-      {isSearch && showSuggestions && (
+      {showSuggestions && (
         <View style={styles.suggestPanel}>
           <FlatList
             data={suggestions}
@@ -501,13 +563,17 @@ export default function DestinationPlacesScreen({ navigation, route }) {
                 onPress={() => submitSearch()}
                 activeOpacity={0.7}
                 accessibilityRole="button"
-                accessibilityLabel={`Search ${input.trim()} in ${destinationName}`}
+                accessibilityLabel={isSearch
+                  ? `Search ${input.trim()} in ${destinationName}`
+                  : `Search ${categoryNoun} for ${input.trim()}`}
               >
                 <View style={[styles.suggestIcon, styles.suggestIconSearch]}>
                   <Feather name="search" size={15} color={COLORS.white} />
                 </View>
                 <Text style={styles.suggestSearchText} numberOfLines={1}>
-                  Search "{input.trim()}" in {destinationName}
+                  {isSearch
+                    ? `Search "${input.trim()}" in ${destinationName}`
+                    : `Search ${categoryNoun} for "${input.trim()}"`}
                 </Text>
                 {suggesting && <ActivityIndicator size="small" color={COLORS.accent} />}
               </TouchableOpacity>
@@ -617,6 +683,11 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_400Regular',
     color: COLORS.textSecondary,
+  },
+  // The "See all" search box: its own row under the title.
+  browseSearch: {
+    flex: 0,
+    marginTop: SIZES.spacing_md,
   },
   searchBox: {
     flex: 1,

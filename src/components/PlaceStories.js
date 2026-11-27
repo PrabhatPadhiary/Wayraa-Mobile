@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { fallbackGradientFor } from './PlaceTile';
-import { avatarColorFor, initialsFor } from './TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { timeAgo } from './JournalCard';
 import { getJournalsForPlace } from '../services';
 import { useLikes } from '../services/likesStore';

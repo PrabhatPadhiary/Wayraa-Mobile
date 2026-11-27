@@ -8,7 +8,7 @@ import { COLORS, SIZES } from '../constants';
 import { EmptyState } from '../components';
 import { useStoryPlaces, TravelStyle, WhereBeen, StoryGrid, placeOf } from '../components/TravellerSections';
 import RankBadge from '../components/RankBadge';
-import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { showAlert } from '../components/AppDialog';
 import { GridSkeleton } from '../components/skeletons';
 import RefreshSpinner from '../components/RefreshSpinner';

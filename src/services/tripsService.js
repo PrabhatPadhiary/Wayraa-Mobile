@@ -43,7 +43,9 @@ async function fetchMyTrips() {
   }
 
   const data = await response.json();
-  const trips = Array.isArray(data) ? data : [];
+  // Trips being deleted in the background stay gone (the server may not
+  // have finished yet).
+  const trips = (Array.isArray(data) ? data : []).filter((t) => !pendingDeletes.has(t.id));
   // "Your trip starts tomorrow" reminders follow your trips (in the background).
   syncTripReminders(trips);
   return trips;
@@ -111,6 +113,40 @@ export async function createTrip(trip) {
     throw new Error(`Failed to create trip (${response.status})`);
   }
 
+  return response.json();
+}
+
+/**
+ * Copy a trip into a new one you own: stops, saved places, checklist (all
+ * unticked) and, with a start date, the itinerary moved to the new dates.
+ * Expenses and members aren't copied. Anyone on the trip can do this.
+ * Backend: POST /api/Trips/{id}/duplicate.
+ *
+ * @param {string} tripId
+ * @param {{ name?: string, startDate?: string|null }} options  startDate as
+ *   "YYYY-MM-DD"; leave it out for a copy with no dates (and no itinerary)
+ * @returns {Promise<{ id, name, startDate, endDate, status }>}
+ */
+export async function duplicateTrip(tripId, { name, startDate } = {}) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}/duplicate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ name: name || null, startDate: startDate || null }),
+  });
+
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 404) throw new Error('That trip no longer exists.');
+  if (response.status === 400) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || 'Please check the details and try again.');
+  }
+  if (!response.ok) throw new Error(`Couldn't copy the trip (${response.status})`);
   return response.json();
 }
 
@@ -387,6 +423,41 @@ export async function deleteTrip(tripId) {
   if (!response.ok) throw new Error(`Failed to delete the trip (${response.status})`);
   forgetTrip(tripId);
   return true;
+}
+
+// ── Instant delete ────────────────────────────────────────────────────────
+const pendingDeletes = new Set();
+const tripsListeners = new Set();
+
+/** Called when your trip list changes outside a fetch (an instant delete, or its undo). */
+export function onMyTripsChanged(fn) {
+  tripsListeners.add(fn);
+  return () => tripsListeners.delete(fn);
+}
+function emitTripsChanged() {
+  tripsListeners.forEach((fn) => { try { fn(); } catch { /* a listener's problem */ } });
+}
+
+/**
+ * Delete a trip without waiting: it leaves your list and caches at once
+ * (listeners are told), and the server delete runs in the background. If
+ * that fails the trip is put back and the promise rejects, so the caller
+ * can say so.
+ */
+export function deleteTripInBackground(tripId) {
+  const before = peekCache(CacheKeys.trips);
+  pendingDeletes.add(tripId);
+  forgetTrip(tripId);
+  emitTripsChanged();
+  return deleteTrip(tripId)
+    .catch((e) => {
+      if (Array.isArray(before)) setCache(CacheKeys.trips, before);
+      throw e;
+    })
+    .finally(() => {
+      pendingDeletes.delete(tripId);
+      emitTripsChanged();
+    });
 }
 
 /** A trip you deleted or left: out of the cached list and caches straight away. */

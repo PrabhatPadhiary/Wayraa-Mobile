@@ -1,62 +1,267 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   StatusBar,
   Animated,
+  Easing,
   FlatList,
   RefreshControl,
+  TextInput,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
-import { EmptyState, FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, TripStackCard, TripFan, TripListRow, EditTripSheet, SwipeableCard } from '../components';
-import { TRIP_CARD_HEIGHT } from '../components/TripStackCard';
-import { tripTiming } from '../components/TripListRow';
+import { EmptyState, FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, EditTripSheet } from '../components';
+import TripBoardingPass, { TEAR_FROM_RIGHT, placeName, placeCode, tripPhase } from '../components/TripBoardingPass';
+import TripSortSheet, { SORT_OPTIONS } from '../components/TripSortSheet';
+import FeaturedTripPass from '../components/FeaturedTripPass';
+import TripWalletStack from '../components/TripWalletStack';
+import { showPassPrint } from '../components/PassPrintOverlay';
+import { ripTicket, RIP_FALL_AT } from '../components/TicketRipOverlay';
+import DuplicateTripSheet from '../components/DuplicateTripSheet';
 import { confirmDeleteTrip, tripRole } from '../utils/tripActions';
-import { getMyTrips, peekMyTrips, getTripById, deleteTrip, getStoredUser, AuthRequiredError } from '../services';
+import { getMyTrips, peekMyTrips, getTripById, deleteTripInBackground, onMyTripsChanged, getStoredUser, AuthRequiredError } from '../services';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
-import { sortTripsForList } from '../utils/tripDates';
+import { sortTripsForList, dayCount } from '../utils/tripDates';
 import useAuth from '../hooks/useAuth';
 import { showAlert } from '../components/AppDialog';
 import UnfinishedTripCard from '../components/UnfinishedTripCard';
 import RefreshSpinner from '../components/RefreshSpinner';
 import { useOnReconnect, useRetryHint } from '../hooks/useNetwork';
 
+// Group-by and sort choices are remembered between visits.
+const ARRANGE_KEY = 'myTrips.arrange.v1';
+
 /**
- * Filter tabs. `match` maps a filter to the backend status values it includes.
- * `all` matches everything.
+ * The page's sections, top to bottom: trips under way, the ones coming up,
+ * drafts without dates, and finished trips as Memories. `subgroups` sections
+ * are split further by year or place.
  */
-const FILTERS = [
-  { key: 'all', label: 'All', match: null },
-  { key: 'planning', label: 'Soon', match: ['planning'] },
-  { key: 'in_progress', label: 'Live', match: ['in_progress'] },
-  { key: 'completed', label: 'Done', match: ['completed'] },
-  { key: 'draft', label: 'Draft', match: ['draft'] },
+const SECTIONS = [
+  { key: 'now', title: 'Happening now', icon: 'radio-button-on', color: '#3E8E63' },
+  { key: 'upcoming', title: 'Upcoming', icon: 'airplane', color: COLORS.accent, subgroups: true },
+  { key: 'draft', title: 'Drafts', note: 'Add dates to start planning', icon: 'create', color: COLORS.primaryLight },
+  { key: 'past', title: 'Memories', note: "Where you've been", icon: 'images', color: '#8A6F4E', subgroups: true },
 ];
 
+// Space kept under the list for the floating tab bar.
+const BOTTOM_INSET = 120;
+
+const time = (d) => {
+  const n = d ? new Date(d).getTime() : NaN;
+  return Number.isNaN(n) ? null : n;
+};
+
+/** Trips in the chosen order. */
+function sortTrips(list, sort) {
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+  const created = (t) => time(t.createdAt) || 0;
+  switch (sort) {
+    case 'newest':
+      // Undated drafts first (newest drafts on top), then latest start first.
+      return [...list].sort((a, b) => {
+        const sa = time(a.startDate);
+        const sb = time(b.startDate);
+        if (sa === null || sb === null) return (sa === null ? -1 : 0) - (sb === null ? -1 : 0) || created(b) - created(a);
+        return sb - sa;
+      });
+    case 'oldest':
+      return [...list].sort((a, b) => {
+        const sa = time(a.startDate);
+        const sb = time(b.startDate);
+        if (sa === null || sb === null) return (sa === null ? 1 : 0) - (sb === null ? 1 : 0) || created(a) - created(b);
+        return sa - sb;
+      });
+    case 'created':
+      return [...list].sort((a, b) => created(b) - created(a));
+    case 'name':
+      return [...list].sort(byName);
+    case 'upcoming':
+    default:
+      return sortTripsForList(list);
+  }
+}
+
+/** Which group a trip falls in: its start year, or its main place. */
+function groupOf(trip, group) {
+  if (group === 'place') {
+    const name = placeName(trip);
+    return name ? { key: name.toLowerCase(), label: name, code: placeCode(name) } : { key: '~none', label: 'No place yet', code: null };
+  }
+  const start = trip.startDate ? new Date(trip.startDate) : null;
+  if (!start || Number.isNaN(start.getTime())) return { key: '~none', label: 'No dates yet', code: null };
+  const year = String(start.getUTCFullYear());
+  return { key: year, label: year, code: year };
+}
+
 /**
- * Most trips the photo fan shows. Past this the fan gets long and each card
- * only shows a thin strip, so the rest are reached through "See all", which
- * switches to a compact list of every trip.
+ * Sorted trips split into groups. Groups come in the order their first trip
+ * appears, so they follow the sort; for A–Z, years go newest first and
+ * places alphabetically.
  */
-const FAN_LIMIT = 6;
+function groupTrips(sorted, group, sort) {
+  const map = new Map();
+  sorted.forEach((entry) => {
+    const g = groupOf(entry.trip, group);
+    if (!map.has(g.key)) map.set(g.key, { ...g, items: [] });
+    map.get(g.key).items.push(entry);
+  });
+  const groups = [...map.values()];
+  if (sort === 'name') {
+    groups.sort((a, b) => {
+      if (a.key === '~none' || b.key === '~none') return a.key === '~none' ? 1 : -1;
+      return group === 'year' ? b.key.localeCompare(a.key) : a.label.localeCompare(b.label);
+    });
+  }
+  return groups;
+}
 
-// Space kept under the fan for the floating tab bar.
-const FAN_BOTTOM_INSET = 120;
-
-// Stands in for the "+N more trips" card at the end of the fan.
-const MORE_TRIPS_ITEM = { id: '__more-trips__', isMoreCard: true };
+/** Does a trip match the search (name, places, stops, people)? */
+function matches(trip, q) {
+  if (!q) return true;
+  const hay = [
+    trip.name,
+    trip.primaryDestination,
+    trip.description,
+    ...(Array.isArray(trip.stops) ? trip.stops.map((s) => s?.name) : []),
+    ...(Array.isArray(trip.members) ? trip.members.map((m) => m?.name) : []),
+  ].filter(Boolean).join(' ').toLowerCase();
+  return q.split(/\s+/).every((word) => hay.includes(word));
+}
 
 /**
- * MyTripsScreen - lists the signed-in user's trips fetched from the backend.
+ * Group heading in the style of an airport departures board: the year (or
+ * place code) in split-flap tiles, then the name and how many trips.
+ */
+function DepartureHeader({ group }) {
+  const count = group.items.length;
+  const isPlace = group.code && group.code !== group.label;
+  return (
+    <View
+      style={styles.board}
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={`${group.label}, ${count} ${count === 1 ? 'trip' : 'trips'}`}
+    >
+      {group.code ? (
+        <View style={styles.flaps}>
+          {group.code.split('').map((ch, i) => (
+            <View key={i} style={styles.flap}>
+              <Text style={styles.flapText}>{ch}</Text>
+              <View style={styles.flapSeam} />
+            </View>
+          ))}
+        </View>
+      ) : (
+        <View style={[styles.flap, styles.flapIcon]}>
+          <Ionicons name={group.key === '~none' && group.label.includes('dates') ? 'calendar-outline' : 'help'} size={14} color={COLORS.white} />
+          <View style={styles.flapSeam} />
+        </View>
+      )}
+      {(isPlace || !group.code) && <Text style={styles.boardLabel} numberOfLines={1}>{group.label}</Text>}
+      <View style={styles.boardRule} />
+      <Text style={styles.boardCount}>{count} {count === 1 ? 'trip' : 'trips'}</Text>
+    </View>
+  );
+}
+
+// The gap a ripping ticket leaves: holds while it tears, then closes.
+const GAP_CLOSE_DELAY = RIP_FALL_AT + 120;
+const GAP_CLOSE_MS = 380;
+
+/**
+ * The space a deleted trip leaves while its ticket rips (the ripping copy is
+ * drawn over it): it holds still while the ticket tears, then closes as the
+ * halves fall. Only this one row changes height. Purely visual: the delete
+ * itself runs on its own timer (see confirmDelete), so a recycled row can't
+ * stop it.
+ */
+function ClosingGap({ height }) {
+  const h = useRef(new Animated.Value(height)).current;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(GAP_CLOSE_DELAY),
+      Animated.timing(h, { toValue: 0, duration: GAP_CLOSE_MS, easing: Easing.bezier(0.77, 0, 0.175, 1), useNativeDriver: false }),
+    ]).start();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return <Animated.View style={{ height: h }} />;
+}
+
+/** A section's title row: icon, title, count, and a short note. */
+function SectionHeader({ section, first }) {
+  return (
+    <View
+      style={[styles.section, !first && styles.sectionSpaced]}
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={`${section.title}, ${section.count} ${section.count === 1 ? 'trip' : 'trips'}`}
+    >
+      <View style={[styles.sectionIcon, { backgroundColor: `${section.color}1F` }]}>
+        <Ionicons name={section.icon} size={15} color={section.color} />
+      </View>
+      <View style={styles.sectionText}>
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+        {!!section.note && <Text style={styles.sectionNote}>{section.note}</Text>}
+      </View>
+      <View style={styles.sectionCount}>
+        <Text style={styles.sectionCountText}>{section.count}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Totals over your past trips: trips, distinct places, days away. */
+function memoryStats(items) {
+  const places = new Set();
+  let days = 0;
+  items.forEach(({ trip }) => {
+    const stops = Array.isArray(trip.stops) ? trip.stops.map((st) => st?.name) : [];
+    (stops.length ? stops : [placeName(trip)]).forEach((n) => {
+      const key = (n || '').split(',')[0].trim().toLowerCase();
+      if (key) places.add(key);
+    });
+    days += dayCount(trip.startDate, trip.endDate) || 0;
+  });
+  return [
+    { key: 'trips', value: items.length, label: items.length === 1 ? 'trip' : 'trips' },
+    { key: 'places', value: places.size, label: places.size === 1 ? 'place' : 'places' },
+    { key: 'days', value: days, label: days === 1 ? 'day away' : 'days away' },
+  ];
+}
+
+/** A strip of totals under the Memories heading. */
+function MemoryStats({ items }) {
+  const stats = memoryStats(items);
+  return (
+    <View
+      style={styles.stats}
+      accessible
+      accessibilityLabel={stats.map((st) => `${st.value} ${st.label}`).join(', ')}
+    >
+      {stats.map((st, i) => (
+        <React.Fragment key={st.key}>
+          {i > 0 && <View style={styles.statDivider} />}
+          <View style={styles.stat}>
+            <Text style={styles.statValue}>{st.value}</Text>
+            <Text style={styles.statLabel}>{st.label}</Text>
+          </View>
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * MyTripsScreen: the signed-in user's trips as boarding passes, grouped by
+ * year or place, with search, a Mine / Joined switch, sort options, and
+ * clear Join and New trip buttons in the header.
  */
 export default function MyTripsScreen({ navigation }) {
   // The tab bar hides while you scroll down and comes back when you scroll up (like Home).
@@ -68,68 +273,107 @@ export default function MyTripsScreen({ navigation }) {
   const [loading, setLoading] = useState(() => !peekMyTrips());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
   // Swipe actions: full trip being edited (the sheet needs its stops), the
   // card currently swiped open, and the signed-in user (for owner checks on
   // older backends that don't send myRole).
   const [editingTrip, setEditingTrip] = useState(null);
-  const [openSwipeId, setOpenSwipeId] = useState(null);
+  // Trip being copied ("Use this plan again").
+  const [duplicating, setDuplicating] = useState(null);
   const [myUserId, setMyUserId] = useState(null);
   useEffect(() => {
     getStoredUser().then((u) => setMyUserId(u?.id || null)).catch(() => {});
   }, []);
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [activeFilter, setActiveFilter] = useState('all');
-  // true = compact list of every trip instead of the photo fan.
-  const [showAll, setShowAll] = useState(false);
+
+  // Finding and arranging.
+  const [query, setQuery] = useState('');
+  const [segment, setSegment] = useState('all'); // all | mine | joined
+  const [group, setGroup] = useState('year'); // year | place
+  const [sort, setSort] = useState('upcoming');
+  const [arrangeOpen, setArrangeOpen] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem(ARRANGE_KEY)
+      .then((raw) => {
+        const saved = raw ? JSON.parse(raw) : null;
+        if (saved?.group === 'year' || saved?.group === 'place') setGroup(saved.group);
+        if (SORT_OPTIONS.some((o) => o.key === saved?.sort)) setSort(saved.sort);
+      })
+      .catch(() => {});
+  }, []);
+  const saveArrange = (next) => {
+    AsyncStorage.setItem(ARRANGE_KEY, JSON.stringify({ group, sort, ...next })).catch(() => {});
+  };
+
   const [headerHeight, setHeaderHeight] = useState(0);
   // "Finish planning" card under the header: its height pushes the list down.
   const [draftHeight, setDraftHeight] = useState(0);
   const topInset = headerHeight + (draftHeight ? draftHeight + SIZES.spacing_md : 0);
   const listOpacity = useRef(new Animated.Value(1)).current;
+  const listRef = useRef(null);
 
-  // Change filter with a quick cross-fade of the list content.
-  const changeFilter = (key) => {
-    if (key === activeFilter) return;
-    Animated.timing(listOpacity, {
-      toValue: 0,
-      duration: 120,
-      useNativeDriver: true,
-    }).start(() => {
-      setActiveFilter(key);
-      setShowAll(false);
-      Animated.timing(listOpacity, {
-        toValue: 1,
-        duration: 180,
-        useNativeDriver: true,
-      }).start();
-    });
-  };
-
-  // Trips visible under the current filter, most relevant first: ongoing,
-  // upcoming, drafts, then completed.
-  const visibleTrips = (() => {
-    const filter = FILTERS.find((f) => f.key === activeFilter);
-    const matching = !filter || !filter.match
-      ? trips
-      : trips.filter((t) => filter.match.includes((t.status || '').toLowerCase()));
-    return sortTripsForList(matching);
-  })();
-  const fanTrips = visibleTrips.slice(0, FAN_LIMIT);
-  const hiddenCount = visibleTrips.length - fanTrips.length;
-  // The list view only makes sense while there are more trips than the fan shows.
-  const listMode = showAll && hiddenCount > 0;
-
-  // Switch between the fan and the full list with the same cross-fade as filters.
-  const toggleShowAll = (next) => {
-    setOpenSwipeId(null);
-    Animated.timing(listOpacity, { toValue: 0, duration: 120, useNativeDriver: true }).start(() => {
-      setShowAll(next);
+  // Apply a change with a quick cross-fade of the list, back at the top.
+  const fadeTo = (apply) => {
+    Animated.timing(listOpacity, { toValue: 0, duration: 110, useNativeDriver: true }).start(() => {
+      apply();
+      listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
       Animated.timing(listOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     });
   };
+  const changeSegment = (key) => { if (key !== segment) fadeTo(() => setSegment(key)); };
+  const changeGroup = (key) => { if (key !== group) { saveArrange({ group: key }); fadeTo(() => setGroup(key)); } };
+  const changeSort = (key) => { if (key !== sort) { saveArrange({ sort: key }); fadeTo(() => setSort(key)); } };
 
-  // Resolve fresh cover photos (from placeId) for trips, in parallel,
-  // updating state as they arrive. Clears any prior broken flags.
+  // Each trip with whether it's yours, and who hosts it when it isn't.
+  const entries = useMemo(() => trips.map((trip) => {
+    const isOwner = tripRole(trip, myUserId) === 'owner';
+    const host = !isOwner && Array.isArray(trip.members)
+      ? trip.members.find((m) => m.userId !== myUserId)?.name || null
+      : null;
+    return { trip, isOwner, host };
+  }), [trips, myUserId]);
+  const mineCount = entries.filter((e) => e.isOwner).length;
+  const joinedCount = entries.length - mineCount;
+
+  const q = query.trim().toLowerCase();
+  // Trips split by where they stand (see SECTIONS), each sorted, and
+  // Upcoming / Memories further split by year or place.
+  const arranged = useMemo(() => {
+    const inSegment = entries.filter((e) => (segment === 'mine' ? e.isOwner : segment === 'joined' ? !e.isOwner : true));
+    const found = inSegment.filter((e) => matches(e.trip, q));
+    const byTrip = new Map(found.map((e) => [e.trip, e]));
+    // Featured at the top (not while searching): every trip you're on, in a
+    // wallet stack when there's more than one; else the next trip. They're
+    // left out of their section below.
+    const inPhase = (phase) => sortTripsForList(found.filter((e) => tripPhase(e.trip) === phase).map((e) => e.trip));
+    const live = inPhase('now');
+    const featuredTrips = q ? [] : live.length ? live : inPhase('upcoming').slice(0, 1);
+    const isFeatured = new Set(featuredTrips);
+    const list = SECTIONS.map((sec) => {
+      const order = sortTrips(found.filter((e) => !isFeatured.has(e.trip) && tripPhase(e.trip) === sec.key).map((e) => e.trip), sort)
+        .map((t) => byTrip.get(t));
+      const groups = sec.subgroups ? groupTrips(order, group, sort) : [{ key: 'all', items: order }];
+      // Sub-headings only help when there's more than one, or for places.
+      const showGroups = sec.subgroups && (groups.length > 1 || group === 'place');
+      return { ...sec, count: order.length, items: order, groups, showGroups };
+    }).filter((sec) => sec.count > 0);
+    return { featured: featuredTrips.map((t) => byTrip.get(t)), sections: list };
+  }, [entries, segment, q, sort, group]);
+  const { featured, sections } = arranged;
+  const shownCount = sections.reduce((n, sec) => n + sec.count, 0) + featured.length;
+  const rows = [
+    ...(featured.length > 1
+      ? [{ type: 'wallet', id: 'wallet', entries: featured }]
+      : featured.map((e) => ({ type: 'featured', id: `f-${e.trip.id}`, entry: e }))),
+    ...sections.flatMap((sec, i) => [
+    { type: 'section', id: `s-${sec.key}`, section: sec, first: i === 0 },
+    ...(sec.key === 'past' ? [{ type: 'stats', id: 'memory-stats', items: sec.items }] : []),
+    ...sec.groups.flatMap((g) => [
+      ...(sec.showGroups ? [{ type: 'header', id: `h-${sec.key}-${g.key}`, group: g }] : []),
+      ...g.items.map((e) => ({ type: 'trip', id: String(e.trip.id), entry: e })),
+    ]),
+    ]),
+  ];
+
   const loadTrips = useCallback(async () => {
     setError(false);
     setNeedsAuth(false);
@@ -164,7 +408,7 @@ export default function MyTripsScreen({ navigation }) {
     }, [loadTrips, isAuthReady, isAuthenticated])
   );
 
-  // Swipe-left actions (owners only).
+  // Owner actions (swipe left, long press, or screen reader actions).
   const editTrip = async (item) => {
     try {
       setEditingTrip(await getTripById(item.id));
@@ -173,55 +417,107 @@ export default function MyTripsScreen({ navigation }) {
     }
   };
 
-  const removeTrip = (item) => confirmDeleteTrip(item.name, async () => {
-    try {
-      await deleteTrip(item.id);
-      const left = trips.filter((t) => t.id !== item.id);
-      setTrips(left);
-      // That was the only trip: back to Home.
-      if (left.length === 0) navigation.getParent()?.navigate('Explore');
-    } catch (e) {
-      showAlert('Could not delete trip', e?.message || 'Please try again.');
-    }
+  // Deleting is instant: the pass goes now, the server catches up in the
+  // background (and if it fails, the trip comes back with a note).
+  const passRefs = useRef({});
+  const removeTrip = (item) => confirmDelete(item);
+  // Trips whose ticket is ripping: their row is an empty space (the ripping
+  // copy is drawn over it) that closes once the halves start to fall.
+  const [ripping, setRipping] = useState({}); // id -> row height
+  const finishDelete = (item) => {
+    setRipping((cur) => {
+      const next = { ...cur };
+      delete next[item.id];
+      return next;
+    });
+    const left = (peekMyTrips() || trips).filter((t) => t.id !== item.id);
+    setTrips((cur) => cur.filter((t) => t.id !== item.id));
+    deleteTripInBackground(item.id).catch((e) => {
+      showAlert(`Could not delete "${item.name}"`, e?.message || 'It\'s back in your trips. Please try again.');
+    });
+    // That was the only trip: back to Home.
+    if (left.length === 0) navigation.getParent()?.navigate('Explore');
+  };
+  const confirmDelete = (item) => confirmDeleteTrip(item.name, () => {
+    // Rip its ticket in half: a copy takes the pass's place on screen and
+    // tears; the row's space closes as the halves fall, then it's deleted.
+    const entry = entries.find((e) => e.trip.id === item.id);
+    const view = passRefs.current[item.id];
+    if (!view?.measureInWindow) { finishDelete(item); return; }
+    view.measureInWindow((x, y, width, height) => {
+      if (!width) { finishDelete(item); return; }
+      ripTicket({
+        rect: { x, y, width, height },
+        splitFromRight: TEAR_FROM_RIGHT,
+        content: (
+          <TripBoardingPass
+            trip={item}
+            imageUri={coverFor(item, 300)}
+            isOwner={entry?.isOwner ?? true}
+            hostName={entry?.host}
+            showYear={group !== 'year'}
+          />
+        ),
+      });
+      setRipping((cur) => ({ ...cur, [item.id]: height }));
+      setTimeout(() => finishDelete(item), GAP_CLOSE_DELAY + GAP_CLOSE_MS + 20);
+    });
   });
+  // The list changed elsewhere (deleted from the trip page, or put back).
+  useEffect(() => onMyTripsChanged(() => {
+    const cached = peekMyTrips();
+    if (Array.isArray(cached)) setTrips(cached);
+  }), []);
 
   const onRefresh = () => {
     setRefreshing(true);
     loadTrips();
   };
 
-  // Renders a trip as a fan card or, with `compact`, as a list row. Both get
-  // the same swipe actions (owners only) and open the trip on tap.
-  const renderTrip = (item, { compact = false } = {}) => {
-    // Cover comes straight from the destination's place id (the backend keeps
-    // it fresh). Falls back to the first saved place, then the stored cover.
-    const coverPlaceId = item.primaryPlaceId || (Array.isArray(item.placeIds) ? item.placeIds[0] : null);
-    const photoWidth = compact ? 200 : 800;
-    const coverUri = placePhotoUrl(coverPlaceId, photoWidth) || normalizePhotoUrl(item.coverPhotoUrl, photoWidth);
-    const isOwner = tripRole(item, myUserId) === 'owner';
-    const Card = compact ? TripListRow : TripStackCard;
+  // Cover comes straight from the destination's place id (the backend keeps
+  // it fresh). Falls back to the first saved place, then the stored cover.
+  const coverFor = (trip, width) => {
+    const coverPlaceId = trip.primaryPlaceId || (Array.isArray(trip.placeIds) ? trip.placeIds[0] : null);
+    return placePhotoUrl(coverPlaceId, width) || normalizePhotoUrl(trip.coverPhotoUrl, width);
+  };
+  const openTrip = (trip, initialTab) => navigation.navigate('TripDetail', {
+    tripId: trip.id,
+    tripName: trip.name,
+    ...(initialTab ? { initialTab } : {}),
+  });
+
+  // Long press: copy the plan (anyone on the trip), and edit / delete for owners.
+  const showPassMenu = (trip, isOwner) => showAlert(trip.name, undefined, [
+    { text: 'Use this plan again', icon: 'copy-outline', onPress: () => setDuplicating(trip) },
+    ...(isOwner ? [
+      { text: 'Edit trip', onPress: () => editTrip(trip) },
+      { text: 'Delete trip', style: 'destructive', onPress: () => removeTrip(trip) },
+    ] : []),
+    { text: 'Cancel', style: 'cancel' },
+  ], { sheet: true });
+
+  const renderPass = ({ trip, isOwner, host }) => {
+    const coverUri = coverFor(trip, 300);
     return (
-      <SwipeableCard
-        enabled={isOwner}
-        isOpen={openSwipeId === item.id}
-        onOpenChange={(open) => setOpenSwipeId(open ? item.id : null)}
-        actionsHeight={compact ? 64 : undefined}
-        actions={[
-          { key: 'edit', label: 'Edit', icon: 'create-outline', color: COLORS.primary, onPress: () => editTrip(item) },
-          { key: 'delete', label: 'Delete', icon: 'trash-outline', color: COLORS.error, onPress: () => removeTrip(item) },
-        ]}
-      >
-        <Card
-          trip={item}
+      // Edit, delete and copy live in the long-press menu (no swipe).
+        <TripBoardingPass
+          trip={trip}
           imageUri={coverUri}
-          onPress={() => navigation.navigate('TripDetail', { tripId: item.id, tripName: item.name })}
-          accessibilityActions={isOwner ? [{ name: 'edit', label: 'Edit trip' }, { name: 'delete', label: 'Delete trip' }] : undefined}
+          isOwner={isOwner}
+          hostName={host}
+          showYear={group !== 'year'}
+          onPress={() => openTrip(trip)}
+          onLongPress={() => showPassMenu(trip, isOwner)}
+          accessibilityActions={[
+            { name: 'duplicate', label: 'Use this plan again' },
+            ...(isOwner ? [{ name: 'edit', label: 'Edit trip' }, { name: 'delete', label: 'Delete trip' }] : []),
+          ]}
           onAccessibilityAction={(e) => {
-            if (e.nativeEvent.actionName === 'edit') editTrip(item);
-            if (e.nativeEvent.actionName === 'delete') removeTrip(item);
+            if (e.nativeEvent.actionName === 'duplicate') setDuplicating(trip);
+            if (e.nativeEvent.actionName === 'edit') editTrip(trip);
+            if (e.nativeEvent.actionName === 'delete') removeTrip(trip);
           }}
         />
-      </SwipeableCard>
     );
   };
 
@@ -234,97 +530,9 @@ export default function MyTripsScreen({ navigation }) {
     progressViewOffset: topInset,
   };
 
-  // List view: trips grouped (Happening now, Upcoming, Drafts, Past), each
-  // group keeping the list's sort order.
-  const listSections = (() => {
-    const groups = [
-      { key: 'now', label: 'Happening now', color: '#43A474', match: (t) => tripTiming(t).progress != null || tripTiming(t).label === 'Starts today' },
-      { key: 'upcoming', label: 'Upcoming', color: COLORS.accent, match: (t) => /^(In |Tomorrow)/.test(tripTiming(t).label) },
-      { key: 'draft', label: 'No dates yet', color: COLORS.primaryLight, match: (t) => tripTiming(t).label === 'No dates yet' },
-      { key: 'past', label: 'Past trips', color: '#94A7B8', match: () => true },
-    ];
-    const used = new Set();
-    const out = [];
-    groups.forEach((g) => {
-      const trips = visibleTrips.filter((t) => !used.has(t) && g.match(t));
-      trips.forEach((t) => used.add(t));
-      if (!trips.length) return;
-      out.push({ isHeader: true, key: g.key, label: g.label, color: g.color, count: trips.length });
-      out.push(...trips);
-    });
-    return out;
-  })();
+  const goCreate = () => navigation.navigate('CreateTrip');
+  const goJoin = () => navigation.navigate('JoinTrip');
 
-  // The last card of the deck when the fan can't hold every trip: same size
-  // and shape as a trip card, so its top strip ("+4 more trips") peeks out
-  // under the 6th card like the others. Opens the list of all trips.
-  const hiddenTrips = visibleTrips.slice(FAN_LIMIT);
-  const moreTripsCard = (
-    <TouchableOpacity
-      style={styles.moreCard}
-      onPress={() => toggleShowAll(true)}
-      activeOpacity={0.9}
-      accessibilityRole="button"
-      accessibilityLabel={`${hiddenCount} more ${hiddenCount === 1 ? 'trip' : 'trips'}. See all ${visibleTrips.length} trips`}
-    >
-      <View style={styles.moreClip}>
-        {/* Collage of the hidden trips' photos, darkened at the top for the text. */}
-        <View style={styles.moreCollage}>
-          {hiddenTrips.slice(0, 3).map((trip) => {
-            const placeId = trip.primaryPlaceId || (Array.isArray(trip.placeIds) ? trip.placeIds[0] : null);
-            const uri = placePhotoUrl(placeId, 400) || normalizePhotoUrl(trip.coverPhotoUrl, 400);
-            return (
-              <View key={trip.id} style={styles.morePhoto}>
-                {uri && <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" />}
-              </View>
-            );
-          })}
-        </View>
-        <LinearGradient
-          colors={['rgba(16, 24, 32, 0.85)', 'rgba(16, 24, 32, 0.35)', 'rgba(16, 24, 32, 0.15)']}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.moreTop}>
-          <View style={styles.moreText}>
-            <Text style={styles.moreTitle}>+{hiddenCount} more {hiddenCount === 1 ? 'trip' : 'trips'}</Text>
-            <Text style={styles.moreSub}>See all {visibleTrips.length} trips</Text>
-          </View>
-          <View style={styles.moreGo}>
-            <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
-          </View>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  // Cards / list switch at the top-right of the header, shown whenever the
-  // fan can't hold every trip. Two icons side by side, the current view
-  // highlighted (no count badge, so it doesn't read as a menu with alerts).
-  const viewToggle = hiddenCount > 0 ? (
-    <View style={styles.viewToggle} accessibilityRole="tablist">
-      {[
-        { key: 'cards', icon: 'albums', on: !listMode, label: 'Show trips as cards' },
-        { key: 'list', icon: 'list', on: listMode, label: `Show all ${visibleTrips.length} trips as a list` },
-      ].map((o) => (
-        <TouchableOpacity
-          key={o.key}
-          style={[styles.viewToggleOption, o.on && styles.viewToggleOptionOn]}
-          activeOpacity={0.8}
-          onPress={() => { if (!o.on) toggleShowAll(o.key === 'list'); }}
-          accessibilityRole="tab"
-          accessibilityState={{ selected: o.on }}
-          accessibilityLabel={o.label}
-          hitSlop={4}
-        >
-          <Ionicons
-            name={o.on ? o.icon : `${o.icon}-outline`}
-            size={17}
-            color={o.on ? COLORS.accentDeep : COLORS.textMuted}
-          />
-        </TouchableOpacity>
-      ))}
-    </View>
-  ) : null;
   const renderEmpty = () => {
     if (loading) return null;
     if (error) {
@@ -339,7 +547,6 @@ export default function MyTripsScreen({ navigation }) {
         </View>
       );
     }
-    // No trips at all vs. none matching the active filter.
     if (trips.length === 0) {
       return (
         <EmptyState
@@ -348,20 +555,47 @@ export default function MyTripsScreen({ navigation }) {
           title="No trips yet"
           text="Pick a destination and your dates. Then plan each day, track the budget and share a packing list."
           actionLabel="Plan a trip"
-          onAction={() => navigation.navigate('CreateTrip')}
+          onAction={goCreate}
           secondaryLabel="Have an invite? Join a trip"
-          onSecondary={() => navigation.navigate('JoinTrip')}
+          onSecondary={goJoin}
         />
       );
     }
-    const filterLabel = FILTERS.find((f) => f.key === activeFilter)?.label?.toLowerCase();
+    if (q) {
+      return (
+        <EmptyState
+          compact
+          style={styles.stateContainer}
+          icon="search-outline"
+          title={`No trips match “${query.trim()}”`}
+          text="Try a trip name, a place on the route or someone who's going."
+          actionLabel="Clear search"
+          onAction={() => setQuery('')}
+        />
+      );
+    }
+    if (segment === 'joined') {
+      return (
+        <EmptyState
+          compact
+          style={styles.stateContainer}
+          icon="people-outline"
+          title="No joined trips yet"
+          text="When a friend invites you to their trip, it shows up here."
+          actionLabel="Join with an invite"
+          onAction={goJoin}
+        />
+      );
+    }
     return (
       <EmptyState
         compact
         style={styles.stateContainer}
-        icon="funnel-outline"
-        title={`No ${filterLabel} trips`}
-        text="Try a different filter to see more."
+        icon="airplane-outline"
+        title="You haven't planned a trip yet"
+        text="Trips you create show up here. The ones you joined are under Joined."
+        actionLabel="Plan a trip"
+        onAction={goCreate}
       />
     );
   };
@@ -369,7 +603,7 @@ export default function MyTripsScreen({ navigation }) {
   // Guest: show the sign-in gate instead of an empty list + header.
   if (needsAuth) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.screen}>
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
         <SignInPrompt
           icon="map-outline"
@@ -383,107 +617,167 @@ export default function MyTripsScreen({ navigation }) {
     );
   }
 
+  const segments = [
+    { key: 'all', label: `All ${trips.length}` },
+    { key: 'mine', label: `Mine ${mineCount}` },
+    { key: 'joined', label: `Joined ${joinedCount}` },
+  ];
+  const sortLabel = SORT_OPTIONS.find((o) => o.key === sort)?.label;
+
   return (
     // No top safe-area padding here: the floating header already clears the
     // status bar / notch itself, and content is offset by its measured height.
-    // Padding the top too would push the cards down twice.
     <SafeAreaView style={styles.screen} edges={['left', 'right']}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
 
       {/* A trip you started creating but didn't finish. */}
-      {!needsAuth && headerHeight > 0 && (
+      {headerHeight > 0 && (
         <View style={[styles.unfinishedWrap, { top: headerHeight + SIZES.spacing_sm }]} pointerEvents="box-none">
           <UnfinishedTripCard navigation={navigation} onHeight={setDraftHeight} />
         </View>
       )}
 
       {loading ? (
-        // Offset below the floating header, like the real list.
-        <View style={{ paddingTop: topInset + SIZES.spacing_sm }}>
+        <View style={{ paddingTop: topInset + SIZES.spacing_lg }}>
           <TripListSkeleton />
         </View>
       ) : (
         <Animated.View style={[styles.listWrap, { opacity: listOpacity }]}>
-          {visibleTrips.length === 0 ? (
-            <View style={[styles.listEmpty, { paddingTop: topInset }]}>
-              {renderEmpty()}
-            </View>
-          ) : (
-            listMode ? (
-              <FlatList
-                data={listSections}
-                keyExtractor={(t, i) => (t.isHeader ? `h-${t.key}` : String(t.id ?? i))}
-                renderItem={({ item }) => (item.isHeader ? (
-                  <View style={styles.sectionHead}>
-                    <View style={[styles.sectionDot, { backgroundColor: item.color }]} />
-                    <Text style={styles.sectionTitle}>{item.label}</Text>
-                    <View style={styles.sectionCount}>
-                      <Text style={styles.sectionCountText}>{item.count}</Text>
-                    </View>
-                  </View>
-                ) : renderTrip(item, { compact: true }))}
-                ItemSeparatorComponent={() => <View style={styles.rowGap} />}
-                contentContainerStyle={[styles.listContent, { paddingTop: topInset + SIZES.spacing_sm }]}
-                showsVerticalScrollIndicator={false}
-                onScrollBeginDrag={() => setOpenSwipeId(null)}
-                onScroll={onBarScroll}
-                scrollEventThrottle={16}
-                refreshControl={<RefreshControl {...refreshControlProps} />}
-              />
-            ) : (
-              <TripFan
-                // Remount when the set of trips changes so the scroll resets.
-                key={`${activeFilter}-${fanTrips.length}-${hiddenCount}`}
-                trips={hiddenCount > 0 ? [...fanTrips, MORE_TRIPS_ITEM] : fanTrips}
-                renderCard={(trip) => (trip.isMoreCard ? moreTripsCard : renderTrip(trip))}
-                topInset={topInset + SIZES.spacing_sm}
-                bottomInset={FAN_BOTTOM_INSET}
-                onScrollBeginDrag={() => setOpenSwipeId(null)}
-                onScrollEvent={onBarScroll}
-                refreshControlProps={refreshControlProps}
-              />
-            )
-          )}
+          <FlatList
+            ref={listRef}
+            data={rows}
+            keyExtractor={(r) => r.id}
+            renderItem={({ item }) => {
+              if (item.type === 'featured') {
+                return (
+                  <FeaturedTripPass
+                    trip={item.entry.trip}
+                    imageUri={coverFor(item.entry.trip, 800)}
+                    onOpen={(tab) => openTrip(item.entry.trip, tab)}
+                  />
+                );
+              }
+              if (item.type === 'wallet') {
+                return (
+                  <TripWalletStack
+                    items={item.entries.map((e) => ({ key: String(e.trip.id), label: e.trip.name, entry: e }))}
+                    renderItem={({ entry }) => (
+                      <FeaturedTripPass
+                        style={styles.walletCard}
+                        trip={entry.trip}
+                        imageUri={coverFor(entry.trip, 800)}
+                        onOpen={(tab) => openTrip(entry.trip, tab)}
+                      />
+                    )}
+                  />
+                );
+              }
+              if (item.type === 'section') return <SectionHeader section={item.section} first={item.first} />;
+              if (item.type === 'stats') return <MemoryStats items={item.items} />;
+              if (item.type === 'header') return <DepartureHeader group={item.group} />;
+              const rippingH = ripping[item.entry.trip.id];
+              if (rippingH != null) {
+                return <ClosingGap height={rippingH + SIZES.spacing_md} />;
+              }
+              return (
+                <View
+                  style={styles.passGap}
+                  ref={(r) => { passRefs.current[item.entry.trip.id] = r; }}
+                  collapsable={false}
+                >
+                  {renderPass(item.entry)}
+                </View>
+              );
+            }}
+            ListEmptyComponent={<View style={styles.emptyWrap}>{renderEmpty()}</View>}
+            ListFooterComponent={shownCount > 0 && q ? (
+              <Text style={styles.footer}>{shownCount} {shownCount === 1 ? 'trip' : 'trips'} found</Text>
+            ) : null}
+            contentContainerStyle={[styles.listContent, { paddingTop: topInset + SIZES.spacing_lg }]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            onScroll={onBarScroll}
+            scrollEventThrottle={16}
+            refreshControl={<RefreshControl {...refreshControlProps} />}
+          />
         </Animated.View>
       )}
 
-      {/* Shared floating header panel. List scrolls beneath. */}
-      {/* iPhone: the refresh spinner, below the header and the unfinished-trip
-          card (see RefreshSpinner). */}
+      {/* iPhone: the refresh spinner, below the header and the unfinished-trip card. */}
       <RefreshSpinner refreshing={refreshing} top={topInset} />
       <ScreenHeader
         title="My trips"
-        subtitle={
-          trips.length > 0
-            ? `${trips.length} ${trips.length === 1 ? 'adventure' : 'adventures'} planned`
-            : 'Your journeys, all in one place'
-        }
         collapsed={false}
-        // Join on the left, the cards / list switch on the right, so the
-        // centred title has room on both sides.
         left={loading ? null : (
           <TouchableOpacity
             style={styles.joinButton}
             activeOpacity={0.8}
-            onPress={() => navigation.navigate('JoinTrip')}
+            onPress={goJoin}
             accessibilityRole="button"
-            accessibilityLabel="Join a trip with an invite link"
-            hitSlop={6}
+            accessibilityLabel="Join a trip with an invite link or code"
+            hitSlop={4}
           >
-            <Ionicons name="person-add-outline" size={19} color={COLORS.accentDeep} />
+            <Text style={styles.joinText}>Join</Text>
           </TouchableOpacity>
         )}
-        right={loading ? null : viewToggle}
+        right={loading ? null : (
+          <TouchableOpacity
+            style={styles.newButton}
+            activeOpacity={0.85}
+            onPress={goCreate}
+            accessibilityRole="button"
+            accessibilityLabel="Plan a new trip"
+            hitSlop={4}
+          >
+            <Ionicons name="add" size={19} color={COLORS.white} />
+            <Text style={styles.newText}>New</Text>
+          </TouchableOpacity>
+        )}
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
       >
         {!loading && trips.length > 0 && (
-          // The header's children area runs edge to edge; re-apply its side
-          // inset so the full-width track lines up with the header content.
-          <View style={styles.filterRow}>
+          <View style={styles.controls}>
+            <View style={styles.searchRow}>
+              <View style={styles.search}>
+                <Ionicons name="search" size={17} color={COLORS.textMuted} />
+                <TextInput
+                  style={styles.searchInput}
+                  value={query}
+                  onChangeText={setQuery}
+                  placeholder="Search trips, places or people"
+                  placeholderTextColor={COLORS.textLight}
+                  returnKeyType="search"
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  clearButtonMode="never"
+                  accessibilityLabel="Search your trips"
+                />
+                {!!query && (
+                  <TouchableOpacity
+                    onPress={() => { setQuery(''); Keyboard.dismiss(); }}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                  >
+                    <Ionicons name="close-circle" size={18} color={COLORS.textLight} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              <TouchableOpacity
+                style={styles.arrangeButton}
+                activeOpacity={0.8}
+                onPress={() => { Keyboard.dismiss(); setArrangeOpen(true); }}
+                accessibilityRole="button"
+                accessibilityLabel={`Group and sort. Grouped by ${group}, ${sortLabel}`}
+              >
+                <Ionicons name="swap-vertical" size={18} color={COLORS.primary} />
+              </TouchableOpacity>
+            </View>
             <FilterChips
-              filters={FILTERS}
-              activeKey={activeFilter}
-              onChange={changeFilter}
+              filters={segments}
+              activeKey={segment}
+              onChange={changeSegment}
               variant="pills"
               fullWidth
               tinted={false}
@@ -491,6 +785,41 @@ export default function MyTripsScreen({ navigation }) {
           </View>
         )}
       </ScreenHeader>
+
+      <TripSortSheet
+        visible={arrangeOpen}
+        group={group}
+        sort={sort}
+        onChangeGroup={changeGroup}
+        onChangeSort={changeSort}
+        onClose={() => setArrangeOpen(false)}
+      />
+      <DuplicateTripSheet
+        visible={!!duplicating}
+        trip={duplicating}
+        onClose={() => setDuplicating(null)}
+        onDone={(created) => {
+          const source = duplicating;
+          setDuplicating(null);
+          loadTrips();
+          if (!created?.id) return;
+          // The copy's boarding pass prints, then the new trip opens under it.
+          // The copy's ticket, as its page will show it.
+          showPassPrint({
+            trip: { id: created.id, name: created.name },
+            ticket: {
+              trip: { startDate: created.startDate, endDate: created.endDate, status: created.status },
+              places: source?.stops?.length ? source.stops.map((st) => st.name) : [source?.primaryDestination],
+              stops: Math.max(1, source?.stops?.length || 0),
+              spots: source?.placeIds?.length || 0,
+              members: [],
+              memberCount: 1,
+            },
+          });
+          // Opens under the print; the pass lands on its first card.
+          navigation.navigate('TripDetail', { tripId: created.id, tripName: created.name, printLanding: true });
+        }}
+      />
       <EditTripSheet
         visible={!!editingTrip}
         trip={editingTrip}
@@ -502,161 +831,237 @@ export default function MyTripsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: COLORS.backgroundWarm,
+  },
   unfinishedWrap: {
     position: 'absolute',
     left: SIZES.spacing_base,
     right: SIZES.spacing_base,
     zIndex: 2,
   },
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
-  },
-  // Main list view: same as container but without the Android status bar
-  // padding (the floating header handles that).
-  screen: {
-    flex: 1,
-    backgroundColor: COLORS.backgroundWarm, // alpine frost (60%)
-  },
-  listWrap: {
-    flex: 1,
-  },
+  listWrap: { flex: 1 },
   listContent: {
-    padding: SIZES.spacing_base,
-    paddingBottom: 120,
-  },
-  listEmpty: {
     flexGrow: 1,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingBottom: BOTTOM_INSET,
   },
-  sectionHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingTop: SIZES.spacing_sm,
-    paddingHorizontal: 4,
+  walletCard: { marginBottom: 0 },
+  passGap: {
+    marginBottom: SIZES.spacing_md,
   },
-  sectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  sectionTitle: {
-    fontSize: SIZES.md,
-    fontFamily: 'Poppins_700Bold',
-    color: COLORS.primary,
-  },
-  sectionCount: {
-    paddingHorizontal: 7,
-    borderRadius: SIZES.radius_full,
-    backgroundColor: COLORS.sand,
-  },
-  sectionCountText: {
-    fontSize: SIZES.xs,
-    fontFamily: 'Poppins_600SemiBold',
-    color: COLORS.textSecondary,
-  },
-  rowGap: {
-    height: SIZES.spacing_md,
+  emptyWrap: { flex: 1 },
+  footer: {
+    textAlign: 'center',
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textMuted,
+    marginTop: SIZES.spacing_sm,
   },
 
-  filterRow: {
-    paddingHorizontal: SIZES.spacing_lg,
-  },
-  // Top-right header buttons: join a shared trip, and the list / cards toggle.
-  headerActions: {
-    flexDirection: 'row',
-    gap: SIZES.spacing_sm,
-  },
+  // Header buttons: Join (quiet) on the left, New (orange) on the right.
   joinButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
+    flexDirection: 'row',
     alignItems: 'center',
+    height: 38,
+    paddingHorizontal: 16,
+    borderRadius: 19,
     backgroundColor: COLORS.sand,
   },
-  // "+4 more trips": last card of the fan (same size and shape as a trip card)
-  moreCard: {
-    height: TRIP_CARD_HEIGHT,
-    borderRadius: 28,
-    backgroundColor: COLORS.primary,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 6,
+  joinText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.primary,
   },
-  moreClip: {
-    flex: 1,
-    borderRadius: 28,
-    overflow: 'hidden',
-  },
-  moreCollage: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    flexDirection: 'row',
-    gap: 2,
-  },
-  morePhoto: {
-    flex: 1,
-    backgroundColor: COLORS.primaryLight,
-  },
-  moreTop: {
+  newButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.spacing_md,
-    paddingHorizontal: SIZES.spacing_lg,
-    paddingTop: SIZES.spacing_lg,
+    gap: 3,
+    height: 38,
+    paddingLeft: 10,
+    paddingRight: 14,
+    borderRadius: 19,
+    backgroundColor: COLORS.accent,
   },
-  moreText: { flex: 1 },
-  moreTitle: {
-    fontSize: SIZES.xl,
+  newText: {
+    fontSize: SIZES.md,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
   },
-  moreSub: {
+
+  // Search, arrange and Mine / Joined under the title.
+  controls: {
+    paddingHorizontal: SIZES.spacing_lg,
+    gap: SIZES.spacing_md,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    gap: SIZES.spacing_sm,
+  },
+  search: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    height: 44,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    backgroundColor: COLORS.backgroundWarm,
+  },
+  searchInput: {
+    flex: 1,
+    height: 44,
+    paddingVertical: 0,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textPrimary,
+  },
+  arrangeButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.backgroundWarm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Section title row.
+  section: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_md - 2,
+    paddingTop: SIZES.spacing_sm,
+    paddingBottom: SIZES.spacing_md,
+    paddingHorizontal: 2,
+  },
+  sectionSpaced: {
+    marginTop: SIZES.spacing_lg,
+  },
+  sectionIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionText: { flex: 1 },
+  sectionTitle: {
+    fontSize: SIZES.lg + 1,
+    lineHeight: 24,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+    includeFontPadding: false,
+  },
+  sectionNote: {
+    fontSize: SIZES.sm,
+    lineHeight: 16,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textMuted,
+    includeFontPadding: false,
+  },
+  sectionCount: {
+    minWidth: 26,
+    height: 22,
+    paddingHorizontal: 8,
+    borderRadius: 11,
+    backgroundColor: COLORS.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionCountText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textSecondary,
+  },
+
+  // Totals under Memories.
+  stats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SIZES.spacing_md,
+    paddingVertical: SIZES.spacing_md,
+    borderRadius: 18,
+    backgroundColor: COLORS.white,
+  },
+  stat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: SIZES.xl,
+    lineHeight: 28,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+    includeFontPadding: false,
+  },
+  statLabel: {
     fontSize: SIZES.sm,
     fontFamily: 'Poppins_500Medium',
-    color: '#F8CABC',
+    color: COLORS.textMuted,
   },
-  moreGo: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
+  statDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: COLORS.borderLight,
   },
-  viewToggle: {
+
+  // Departures-board group heading (inside Upcoming / Memories).
+  board: {
     flexDirection: 'row',
-    height: 40,
-    padding: 3,
-    gap: 2,
-    borderRadius: 20,
-    backgroundColor: COLORS.sand,
-  },
-  viewToggleOption: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    justifyContent: 'center',
     alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingTop: SIZES.spacing_xs,
+    paddingBottom: SIZES.spacing_md,
+    paddingHorizontal: 2,
   },
-  viewToggleOptionOn: {
-    backgroundColor: COLORS.white,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
-    elevation: 2,
+  flaps: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  flap: {
+    width: 22,
+    height: 30,
+    borderRadius: 5,
+    backgroundColor: COLORS.textPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  flapIcon: { width: 30 },
+  flapText: {
+    fontSize: 17,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.white,
+    includeFontPadding: false,
+  },
+  // The split across the middle of each tile.
+  flapSeam: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 14.5,
+    height: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+  boardLabel: {
+    flexShrink: 1,
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.primary,
+  },
+  boardRule: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  boardCount: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textMuted,
   },
 
-  // Trip card
-
-  // State (loading / empty / error)
+  // State (empty / error)
   stateContainer: {
     flex: 1,
     justifyContent: 'center',

@@ -22,7 +22,7 @@ import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H } from '../compon
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
 import { SignInPrompt } from '../components';
-import { avatarColorFor, initialsFor } from '../components/TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import useAuth from '../hooks/useAuth';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import {

@@ -24,7 +24,7 @@ import {
   changeMemberRole,
   removeMember,
 } from '../services';
-import { avatarColorFor, initialsFor } from './TripStackCard';
+import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { showAlert, AppDialogHost } from './AppDialog';
 import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 
@@ -48,7 +48,8 @@ function timeLeft(iso) {
   return `in ${Math.round(hours / 24)} days`;
 }
 
-async function shareInvite(tripName, invite) {
+/** Share an invite link through the phone's share sheet. */
+export async function shareInvite(tripName, invite) {
   const role = roleInfo(invite.role).label.toLowerCase();
   const article = /^[aeiou]/.test(role) ? 'an' : 'a';
   const message = `Join my trip "${tripName}" on Wayraa as ${article} ${role}: ${invite.link}`;

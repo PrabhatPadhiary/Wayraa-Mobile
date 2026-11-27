@@ -10,7 +10,6 @@ import {
   TextInput,
   Keyboard,
   KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   useWindowDimensions,
 } from 'react-native';
@@ -25,8 +24,9 @@ import TravelScene from '../components/TravelScene';
 import useAuth from '../hooks/useAuth';
 import { createTrip, addPlaceToTrip, getPlaceDetails, placeCoords, findCityOf, AuthRequiredError } from '../services';
 import { showAlert } from '../components/AppDialog';
+import { showPassPrint } from '../components/PassPrintOverlay';
+
 import { formatDateRange } from '../utils/tripDates';
-import { LoaderOverlay } from '../components/WayraaLoader';
 import { getTripDraft, findTripDraftFor, saveTripDraft, clearTripDraft, clearTripDraftsFor, newDraftId } from '../services/tripDraft';
 
 // The destination photo's share of the screen height (status bar included),
@@ -290,6 +290,24 @@ export default function CreateTripScreen({ navigation, route }) {
     const endIso = endDate || null;
 
     setSubmitting(true);
+    // The boarding pass starts printing straight away (in place of a loader)
+    // and always plays in full; it waits near the end until the trip is saved.
+    let settle;
+    const saving = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+    saving.catch(() => {}); // handled below and by the print
+    const printed = showPassPrint({
+      trip: { id: `new-${placeId}`, name: tripName.trim() },
+      // The new trip's ticket, as its page will show it (no invite QR yet).
+      ticket: {
+        trip: { startDate: startIso, endDate: endIso },
+        places: [dest?.name],
+        stops: 1,
+        spots: addPlace ? 1 : 0,
+        members: [],
+        memberCount: travelers,
+      },
+      ready: saving,
+    });
     try {
       // A just-picked destination: wait for its photo and coordinates.
       let target = dest;
@@ -312,29 +330,41 @@ export default function CreateTripScreen({ navigation, route }) {
       });
       // Came from "Add to trip" on a place: save that place to the new trip.
       // The trip exists either way, so a failure here only gets a note.
+      let placeNote = null;
       if (addPlace && created?.id && created?.destination?.id) {
         try {
           await addPlaceToTrip(created.id, created.destination.id, addPlace);
         } catch {
-          showAlert('Trip created', `We couldn't add ${addPlace.placeName || 'the place'} to it. Add it again from its page.`);
+          placeNote = `We couldn't add ${addPlace.placeName || 'the place'} to it. Add it again from its page.`;
         }
       }
-      // Created: nothing left to save or ask about. Going to Main closes this
-      // form (it sits on top) and opens the new trip in My Trips;
-      // `initial: false` keeps the My Trips list underneath, so back goes to
-      // the list. The Home tab stays on the page you started from.
+      // Created: nothing left to save or ask about.
       allowLeave.current = true;
       clearDraft();
       // And any other unfinished trip to the same place: it's planned now.
       clearTripDraftsFor(target.placeId);
+      settle.resolve();
+      // Open the trip now, under the print: it loads while the pass finishes,
+      // then the pass flies onto its first card (printLanding). Going to Main
+      // closes this form (it sits on top) and opens the new trip in My Trips;
+      // `initial: false` keeps the My Trips list underneath, so back goes to
+      // the list. The Home tab stays on the page you started from.
       navigation.navigate('Main', created?.id
         ? {
           screen: 'MyTrips',
           // justCreated: the trip screen greets it once ("Your trip is ready").
-          params: { screen: 'TripDetail', params: { tripId: created.id, tripName: created.name, justCreated: true }, initial: false },
+          params: {
+            screen: 'TripDetail',
+            params: { tripId: created.id, tripName: created.name, justCreated: true, printLanding: true },
+            initial: false,
+          },
         }
         : { screen: 'MyTrips' });
+      await printed;
+      if (placeNote) showAlert('Trip created', placeNote);
     } catch (e) {
+      settle.reject(e); // closes the print
+      await printed;
       if (e instanceof AuthRequiredError) {
         setError('Your session expired. Please sign in again.');
       } else {
@@ -596,7 +626,6 @@ export default function CreateTripScreen({ navigation, route }) {
       </TouchableOpacity>
 
       {/* While creating: the form stays in view, dimmed and locked. */}
-      <LoaderOverlay visible={submitting} message="Creating your trip…" />
 
       <DateRangeSheet
         visible={datesOpen}
@@ -648,10 +677,6 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
 
-  content: {
-    padding: SIZES.spacing_lg,
-    paddingBottom: SIZES.spacing_xxl,
-  },
 
   // Destination photo, edge to edge at the top
   destinationCard: {
