@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar, RefreshControl, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,6 +8,7 @@ import { COLORS, SIZES } from '../constants';
 import { EmptyState } from '../components';
 import { useStoryPlaces, TravelStyle, WhereBeen, StoryGrid, placeOf } from '../components/TravellerSections';
 import RankBadge from '../components/RankBadge';
+import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H } from '../components/ProfileScene';
 import { avatarColorFor, initialsFor } from '../utils/avatars';
 import { showAlert } from '../components/AppDialog';
 import { GridSkeleton } from '../components/skeletons';
@@ -101,11 +102,12 @@ export default function UserProfileScreen({ navigation, route }) {
   // Where they've been, travel style, map points (shared with your own Profile).
   const { places, vibes, mapPlaces } = useStoryPlaces(stories);
 
-  // Behind the header: their latest story photo.
-  const coverUrl = useMemo(() => {
-    const withPhoto = stories.find((s) => s.photos?.[0]?.url);
-    return withPhoto ? cloudinarySized(withPhoto.photos[0].url, IMAGE_WIDTH.COVER) : null;
-  }, [stories]);
+  // Behind the header: the cover photo they chose, else the drawn
+  // countryside (as on your own Profile).
+  const coverUrl = author?.coverPhotoUrl && !isBlocked
+    ? cloudinarySized(author.coverPhotoUrl, IMAGE_WIDTH.FULL)
+    : null;
+  const { width: windowWidth } = useWindowDimensions();
 
   const shown = useMemo(
     () => (activePlace ? stories.filter((s) => placeOf(s).toLowerCase() === activePlace) : stories),
@@ -155,13 +157,16 @@ export default function UserProfileScreen({ navigation, route }) {
     const meta = [joinedLabel(author?.joinedAt)].filter(Boolean);
     return (
       <>
-        {/* Edge to edge behind the status bar: their latest story photo, or
-            a plain band when they have none. */}
+        {/* Edge to edge behind the status bar: their cover photo, or the
+            drawn countryside (its top part). */}
         <View style={[styles.cover, { height: insets.top + COVER_HEIGHT }]}>
           {coverUrl ? (
             <Image source={{ uri: coverUrl }} style={styles.fill} contentFit="cover" cachePolicy="memory-disk" transition={200} />
           ) : (
-            <LinearGradient colors={[COLORS.primaryLight, COLORS.primary]} style={styles.fill} />
+            <View style={{ height: (windowWidth * SCENE_H) / SCENE_W }}>
+              <ProfileSceneBack width={windowWidth} />
+              <ProfileSceneFront width={windowWidth} />
+            </View>
           )}
           {/* Darker at the top so the status bar and buttons stay readable. */}
           <LinearGradient colors={['rgba(0,0,0,0.35)', 'rgba(0,0,0,0)']} style={styles.coverShade} pointerEvents="none" />

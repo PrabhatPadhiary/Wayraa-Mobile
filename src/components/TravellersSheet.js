@@ -350,7 +350,7 @@ export default function TravellersSheet({ visible, trip, onClose, onChanged }) {
             })}
             {notJoined > 0 && (
               <Text style={styles.notJoined}>
-                {notJoined} more {notJoined === 1 ? 'traveller hasn\'t' : 'travellers haven\'t'} joined the app yet.
+                {notJoined} more {notJoined === 1 ? 'traveller hasn\'t' : 'travellers haven\'t'} joined the trip yet.
               </Text>
             )}
 

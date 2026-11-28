@@ -3,7 +3,7 @@ import { cacheAge, CacheKeys } from './cache';
 import { getTripById } from './tripsService';
 import { getItinerary } from './itineraryService';
 import { getChecklist } from './checklistService';
-import { getExpenses } from './budgetService';
+import { getExpenses, getBalances } from './budgetService';
 import { getPolls } from './pollsService';
 import { getAnnouncements } from './announcementsService';
 import { pickActiveTrips } from '../utils/tripDates';
@@ -49,6 +49,7 @@ export function saveTripsForOffline(trips) {
         getItinerary(id),
         getChecklist(id),
         getExpenses(id),
+        getBalances(id),
         getPolls(id),
         getAnnouncements(id),
       ]);

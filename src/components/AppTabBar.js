@@ -133,9 +133,10 @@ function SectionTabs({ tabs, width }) {
                 color={isActive ? COLORS.accent : COLORS.textPrimary}
               />
             ) : (
+              // Filled, the same size as the main tabs' icons.
               <Ionicons
                 name={tab.icon}
-                size={22}
+                size={24}
                 color={isActive ? COLORS.accent : COLORS.textPrimary}
               />
             )}
@@ -151,7 +152,19 @@ function SectionTabs({ tabs, width }) {
 }
 
 export default function AppTabBar({ state, navigation }) {
-  const { collapsed, cta, tabs, hidden } = useBottomBar();
+  const { collapsed: claimed, cta, tabs, hidden, ctaOnly, onScrollActivity } = useBottomBar();
+  // A screen collapsed the bar to its Home circle (+ its button): tapping
+  // the circle opens the full menu right there instead of leaving the page.
+  // Back to the circle when the screen sets the bar up again (it's left, or
+  // come back) or the tab changes.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { setExpanded(false); }, [cta, state.index]);
+  // Scrolling the page closes it again (back to the circle and the button).
+  useEffect(() => {
+    if (!expanded) return undefined;
+    return onScrollActivity(() => setExpanded(false));
+  }, [expanded, onScrollActivity]);
+  const collapsed = claimed && !expanded;
   // Above Android's three-button navigation bar when it's on; as before otherwise.
   const barBottom = useFloatingBarBottom();
 
@@ -245,11 +258,13 @@ export default function AppTabBar({ state, navigation }) {
     }).start();
   }, [collapsed, collapseAnim]);
 
+  // `ctaOnly` (choosing places): no circle, the CTA takes the whole bar.
+  const circleOnly = ctaOnly && !!cta;
   const barWidth = collapseAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [rowWidth || 320, CIRCLE],
+    outputRange: [rowWidth || 320, circleOnly ? 0 : CIRCLE],
   });
-  const ctaGap = collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [0, SIZES.spacing_sm] });
+  const ctaGap = collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [0, circleOnly ? 0 : SIZES.spacing_sm] });
 
   const onPressTab = (key) => {
     const isFocused = activeKey === key;
@@ -280,7 +295,10 @@ export default function AppTabBar({ state, navigation }) {
     >
       <View style={styles.row}>
         {/* Morphing glass pill: full tab bar -> active-tab circle. */}
-        <Animated.View style={[styles.morphBar, { width: barWidth }]}>
+        <Animated.View
+          style={[styles.morphBar, { width: barWidth }, circleOnly && styles.morphGone]}
+          pointerEvents={circleOnly ? 'none' : 'auto'}
+        >
           <GlassSurface radius={38} contentStyle={styles.morphContent} {...glassProps}>
             {/* Full tab row — fixed width so items don't reflow while shrinking. */}
             <Animated.View
@@ -347,9 +365,17 @@ export default function AppTabBar({ state, navigation }) {
             >
               <TouchableOpacity
                 style={styles.iconOnlyBtn}
-                onPress={() => onPressTab(activeKey)}
+                onPress={() => {
+                  if (cta) {
+                    tick();
+                    setExpanded(true);
+                  } else {
+                    onPressTab(activeKey);
+                  }
+                }}
                 activeOpacity={0.8}
                 accessibilityLabel={activeTab.label}
+                accessibilityHint={cta ? 'Opens the menu' : undefined}
               >
                 <Ionicons name={activeTab.activeIcon || activeTab.icon} size={26} color={COLORS.accent} />
               </TouchableOpacity>
@@ -374,6 +400,11 @@ export default function AppTabBar({ state, navigation }) {
 }
 
 const styles = StyleSheet.create({
+  // The circle shrunk away (ctaOnly): no shadow or border left behind.
+  morphGone: {
+    opacity: 0,
+    overflow: 'hidden',
+  },
   wrapper: {
     position: 'absolute',
     left: 0,

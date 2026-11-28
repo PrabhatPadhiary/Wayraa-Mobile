@@ -379,10 +379,13 @@ export default function ExploreScreen({ route, navigation }) {
     const y = contentOffset.y;
     // Header turns solid the moment content can slide under it.
     if ((y > 2) !== headerSolid) setHeaderSolid(y > 2);
-    // Collapse on scroll down; expand a bit before reaching the top so the
-    // header is fully open before the content reaches its natural start position.
-    if (y > 60 && !headerCollapsed) setHeaderCollapsed(true);
-    else if (y <= 55 && headerCollapsed) setHeaderCollapsed(false);
+    // The content keeps room for the full header at its top, and collapsing
+    // moves the header's bottom up by the question's height: collapse only
+    // once that room has scrolled away, and open again a little before it
+    // comes back, so there's never a gap under the header.
+    const collapseDistance = headlineHeight + SIZES.spacing_xs;
+    if (y > collapseDistance + 40 && !headerCollapsed) setHeaderCollapsed(true);
+    else if (y < collapseDistance + 20 && headerCollapsed) setHeaderCollapsed(false);
 
     // Ignore the bounce past the bottom edge (it reads as scrolling up).
     const maxY = contentSize.height - layoutMeasurement.height;

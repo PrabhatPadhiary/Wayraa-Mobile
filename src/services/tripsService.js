@@ -256,6 +256,25 @@ export async function removeTripPlace(tripPlaceId) {
   return true;
 }
 
+/**
+ * Move a saved place to another list: 'stay' | 'food' | 'activity'.
+ * Backend: PATCH /api/trip-places/{id}/category (owners and editors only).
+ */
+export async function setTripPlaceCategory(tripPlaceId, category) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+  const response = await fetch(`${API_URL}/trip-places/${encodeURIComponent(tripPlaceId)}/category`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ category }),
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (response.status === 403) throw new ForbiddenError('You can view this trip but not edit it.');
+  if (response.status === 404) throw new Error('That place is no longer on this trip.');
+  if (!response.ok) throw new Error(`Could not move it (${response.status})`);
+  return response.json();
+}
+
 /** Shared error mapping for the destination endpoints (owners and editors only). */
 async function destinationError(response, fallback) {
   if (response.status === 401) return new AuthRequiredError();

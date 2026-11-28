@@ -79,11 +79,18 @@ export default function CommunityScreen({ navigation }) {
   const [shareRowHeight, setShareRowHeight] = useState(0);
   const onBarScroll = useHideTabBarOnScroll();
   const retryHint = useRetryHint();
+  // How far the header's bottom edge moves up when it collapses. The list
+  // keeps room for the full header at its top, so collapsing any sooner
+  // than this shows that room as an empty gap under the header.
+  const [collapseDistance, setCollapseDistance] = useState(0);
   const onListScroll = (e) => {
     onBarScroll(e);   // the tab bar hides on scroll down, returns on scroll up
     const y = e.nativeEvent.contentOffset.y;
-    if (y > 40 && !headerCollapsed) setHeaderCollapsed(true);
-    else if (y < 15 && headerCollapsed) setHeaderCollapsed(false);
+    // Collapse once that room has scrolled away (a short search result may
+    // never get there: it stays open). Open again a little before the room
+    // comes back, so it's open by the time it shows.
+    if (y > collapseDistance + 40 && !headerCollapsed) setHeaderCollapsed(true);
+    else if (y < collapseDistance + 20 && headerCollapsed) setHeaderCollapsed(false);
   };
   // Long-press preview: id of the journal shown in the bottom sheet.
   const [previewId, setPreviewId] = useState(null);
@@ -352,6 +359,7 @@ export default function CommunityScreen({ navigation }) {
         subtitle="Trip stories from fellow travellers"
         collapsed={headerCollapsed}
         collapseExtra={shareRowHeight}
+        onCollapseDistance={setCollapseDistance}
         // Keep the expanded height: the list's top padding stays put while the
         // header shrinks over it.
         onLayout={(e) => {

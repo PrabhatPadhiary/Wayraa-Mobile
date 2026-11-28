@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { ProfileSceneBack, ProfileSceneFront, SCENE_W, SCENE_H } from '../components/ProfileScene';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { COLORS, SIZES } from '../constants';
@@ -34,6 +35,8 @@ import {
   MAX_BIO,
   uploadProfilePhoto,
   removeProfilePhoto,
+  uploadCoverPhoto,
+  removeCoverPhoto,
   useMyPhoto,
   getMyTrips,
   AuthRequiredError,
@@ -42,9 +45,11 @@ import {
 } from '../services';
 import { pickNextTrip, formatDateRange, daysUntil } from '../utils/tripDates';
 import { normalizePhotoUrl, placePhotoUrl } from '../utils/placePhotos';
+import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import { showAlert } from '../components/AppDialog';
 import RefreshSpinner from '../components/RefreshSpinner';
 import RankBadge from '../components/RankBadge';
+import PhotoCropper from '../components/PhotoCropper';
 import JourneyCard from '../components/JourneyCard';
 import RankSheet from '../components/RankSheet';
 import RankCelebration from '../components/RankCelebration';
@@ -109,6 +114,9 @@ export default function ProfileScreen({ navigation }) {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [photoFailed, setPhotoFailed] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
+  // A picked photo being cropped: { asset, kind: 'avatar' | 'cover' }, or null.
+  const [cropping, setCropping] = useState(null);
 
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -219,18 +227,31 @@ export default function ProfileScreen({ navigation }) {
   };
 
   // ── Profile photo ──
-  const pickPhoto = async () => {
-    // The system photo picker needs no permission (Android and iOS), so we don't ask for photo access.
+  // Pick a photo, then crop it in our own cropper (the system one only
+  // crops square on iOS) and check the preview before it's saved.
+  // The system photo picker needs no permission (Android and iOS), so we don't ask for photo access.
+  const pickFor = async (kind) => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true, // square crop
-      aspect: [1, 1],
       quality: 1,
     });
     if (result.canceled || !result.assets?.length) return;
+    setCropping({ asset: result.assets[0], kind });
+  };
+  const pickPhoto = () => pickFor('avatar');
+
+  // Done in the cropper's preview: save it.
+  const onCropped = (image) => {
+    const kind = cropping?.kind;
+    setCropping(null);
+    if (kind === 'cover') saveCover(image);
+    else savePhoto(image);
+  };
+
+  const savePhoto = async (image) => {
     setPhotoBusy(true);
     try {
-      await uploadProfilePhoto(result.assets[0]);
+      await uploadProfilePhoto(image);
       setPhotoFailed(false);
     } catch (e) {
       showAlert('Couldn\'t update your photo', e?.message || 'Please try again.');
@@ -248,6 +269,50 @@ export default function ProfileScreen({ navigation }) {
     } finally {
       setPhotoBusy(false);
     }
+  };
+
+  // ── Cover photo (behind the header) ──
+  // Yours if you chose one, else the drawn countryside (as others see it).
+  const myCover = profile?.coverPhotoUrl || null;
+  const bannerPhoto = myCover ? cloudinarySized(myCover, IMAGE_WIDTH.FULL) : null;
+
+  const pickCover = () => pickFor('cover');
+
+  const saveCover = async (image) => {
+    setCoverBusy(true);
+    try {
+      const url = await uploadCoverPhoto(image);
+      setProfile((p) => ({ ...(p || {}), coverPhotoUrl: url }));
+    } catch (e) {
+      showAlert('Couldn\'t update your cover photo', e?.message || 'Please try again.');
+    } finally {
+      setCoverBusy(false);
+    }
+  };
+
+  const removeCover = async () => {
+    setCoverBusy(true);
+    try {
+      await removeCoverPhoto();
+      setProfile((p) => ({ ...(p || {}), coverPhotoUrl: null }));
+    } catch (e) {
+      showAlert('Couldn\'t remove your cover photo', e?.message || 'Please try again.');
+    } finally {
+      setCoverBusy(false);
+    }
+  };
+
+  const onCoverPress = () => {
+    if (coverBusy) return;
+    if (!myCover) {
+      pickCover();
+      return;
+    }
+    showAlert('Cover photo', undefined, [
+      { text: 'Choose a new photo', onPress: pickCover },
+      { text: 'Remove cover photo', style: 'destructive', onPress: removeCover },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const onAvatarPress = () => {
@@ -349,7 +414,9 @@ export default function ProfileScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" />
+      {/* Light over a photo (with its dark top fade), dark over the drawing
+          and once the white bar is in. */}
+      <StatusBar barStyle={bannerPhoto && !barOn ? 'light-content' : 'dark-content'} />
       <Animated.ScrollView
         ref={scrollRef}
         onScroll={onScroll}
@@ -366,12 +433,20 @@ export default function ProfileScreen({ navigation }) {
           />
         )}
       >
-        {/* Header: a drawn countryside, as a banner (its bottom is cropped). */}
+        {/* Header: your cover photo, else a drawn countryside (its bottom cropped). */}
         <View style={[styles.header, { height: bannerHeight }]}>
-          <View style={{ height: sceneHeight }}>
-            <ProfileSceneBack width={windowWidth} />
-            <ProfileSceneFront width={windowWidth} />
-          </View>
+          {bannerPhoto ? (
+            <>
+              <Image source={{ uri: bannerPhoto }} style={styles.fill} contentFit="cover" cachePolicy="memory-disk" transition={200} />
+              {/* Darker at the top so the status bar and buttons stay readable. */}
+              <LinearGradient colors={['rgba(0,0,0,0.35)', 'rgba(0,0,0,0)']} style={styles.coverShade} pointerEvents="none" />
+            </>
+          ) : (
+            <View style={{ height: sceneHeight }}>
+              <ProfileSceneBack width={windowWidth} />
+              <ProfileSceneFront width={windowWidth} />
+            </View>
+          )}
 
           <TouchableOpacity
             style={[styles.backButton, { top: insets.top + SIZES.spacing_sm }]}
@@ -381,6 +456,21 @@ export default function ProfileScreen({ navigation }) {
           >
             <Feather name="chevron-left" size={22} color={COLORS.primary} />
           </TouchableOpacity>
+
+          {/* Change the cover photo. */}
+          {!!profile && (
+            <TouchableOpacity
+              style={[styles.backButton, styles.coverButton, { top: insets.top + SIZES.spacing_sm }]}
+              onPress={onCoverPress}
+              accessibilityRole="button"
+              accessibilityLabel={myCover ? 'Change or remove your cover photo' : 'Add a cover photo'}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              {coverBusy
+                ? <ActivityIndicator size="small" color={COLORS.primary} />
+                : <Feather name="image" size={18} color={COLORS.primary} />}
+            </TouchableOpacity>
+          )}
 
 
         </View>
@@ -643,6 +733,15 @@ export default function ProfileScreen({ navigation }) {
       />
 
       {/* Edit name */}
+      <PhotoCropper
+        asset={cropping?.asset || null}
+        kind={cropping?.kind}
+        name={name}
+        photo={photo}
+        onDone={onCropped}
+        onCancel={() => setCropping(null)}
+      />
+
       <Modal visible={editingName} transparent animationType="slide" onRequestClose={() => setEditingName(false)}>
         <View style={styles.backdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setEditingName(false)} accessibilityLabel="Close" />
@@ -728,6 +827,25 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#D9F0FA',
   },
+  coverButton: {
+    left: undefined,
+    right: SIZES.spacing_lg,
+  },
+  // RN 0.88: spreading absoluteFillObject does nothing, so spelled out.
+  fill: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  coverShade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 110,
+  },
   // (Not "sheet": that's the edit-name sheet's style, further down.)
   pageSheet: {
     marginTop: -SIZES.radius_xl,
@@ -793,11 +911,12 @@ const styles = StyleSheet.create({
   },
   avatarBusy: {
     position: 'absolute',
-    top: 3,
-    left: 3,
-    width: 62,
-    height: 62,
-    borderRadius: 31,
+    // Exactly over the photo, inside the ring's 4pt padding.
+    top: 4,
+    left: 4,
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    borderRadius: AVATAR_SIZE / 2,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.45)',

@@ -43,7 +43,9 @@ export function describeTripChange(change) {
   const a = change.action;
   switch (change.section) {
     case 'spots':
-      return a === 'added' ? `${who} saved ${item || 'a spot'}` : `${who} removed a saved spot`;
+      if (a === 'added') return `${who} saved ${item || 'a spot'}`;
+      if (a === 'updated') return `${who} moved ${item || 'a saved spot'} to another list`;
+      return `${who} removed a saved spot`;
     case 'itinerary':
       if (a === 'added') return `${who} added ${item || 'a stop'} to the itinerary`;
       if (a === 'removed') return `${who} removed something from the itinerary`;
@@ -51,6 +53,7 @@ export function describeTripChange(change) {
     case 'budget':
       if (a === 'added') return `${who} added an expense${item ? `: ${item}` : ''}`;
       if (a === 'removed') return `${who} removed an expense`;
+      if (a === 'settled') return `${who} recorded a repayment`;
       return `${who} updated the budget`;
     case 'checklist':
       if (a === 'added') return `${who} added ${item ? `"${item}"` : 'an item'} to the checklist`;

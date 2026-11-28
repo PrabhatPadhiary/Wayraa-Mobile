@@ -16,11 +16,15 @@ const TOP_ZONE = 80;      // always show the bar this close to the top
  *   <FlatList onScroll={onBarScroll} scrollEventThrottle={16} … />
  *
  * `resetKey`: when it changes (e.g. the screen switches section), the bar comes back.
+ * `pinned`: while true the bar stays up whatever the scroll (e.g. while it
+ * holds "Add 3 places": the action and the count shouldn't slide away).
  */
-export default function useHideTabBarOnScroll(resetKey) {
-  const { setHidden } = useBottomBar();
+export default function useHideTabBarOnScroll(resetKey, { pinned = false } = {}) {
+  const { setHidden, notifyScroll } = useBottomBar();
   const hiddenRef = useRef(false);
   const lastY = useRef(0);
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
 
   const setOnce = useCallback((hide) => {
     if (hiddenRef.current === hide) return;
@@ -31,15 +35,24 @@ export default function useHideTabBarOnScroll(resetKey) {
   // A new section starts with the bar showing.
   useEffect(() => { lastY.current = 0; setOnce(false); }, [resetKey, setOnce]);
 
+  // Pinned: bring it back now, and keep it.
+  useEffect(() => { if (pinned) setOnce(false); }, [pinned, setOnce]);
+
   // Bring it back when leaving the screen (and reset for next time).
   useFocusEffect(useCallback(() => () => { lastY.current = 0; setOnce(false); }, [setOnce]));
 
   return useCallback((e) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
     const y = contentOffset.y;
+    if (pinnedRef.current) {
+      lastY.current = y;
+      return;
+    }
     // Ignore the bounce past the bottom edge (it reads as scrolling up).
     if (y > contentSize.height - layoutMeasurement.height) return;
     const dy = y - lastY.current;
+    // A real scroll (not a jitter): the bar closes an opened menu.
+    if (Math.abs(dy) > SCROLL_SLOP) notifyScroll();
     if (y < TOP_ZONE) {
       setOnce(false);
       lastY.current = y;
@@ -47,5 +60,5 @@ export default function useHideTabBarOnScroll(resetKey) {
       setOnce(dy > 0);
       lastY.current = y;
     }
-  }, [setOnce]);
+  }, [setOnce, notifyScroll]);
 }

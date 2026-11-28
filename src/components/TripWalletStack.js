@@ -5,6 +5,8 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
+  withSequence,
+  withDelay,
   interpolate,
   Extrapolation,
   useReducedMotion,
@@ -13,6 +15,8 @@ import Animated, {
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
+import { useFocusEffect } from '@react-navigation/native';
+import { claimOnce } from './Tips';
 import { COLORS, SIZES } from '../constants';
 
 // How much of each card behind shows above the one in front.
@@ -21,6 +25,11 @@ const PEEK = 30;
 const MAX_BEHIND = 2;
 const SETTLE = { duration: 420, dampingRatio: 0.82 };
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
+const EASE_IN_OUT = Easing.bezier(0.65, 0, 0.35, 1);
+// The one-time "these swipe" nudge: once per person, a moment after the
+// stack first shows.
+const NUDGE_TIP = 'trip_wallet_swipe';
+const NUDGE_DELAY = 700;
 
 /**
  * One card in the stack. `depth` 0 is the front; each step back moves it up
@@ -28,9 +37,17 @@ const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
  * like a pass pulled out of a wallet; thrown far or fast enough, it's tucked
  * behind the others (`onSendBack`) and slides back in from the side.
  */
-function StackCard({ depth, isFront, width, reduced, onBringFront, onSendBack, onHeight, children, label }) {
+function StackCard({ depth, isFront, width, reduced, nudge, onBringFront, onSendBack, onHeight, children, label }) {
   const d = useSharedValue(depth);
   const x = useSharedValue(0);
+  // Nudged: slide partway out to the left, as if pulled, then spring back.
+  useEffect(() => {
+    if (!nudge || !isFront || reduced) return;
+    x.set(withSequence(
+      withTiming(-width * 0.2, { duration: 420, easing: EASE_IN_OUT }),
+      withDelay(120, withSpring(0, { duration: 560, dampingRatio: 0.6 })),
+    ));
+  }, [nudge]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     d.set(reduced ? depth : withSpring(depth, SETTLE));
     // Just tucked behind: come back from where it was thrown.
@@ -128,6 +145,23 @@ export default function TripWalletStack({ items, renderItem }) {
   // Front first: the order the cards are stacked in.
   const [order, setOrder] = useState(() => items.map((i) => i.key));
   const [cardH, setCardH] = useState(0);
+  // Bumped once to nudge the front card (see NUDGE_TIP).
+  const [nudge, setNudge] = useState(0);
+
+  // First time this person sees a stack: nudge the front card so it's clear
+  // the cards swipe. Waits until the screen is in view and the cards are laid
+  // out; leaving before then doesn't use it up. Skipped with Reduce Motion
+  // (and not used up: the hint text above still says it).
+  useFocusEffect(React.useCallback(() => {
+    if (reduced || n < 2 || !cardH) return undefined;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      claimOnce(NUDGE_TIP).then((first) => {
+        if (first && !cancelled) setNudge((v) => v + 1);
+      });
+    }, NUDGE_DELAY);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [reduced, n, cardH]));
 
   // Keep the order in step with the trips (new ones go to the back).
   useEffect(() => {
@@ -175,6 +209,7 @@ export default function TripWalletStack({ items, renderItem }) {
               isFront={isFront}
               width={screenW}
               reduced={reduced}
+              nudge={nudge}
               label={item.label}
               onBringFront={() => bringFront(key)}
               onSendBack={sendFrontBack}

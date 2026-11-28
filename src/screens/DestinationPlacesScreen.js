@@ -19,8 +19,8 @@ import PlaceGridCard, { CardCornerButton } from '../components/PlaceGridCard';
 import { placeIconFor } from '../components/PlaceSearchField';
 import PickToggle from '../components/PickToggle';
 import { useBottomBar } from '../context/BottomBarContext';
-import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
-import useTripPicks from '../hooks/useTripPicks';
+import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+import useTripPicks, { pickCtaLabel } from '../hooks/useTripPicks';
 import {
   searchInDestination,
   searchAnyPlace,
@@ -28,7 +28,7 @@ import {
   addFavourite,
   removeFavourite,
   getPlaceDetails,
-  journalCategoryFor,
+  tripCategoryForPlace,
   placeKindFor,
   inPlaceCategory,
   AuthRequiredError,
@@ -38,13 +38,6 @@ import { showAlert } from '../components/AppDialog';
 import { GridSkeleton } from '../components/skeletons';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
-/** A trip place category from Google types: food, stay or activity. */
-function tripCategoryFromTypes(types = []) {
-  const c = journalCategoryFor(types);
-  if (c === 'food') return 'food';
-  if (c === 'stay') return 'stay';
-  return 'activity';
-}
 
 /** Labels on mixed search results. */
 const KIND_LABEL = { stay: 'Stay', food: 'Food', activity: 'Things to do' };
@@ -81,7 +74,6 @@ const SUGGEST_RADIUS = 50000; // metres around the destination
  */
 export default function DestinationPlacesScreen({ navigation, route }) {
   // The bottom bar slides away while scrolling down, back on scroll up.
-  const onBarScroll = useHideTabBarOnScroll();
   const {
     placeId,
     destinationName,
@@ -107,14 +99,25 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   // ── Adding to a trip stop (pickForTrip) ──
   // placeId -> trip place id for the stop's saved places ('' = saved, id not
   // known yet). Seeded from the caller so ticks show at once, then synced.
-  // Ticks change the moment you tap; saving happens in the background.
+  // Ticks are a draft (shared with the destination page) until "Add N
+  // places" saves them.
   const pickTripId = pickForTrip?.tripId;
   const pickDestId = pickForTrip?.destinationId;
-  const { picked: pickedMap, toggle: togglePlace, refresh: loadPicked } = useTripPicks({
+  const {
+    picked: pickedMap,
+    toggle: togglePlace,
+    refresh: loadPicked,
+    addedCount: pickAdded,
+    changed: pickChanged,
+    saving: pickSaving,
+    commit: commitPicks,
+  } = useTripPicks({
     tripId: pickTripId,
     destId: pickDestId,
     seed: pickForTrip?.saved,
   });
+  // The bar slides away on scroll, except while it holds "Add N places".
+  const onBarScroll = useHideTabBarOnScroll(undefined, { pinned: !!pickForTrip && pickChanged });
   useFocusEffect(useCallback(() => {
     if (pickTripId) loadPicked().catch(() => {});
   }, [pickTripId, loadPicked]));
@@ -123,9 +126,22 @@ export default function DestinationPlacesScreen({ navigation, route }) {
   const { claimBar, releaseBar } = useBottomBar();
   const barOwner = route?.key;
   const isFocused = useIsFocused();
-  const pickedCount = pickedMap.size;
-  // "Done · 3 added": this visit's changes only (not everything on the stop).
-  const doneLabel = pickDoneLabel(pickedMap, pickForTrip?.initial);
+  // "Add 3 places" (only additions are counted), "Save changes" or "Done".
+  const doneLabel = pickCtaLabel({ addedCount: pickAdded, changed: pickChanged, saving: pickSaving });
+  // Nothing to save: back to the destination page. Otherwise save, then
+  // straight back to the trip.
+  const confirmPicks = async () => {
+    if (!pickChanged) { navigation.goBack(); return; }
+    try {
+      await commitPicks();
+      // `merge`: keep the trip page's params. Without it popTo replaces them
+      // (with nothing), and the trip page loses its tripId: it then never
+      // hears that the places were saved and can't reload.
+      navigation.popTo('TripDetail', undefined, { merge: true });
+    } catch (e) {
+      showAlert("Couldn't save all places", e?.message || 'Please try again.');
+    }
+  };
   // Browsing / searching a destination: the bar stays collapsed with its
   // "Create a trip" button, the same as on the destination page.
   useEffect(() => {
@@ -142,22 +158,25 @@ export default function DestinationPlacesScreen({ navigation, route }) {
 
   useEffect(() => {
     if (!pickForTrip || !isFocused) return undefined;
+    // Off screen until something is chosen, then "Add N places".
     claimBar(barOwner, {
-      cta: {
+      cta: pickChanged ? {
         label: doneLabel,
         icon: 'checkmark-circle',
-        onPress: () => navigation.goBack(),
-      },
+        onPress: pickSaving ? () => {} : confirmPicks,
+      } : null,
+      away: !pickChanged,
+      ctaOnly: true,
     });
     return () => releaseBar(barOwner);
-  }, [pickForTrip, isFocused, doneLabel, claimBar, releaseBar, barOwner, navigation]);
+  }, [pickForTrip, isFocused, doneLabel, pickSaving, pickChanged, claimBar, releaseBar, barOwner, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Add / remove a place on the trip stop. `place` is a search result or a
   // suggestion (suggestions are looked up first, for photo and coordinates).
   const togglePick = (place, { fromSuggestion = false } = {}) => {
     const id = place.placeId;
     togglePlace(id, async () => {
-      const category = toTripCategory(categoryKey) || tripCategoryFromTypes(place.types);
+      const category = toTripCategory(categoryKey) || tripCategoryForPlace(place.types || [], place.name);
       let source = place;
       if (fromSuggestion) {
         const details = await getPlaceDetails(id);

@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Platform } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+import { ticketPath } from '../utils/ticketShape';
+import useHoldPress, { HOLD_MS } from '../hooks/useHoldPress';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -11,10 +14,21 @@ import { formatMoney } from '../utils/money';
 
 export const PASS_HEIGHT = 162;
 const STUB_WIDTH = 104;
+// White between the tear line and the photo stub: just wider than the
+// notch's reach, so the cut-out never takes a bite of the photo.
+const STUB_GAP = 11;
 /** How far the tear line (the dots before the photo stub) is from the right edge. */
-export const TEAR_FROM_RIGHT = STUB_WIDTH + SIZES.spacing_sm + 1;
+export const TEAR_FROM_RIGHT = STUB_WIDTH + STUB_GAP + 1;
 const NOTCH = 22;
 const RADIUS = 20;
+/** The pass's outline, for a tip's spotlight: its corners and its two notches. */
+export const PASS_TIP_SHAPE = {
+  radius: RADIUS,
+  notches: [
+    { side: 'top', at: TEAR_FROM_RIGHT, fromEnd: true, r: NOTCH / 2 },
+    { side: 'bottom', at: TEAR_FROM_RIGHT, fromEnd: true, r: NOTCH / 2 },
+  ],
+};
 const AVATAR = 22;
 const MAX_AVATARS = 3;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -166,7 +180,7 @@ function stubInfo(trip) {
  * @param {boolean} [showYear]       add the year to the dates
  * @param {() => void} onPress
  * @param {() => void} [onLongPress]
- * @param {string} [notchColor]     colour behind the pass (the notches are cut-outs)
+ * @param {string} [notchColor]     no longer used: the notches are real cut-outs
  * @param {boolean} [flatBottom]    square bottom (another section attaches below)
  */
 export default function TripBoardingPass({
@@ -179,11 +193,14 @@ export default function TripBoardingPass({
   onLongPress,
   accessibilityActions,
   onAccessibilityAction,
-  notchColor,
   flatBottom = false,
 }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [imageUri]);
+  // Presses in while held, with a tick when the menu opens.
+  const hold = useHoldPress();
+  // The pass's width, for its notched white background.
+  const [passW, setPassW] = useState(0);
 
   const place = placeName(trip) || trip.name;
   const code = placeCode(place);
@@ -210,20 +227,45 @@ export default function TripBoardingPass({
   ].filter(Boolean).join(', ');
 
   return (
-    <View style={[styles.shadow, flatBottom && styles.flatBottom]}>
+    <Animated.View style={[styles.shadow, flatBottom && styles.flatBottom, onLongPress && hold.style]}>
+      {/* iOS casts one shadow per view: this one's the tight contact shadow
+          under the edge (the outer view's is the soft, far one). */}
+      <View style={[styles.contactShadow, flatBottom && styles.flatBottom]}>
       <TouchableOpacity
         style={[styles.pass, flatBottom && styles.flatBottom]}
         activeOpacity={0.92}
         disabled={!onPress && !onLongPress}
         onPress={onPress}
-        onLongPress={onLongPress}
-        delayLongPress={350}
+        onLongPress={hold.held(onLongPress)}
+        onPressIn={onLongPress ? hold.onPressIn : undefined}
+        onPressOut={onLongPress ? hold.onPressOut : undefined}
+        delayLongPress={HOLD_MS}
         accessibilityRole="button"
         accessibilityLabel={a11y}
         accessibilityHint="Long press for more options"
         accessibilityActions={accessibilityActions}
         onAccessibilityAction={onAccessibilityAction}
+        onLayout={(e) => {
+          const w = Math.round(e.nativeEvent.layout.width);
+          if (w !== passW) setPassW(w);
+        }}
       >
+        {/* The white ticket, with its two notches cut out (see-through). Plain
+            white for the first frame, until its width is known. */}
+        {passW ? (
+          <Svg width={passW} height={PASS_HEIGHT} style={styles.fill} pointerEvents="none">
+            <Path
+              d={ticketPath(passW, PASS_HEIGHT, {
+                radius: RADIUS,
+                flatBottom,
+                notches: PASS_TIP_SHAPE.notches.filter((n) => !flatBottom || n.side === 'top'),
+              })}
+              fill={COLORS.white}
+            />
+          </Svg>
+        ) : (
+          <View style={[styles.fill, styles.plainWhite]} pointerEvents="none" />
+        )}
         {/* Main part */}
         <View style={styles.main}>
           <View style={styles.codeRow}>
@@ -321,21 +363,43 @@ export default function TripBoardingPass({
           )}
         </View>
 
-        <View style={[styles.notch, styles.notchTop, notchColor && { backgroundColor: notchColor }]} pointerEvents="none" />
-        {!flatBottom && <View style={[styles.notch, styles.notchBottom, notchColor && { backgroundColor: notchColor }]} pointerEvents="none" />}
       </TouchableOpacity>
-    </View>
+      </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Layered for depth: a soft shadow far below (lifted off the page) and a
+  // tight, darker one right under the edge (where it meets it).
+  // iOS: the shadows follow what's drawn, notches included. Android's
+  // elevation would show grey through the notches, so it gets outer box
+  // shadows (drawn only outside the card), all three layers in one.
   shadow: {
     borderRadius: RADIUS,
-    shadowColor: '#1C2833',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#1C2833',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.13,
+        shadowRadius: 16,
+      },
+      default: {
+        boxShadow: '0px 1px 2px rgba(28, 40, 51, 0.12), 0px 4px 8px rgba(28, 40, 51, 0.07), 0px 12px 22px rgba(28, 40, 51, 0.12)',
+      },
+    }),
+  },
+  contactShadow: {
+    borderRadius: RADIUS,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#1C2833',
+        shadowOffset: { width: 0, height: 1.5 },
+        shadowOpacity: 0.14,
+        shadowRadius: 2.5,
+      },
+      default: {},
+    }),
   },
   // Attached to a section below: square bottom, and no shadow of its own
   // (it would fall across the join; the whole ticket casts one).
@@ -343,14 +407,17 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
     shadowOpacity: 0,
-    elevation: 0,
+    boxShadow: 'none',
   },
   pass: {
     height: PASS_HEIGHT,
     flexDirection: 'row',
     borderRadius: RADIUS,
-    backgroundColor: COLORS.white,
+    // No fill: the notched white shape behind the content is the ticket.
     overflow: 'hidden',
+  },
+  plainWhite: {
+    backgroundColor: COLORS.white,
   },
   fill: {
     position: 'absolute',
@@ -501,7 +568,6 @@ const styles = StyleSheet.create({
     paddingVertical: NOTCH / 2 + 6,
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: COLORS.white,
   },
   tearDot: {
     width: 2,
@@ -514,7 +580,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: SIZES.spacing_sm,
-    marginLeft: SIZES.spacing_sm,
+    marginLeft: STUB_GAP,
     overflow: 'hidden',
   },
   stubLabel: {
@@ -554,15 +620,4 @@ const styles = StyleSheet.create({
     backgroundColor: '#7FD8A6',
   },
   // Semicircle cut-outs where the stub tears off (page colour, so they read as holes).
-  notch: {
-    position: 'absolute',
-    width: NOTCH,
-    height: NOTCH,
-    borderRadius: NOTCH / 2,
-    backgroundColor: COLORS.backgroundWarm,
-    // Centred on the tear line (2px wide, just left of the stub's margin).
-    right: STUB_WIDTH + SIZES.spacing_sm + 1 - NOTCH / 2,
-  },
-  notchTop: { top: -NOTCH / 2 },
-  notchBottom: { bottom: -NOTCH / 2 },
 });

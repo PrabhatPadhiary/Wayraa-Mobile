@@ -31,8 +31,9 @@ import {
   AuthRequiredError,
   peekFavourites,
 } from '../services';
-import { buildTripPlaceDto, toTripCategory, pickDoneLabel } from '../utils/tripPlaces';
-import useTripPicks from '../hooks/useTripPicks';
+import { buildTripPlaceDto, toTripCategory } from '../utils/tripPlaces';
+import useTripPicks, { pickCtaLabel } from '../hooks/useTripPicks';
+import { showAlert } from '../components/AppDialog';
 import { cityCentre } from '../utils/address';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 
@@ -77,7 +78,6 @@ const FILTER_ICONS = {
  */
 export default function DestinationDetailScreen({ navigation, route }) {
   // The bottom bar slides away while scrolling down, back on scroll up.
-  const onBarScroll = useHideTabBarOnScroll();
   const { placeId, name, secondary, pickForTrip } = route.params || {};
   const insets = useSafeAreaInsets();
 
@@ -303,15 +303,20 @@ export default function DestinationDetailScreen({ navigation, route }) {
   // permanent "Create a trip" button beside it — not only after scrolling.
   // Cleared when leaving. The picking CTA ("Add (N)") is kept in sync by a
   // separate effect below so a count change doesn't reset the bar.
+  // Through a ref, so the effect below doesn't re-run when the place's
+  // details load (each re-run released the bar, and while picking, nothing
+  // claimed it back: the normal tab bar showed until you came back to the page).
+  const createTripRef = useRef(handleCreateTrip);
+  createTripRef.current = handleCreateTrip;
   useFocusEffect(
     useCallback(() => {
       if (!pickForTrip) {
-        claimBar(barOwner, { cta: { label: 'Create a trip', icon: 'add-circle-outline', onPress: handleCreateTrip } });
+        claimBar(barOwner, { cta: { label: 'Create a trip', icon: 'add-circle-outline', onPress: () => createTripRef.current() } });
       }
       // Only clears the bar if this page still owns it (not if "See all" or
       // search has already set it up).
       return () => releaseBar(barOwner);
-    }, [claimBar, releaseBar, barOwner, handleCreateTrip, pickForTrip])
+    }, [claimBar, releaseBar, barOwner, pickForTrip])
   );
 
   // ── Trip picking (only when opened with `pickForTrip`) ─────────────────────
@@ -323,13 +328,22 @@ export default function DestinationDetailScreen({ navigation, route }) {
   const isFocused = useIsFocused();
   const pickTripId = pickForTrip?.tripId;
   const pickDestId = pickForTrip?.destinationId;
-  // Ticks change the moment you tap; saving happens in the background.
+  // Ticks are a draft until "Add N places" saves them (and only then is
+  // anyone on the trip notified).
   const {
     picked: pickedMap,
     ready: pickedReady,
     toggle: togglePlace,
     refresh: loadPicked,
+    addedCount: pickAdded,
+    changed: pickChanged,
+    saving: pickSaving,
+    commit: commitPicks,
+    discard: discardPicks,
+    pending: pendingPicks,
   } = useTripPicks({ tripId: pickTripId, destId: pickDestId, seed: pickForTrip?.saved });
+  // The bar slides away on scroll, except while it holds "Add N places".
+  const onBarScroll = useHideTabBarOnScroll(undefined, { pinned: !!pickForTrip && pickChanged });
 
   useFocusEffect(
     useCallback(() => {
@@ -345,22 +359,52 @@ export default function DestinationDetailScreen({ navigation, route }) {
     togglePlace(item.placeId, () => buildTripPlaceDto(item, category));
   }, [togglePlace, activeCategory]);
 
-  // "Add (N)": N is every place saved to this destination across the
-  // Stays, Food and Activities tabs, including ones added earlier.
-  const pickedCount = pickedMap.size;
-  // "Done · 3 added": this visit's changes only (not everything on the stop).
-  const doneLabel = pickDoneLabel(pickedMap, pickForTrip?.initial);
+  // "Add 3 places" (only additions are counted), "Save changes" or "Done".
+  const doneLabel = pickCtaLabel({ addedCount: pickAdded, changed: pickChanged, saving: pickSaving });
+  // Save the draft, then back to the trip.
+  const confirmPicks = useCallback(async () => {
+    if (!pickChanged) { navigation.goBack(); return; }
+    try {
+      await commitPicks();
+      navigation.goBack();
+    } catch (e) {
+      showAlert("Couldn't save all places", e?.message || 'Please try again.');
+    }
+  }, [pickChanged, commitPicks, navigation]);
   useEffect(() => {
     if (!pickForTrip || !isFocused) return;
-    // While picking, the bar stays collapsed (Home circle + "Done · N added") at all times.
+    // While picking, the bar is off screen until something is chosen, then
+    // slides up as "Add N places" (a lone Home circle looked odd).
     claimBar(barOwner, {
-      cta: {
+      cta: pickChanged ? {
         label: doneLabel,
         icon: 'checkmark-circle',
-        onPress: () => navigation.goBack(),
-      },
+        onPress: pickSaving ? () => {} : confirmPicks,
+      } : null,
+      away: !pickChanged,
+      ctaOnly: true,
     });
-  }, [pickForTrip, isFocused, doneLabel, claimBar, barOwner, navigation]);
+  }, [pickForTrip, isFocused, doneLabel, pickChanged, pickSaving, confirmPicks, claimBar, barOwner]);
+
+  // Leaving with ticks that aren't saved: ask before throwing them away.
+  // (Reads the draft as it is now: right after saving, this runs before the
+  // screen has re-rendered.)
+  useEffect(() => {
+    if (!pickForTrip) return undefined;
+    return navigation.addListener('beforeRemove', (e) => {
+      const { changed, saving, added } = pendingPicks();
+      if (!changed || saving) return;
+      e.preventDefault();
+      showAlert(
+        added ? `Discard ${added} selected ${added === 1 ? 'place' : 'places'}?` : 'Discard your changes?',
+        "They haven't been added to the trip yet.",
+        [
+          { text: 'Keep picking', style: 'cancel' },
+          { text: 'Discard', style: 'destructive', onPress: () => { discardPicks(); navigation.dispatch(e.data.action); } },
+        ],
+      );
+    });
+  }, [pickForTrip, navigation, discardPicks, pendingPicks]);
 
 
   // Favourites: set of placeIds currently favourited, plus a per-place pending

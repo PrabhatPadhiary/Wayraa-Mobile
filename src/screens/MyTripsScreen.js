@@ -19,10 +19,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES } from '../constants';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import { EmptyState, FilterChips, SignInPrompt, ScreenHeader, TripListSkeleton, EditTripSheet } from '../components';
-import TripBoardingPass, { TEAR_FROM_RIGHT, placeName, placeCode, tripPhase } from '../components/TripBoardingPass';
+import TripBoardingPass, { TEAR_FROM_RIGHT, PASS_TIP_SHAPE, placeName, placeCode, tripPhase } from '../components/TripBoardingPass';
 import TripSortSheet, { SORT_OPTIONS } from '../components/TripSortSheet';
-import FeaturedTripPass from '../components/FeaturedTripPass';
+import FeaturedTripPass, { FEATURED_TIP_SHAPE } from '../components/FeaturedTripPass';
 import TripWalletStack from '../components/TripWalletStack';
+import { useTip } from '../components/Tips';
 import { showPassPrint } from '../components/PassPrintOverlay';
 import { ripTicket, RIP_FALL_AT } from '../components/TicketRipOverlay';
 import DuplicateTripSheet from '../components/DuplicateTripSheet';
@@ -359,6 +360,22 @@ export default function MyTripsScreen({ navigation }) {
     return { featured: featuredTrips.map((t) => byTrip.get(t)), sections: list };
   }, [entries, segment, q, sort, group]);
   const { featured, sections } = arranged;
+  // One-time tip: hold a ticket for its menu, the spotlight in the ticket's
+  // own shape. On the stack's front card when there's a stack (only after
+  // the stack's swipe nudge has played and finished, so they never overlap);
+  // else on the first ticket in the list; else on the one featured card.
+  const holdTipRef = useRef(null);
+  const firstCardIsWallet = featured.length > 1;
+  const holdTipOn = firstCardIsWallet ? 'wallet' : sections.length > 0 ? 'list' : 'featured';
+  useTip('mytrips_hold', holdTipRef, {
+    shape: holdTipOn === 'list' ? PASS_TIP_SHAPE : FEATURED_TIP_SHAPE,
+    title: 'Hold a ticket for more',
+    text: 'Press and hold any trip to reuse its plan, or to edit or delete a trip you made.',
+    enabled: !loading && !q && (featured.length > 0 || sections.length > 0),
+    after: firstCardIsWallet ? 'trip_wallet_swipe' : undefined,
+    // The nudge starts ~0.7s in and takes ~1.1s.
+    delay: firstCardIsWallet ? 2600 : 1200,
+  });
   const shownCount = sections.reduce((n, sec) => n + sec.count, 0) + featured.length;
   const rows = [
     ...(featured.length > 1
@@ -373,6 +390,8 @@ export default function MyTripsScreen({ navigation }) {
     ]),
     ]),
   ];
+  // The row the hold tip points at (see holdTipOn).
+  const holdTipRowId = rows.find((r) => r.type === (holdTipOn === 'list' ? 'trip' : holdTipOn))?.id;
 
   const loadTrips = useCallback(async () => {
     setError(false);
@@ -648,12 +667,15 @@ export default function MyTripsScreen({ navigation }) {
             data={rows}
             keyExtractor={(r) => r.id}
             renderItem={({ item }) => {
+              const tipRef = item.id === holdTipRowId ? holdTipRef : undefined;
               if (item.type === 'featured') {
                 return (
                   <FeaturedTripPass
+                    cardRef={tipRef}
                     trip={item.entry.trip}
                     imageUri={coverFor(item.entry.trip, 800)}
                     onOpen={(tab) => openTrip(item.entry.trip, tab)}
+                    onLongPress={() => showPassMenu(item.entry.trip, item.entry.isOwner)}
                   />
                 );
               }
@@ -661,12 +683,14 @@ export default function MyTripsScreen({ navigation }) {
                 return (
                   <TripWalletStack
                     items={item.entries.map((e) => ({ key: String(e.trip.id), label: e.trip.name, entry: e }))}
-                    renderItem={({ entry }) => (
+                    renderItem={({ entry }, { isFront }) => (
                       <FeaturedTripPass
+                        cardRef={isFront ? tipRef : undefined}
                         style={styles.walletCard}
                         trip={entry.trip}
                         imageUri={coverFor(entry.trip, 800)}
                         onOpen={(tab) => openTrip(entry.trip, tab)}
+                        onLongPress={() => showPassMenu(entry.trip, entry.isOwner)}
                       />
                     )}
                   />
@@ -682,7 +706,10 @@ export default function MyTripsScreen({ navigation }) {
               return (
                 <View
                   style={styles.passGap}
-                  ref={(r) => { passRefs.current[item.entry.trip.id] = r; }}
+                  ref={(r) => {
+                    passRefs.current[item.entry.trip.id] = r;
+                    if (tipRef) tipRef.current = r;
+                  }}
                   collapsable={false}
                 >
                   {renderPass(item.entry)}

@@ -13,7 +13,8 @@ import {
   Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { useBottomBar } from '../context/BottomBarContext';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
@@ -29,7 +30,7 @@ import {
   getFavourites,
   addFavourite,
   removeFavourite,
-  journalCategoryFor,
+  tripCategoryForPlace,
   AuthRequiredError,
   peekFavourites,
 } from '../services';
@@ -114,7 +115,6 @@ function SectionTitle({ icon, tint, color, title, right }) {
  */
 export default function PlaceDetailScreen({ navigation, route }) {
   // The bottom bar slides away while scrolling down, back on scroll up.
-  const onBarScroll = useHideTabBarOnScroll();
   const {
     placeId,
     name: routeName,
@@ -224,27 +224,37 @@ export default function PlaceDetailScreen({ navigation, route }) {
     geometry: details?.geometry,
     previewUrl: heroPhoto,
   };
-  // Came here while adding places to a trip stop (pickForTrip): the button
-  // adds straight to that stop (and removes again), like the + on the cards.
+  // Came here while choosing places for a trip stop (pickForTrip): the
+  // button ticks this place in the same draft as the + on the cards; it's
+  // saved when you confirm with "Add N places" on the list.
   // pickedId: the trip place id when it's on the stop ('' = on it, id not
   // known yet), null when it isn't.
   const pickTripId = pickForTrip?.tripId;
   const pickDestId = pickForTrip?.destinationId;
-  // Added or removed the moment you tap; saving happens in the background.
-  const { picked: pickedOnStop, toggle: togglePlace, refresh: refreshPicked } = useTripPicks({
+  const {
+    picked: pickedOnStop,
+    saved: savedOnStop,
+    toggle: togglePlace,
+    refresh: refreshPicked,
+  } = useTripPicks({
     tripId: pickTripId,
     destId: pickDestId,
     seed: pickForTrip?.saved,
   });
+  // While picking, the bar holds this place's action, so it stays up.
+  const onBarScroll = useHideTabBarOnScroll(undefined, { pinned: !!pickForTrip });
+  const { claimBar, releaseBar } = useBottomBar();
+  const barOwner = route?.key;
+  const isFocused = useIsFocused();
+  // The bar's action is set up below (it needs togglePick).
+  const pickBarRef = useRef(null);
   useFocusEffect(useCallback(() => {
     if (pickTripId && pickDestId) refreshPicked().catch(() => {});
   }, [pickTripId, pickDestId, refreshPicked]));
 
   const togglePick = () => {
     togglePlace(placeId, () => {
-      const fromTypes = journalCategoryFor(details?.types || []);
-      const cat = toTripCategory(category)
-        || (fromTypes === 'food' ? 'food' : fromTypes === 'stay' ? 'stay' : 'activity');
+      const cat = toTripCategory(category) || tripCategoryForPlace(details?.types || [], displayName);
       return buildTripPlaceDto({
         placeId,
         name: displayName,
@@ -257,6 +267,30 @@ export default function PlaceDetailScreen({ navigation, route }) {
     });
   };
   const isPicked = pickedOnStop.has(placeId);
+  // On the trip already, or only ticked (saved when you confirm on the list).
+  const isSavedOnStop = savedOnStop.has(placeId);
+  // While choosing places for a trip stop, the bottom bar is this place's
+  // one action: tick it (or untick it) and go back to the list, where "Add
+  // N places" saves everything chosen.
+  const pickBarLabel = isPicked ? (isSavedOnStop ? 'Remove from trip' : 'Remove from selection') : 'Add to trip';
+  pickBarRef.current = () => {
+    togglePick();
+    navigation.goBack();
+  };
+  // Claimed again only when the label changes (claiming re-renders the
+  // screens using the bar, so it mustn't run on every render).
+  useEffect(() => {
+    if (!pickForTrip || !isFocused) return undefined;
+    claimBar(barOwner, {
+      cta: {
+        label: pickBarLabel,
+        icon: isPicked ? 'close-circle-outline' : 'add-circle-outline',
+        onPress: () => pickBarRef.current?.(),
+      },
+      ctaOnly: true,
+    });
+    return () => releaseBar(barOwner);
+  }, [pickForTrip, isFocused, pickBarLabel, isPicked, claimBar, releaseBar, barOwner]);
 
   const openTripFromSheet = (tripId, tripName) => {
     navigation.getParent()?.navigate('MyTrips', {
@@ -517,24 +551,9 @@ export default function PlaceDetailScreen({ navigation, route }) {
         <View style={styles.sheet} onLayout={(e) => { sheetY.current = e.nativeEvent.layout.y; }}>
           {/* Main action + quick actions */}
           <View style={styles.card}>
-            {pickForTrip ? (
-              // Adding places to a trip stop: straight in (or out), no sheet.
-              <TouchableOpacity
-                style={[styles.addButton, isPicked && styles.addButtonAdded]}
-                onPress={togglePick}
-                activeOpacity={0.9}
-                accessibilityRole="button"
-                accessibilityState={{ selected: isPicked }}
-                accessibilityLabel={isPicked
-                  ? `Added to ${pickForTrip.tripName || 'your trip'}. Tap to remove`
-                  : `Add to ${pickForTrip.tripName || 'your trip'}`}
-              >
-                <Feather name={isPicked ? 'check' : 'plus'} size={18} color={isPicked ? '#2B6A4B' : COLORS.white} />
-                <Text style={[styles.addButtonText, isPicked && styles.addButtonTextAdded]} numberOfLines={1}>
-                  {isPicked ? 'Added to ' : 'Add to '}{pickForTrip.tripName || 'your trip'}
-                </Text>
-              </TouchableOpacity>
-            ) : (
+            {/* Choosing places for a trip: the bottom bar holds this place's
+                action (no second button here). */}
+            {!pickForTrip && (
               <TouchableOpacity
                 style={styles.addButton}
                 onPress={() => setTripSheetOpen(true)}
@@ -545,7 +564,7 @@ export default function PlaceDetailScreen({ navigation, route }) {
                 <Text style={styles.addButtonText}>Add to trip</Text>
               </TouchableOpacity>
             )}
-            <View style={styles.quickRow}>
+            <View style={[styles.quickRow, pickForTrip && styles.quickRowFirst]}>
               <TouchableOpacity style={styles.quick} onPress={handleDirections} activeOpacity={0.85} accessibilityRole="button">
                 <Feather name="navigation" size={15} color={COLORS.primary} />
                 <Text style={styles.quickText}>Directions</Text>
@@ -1036,21 +1055,13 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.white,
   },
-  // Already on the trip stop: a calm green outline instead of the orange fill.
-  addButtonAdded: {
-    paddingHorizontal: SIZES.spacing_base,
-    backgroundColor: '#EAF6F0',
-    borderWidth: 1.5,
-    borderColor: '#9FD3B9',
-  },
-  addButtonTextAdded: {
-    color: '#2B6A4B',
-  },
   quickRow: {
     flexDirection: 'row',
     gap: SIZES.spacing_sm,
     marginTop: SIZES.spacing_md,
   },
+  // No add button above it (choosing places for a trip).
+  quickRowFirst: { marginTop: 0 },
   quick: {
     flex: 1,
     flexDirection: 'row',

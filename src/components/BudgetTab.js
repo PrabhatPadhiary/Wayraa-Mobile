@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ArrivalGlow, useLiveArrivals } from './Motion';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES } from '../constants';
-import { formatMoney } from '../utils/money';
+import { formatMoney, groupDigits, formatAmountInput } from '../utils/money';
 import {
   getExpenses,
   createExpense,
@@ -23,13 +23,20 @@ import {
   setTripBudget,
   getStoredUser,
   peekExpenses,
+  getBalances,
+  peekBalances,
+  settleUp,
+  deleteSettlement,
 } from '../services';
+import { showAlert } from './AppDialog';
 import { setCache, CacheKeys } from '../services/cache';
 import { formatDay, dayCount } from '../utils/tripDates';
 import ExpenseSheet, { EXPENSE_CATEGORIES } from './ExpenseSheet';
 import { isoToDay, todayDay } from './DateRangeCalendar';
 import { BudgetSkeleton } from './skeletons';
 import { useOnReconnect } from '../hooks/useNetwork';
+
+const firstName = (name) => (name || 'Traveller').trim().split(/\s+/)[0];
 
 const CATEGORY_BY_KEY = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 
@@ -46,7 +53,7 @@ function dayHeading(iso) {
 }
 
 /**
- * Small sheet for the trip's total budget + currency (owners only).
+ * Small sheet for the trip's total budget + currency (owners and editors).
  */
 function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
   const insets = useSafeAreaInsets();
@@ -57,7 +64,7 @@ function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
 
   useEffect(() => {
     if (!visible) return;
-    setAmount(totalBudget ? String(Math.round(totalBudget)) : '');
+    setAmount(totalBudget ? groupDigits(Math.round(totalBudget), currency || '₹') : '');
     setCur(currency || '₹');
     setError('');
     setSaving(false);
@@ -90,12 +97,12 @@ function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
             <TextInput
               style={styles.amountInput}
               value={amount}
-              onChangeText={(t) => setAmount(t.replace(/[^0-9,]/g, ''))}
+              onChangeText={(t) => setAmount(formatAmountInput(t, cur))}
               placeholder="0"
               placeholderTextColor={COLORS.border}
               keyboardType="number-pad"
               autoFocus
-              maxLength={12}
+              maxLength={16}
               accessibilityLabel="Total budget"
             />
           </View>
@@ -106,7 +113,11 @@ function BudgetSheet({ visible, totalBudget, currency, onClose, onSave }) {
                 <TouchableOpacity
                   key={c}
                   style={[styles.currencyChip, active && styles.currencyChipActive]}
-                  onPress={() => setCur(c)}
+                  onPress={() => {
+                    setCur(c);
+                    // Rupees group 1,00,000; others 100,000.
+                    setAmount((a) => formatAmountInput(a, c));
+                  }}
                   activeOpacity={0.85}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: active }}
@@ -158,6 +169,11 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
     if (status === 'ready') setCache(CacheKeys.expenses(trip.id), expenses);
   }, [status, expenses, trip.id]);
   const [myUserId, setMyUserId] = useState(null);
+  // Who owes whom (from the server, so every screen agrees). Null until loaded.
+  const [balances, setBalances] = useState(() => peekBalances(trip.id) || null);
+  useEffect(() => {
+    if (balances) setCache(CacheKeys.balances(trip.id), balances);
+  }, [balances, trip.id]);
   const [sheet, setSheet] = useState(null); // null | { expense: object|null }
   const [budgetOpen, setBudgetOpen] = useState(false);
 
@@ -166,11 +182,19 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
   const currency = trip.currency || '₹';
   const budget = trip.totalBudget || 0;
   const members = useMemo(
-    () => (trip.members || []).filter((m) => m.userId).map((m) => ({ userId: m.userId, name: m.name })),
+    () => (trip.members || []).filter((m) => m.userId).map((m) => ({ userId: m.userId, name: m.name, photoUrl: m.photoUrl })),
     [trip.members]
   );
 
+  // Quietly: when it can't load, the saved copy (or nothing) stays.
+  const loadBalances = useCallback(async () => {
+    try {
+      setBalances(await getBalances(trip.id));
+    } catch {}
+  }, [trip.id]);
+
   const load = useCallback(async () => {
+    loadBalances();
     try {
       const data = await getExpenses(trip.id);
       setExpenses(data);
@@ -180,7 +204,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
       // there is one; only show the error when there's nothing to show.
       setStatus(peekExpenses(trip.id) ? 'ready' : 'error');
     }
-  }, [trip.id]);
+  }, [trip.id, loadBalances]);
   // Back online: reload what may have failed.
   useOnReconnect(load);
 
@@ -198,9 +222,9 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
   // Arriving from the Overview "Set budget" card opens the sheet straight away.
   useEffect(() => {
     if (!openBudgetSheet) return;
-    if (isOwner) setBudgetOpen(true);
+    if (canEdit) setBudgetOpen(true);
     onBudgetSheetOpened?.();
-  }, [openBudgetSheet, isOwner, onBudgetSheetOpened]);
+  }, [openBudgetSheet, canEdit, onBudgetSheetOpened]);
 
   // Owners can change any expense; editors only the ones they paid (backend rule).
   const canChange = (expense) => isOwner || (canEdit && !!myUserId && expense.paidByMemberId === myUserId);
@@ -215,6 +239,7 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
       setExpenses((prev) => [...prev, created]);
     }
     setSheet(null);
+    loadBalances();
   };
 
   const removeExpense = async () => {
@@ -223,6 +248,57 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
     await deleteExpense(trip.id, editing.id);
     setExpenses((prev) => prev.filter((e) => e.id !== editing.id));
     setSheet(null);
+    loadBalances();
+  };
+
+  // ── Settling up ────────────────────────────────────────────────────────
+  const people = balances?.people || [];
+  const personName = (id) =>
+    id === myUserId ? 'You' : firstName(people.find((p) => p.userId === id)?.name || members.find((m) => m.userId === id)?.name);
+  // Either person in a payment can mark it paid; the owner can mark any.
+  const canSettle = (t) => isOwner || t.fromUserId === myUserId || t.toUserId === myUserId;
+
+  const confirmSettle = (t) => {
+    const from = personName(t.fromUserId);
+    const to = personName(t.toUserId);
+    showAlert(
+      'Mark as paid?',
+      `${from} paid ${to === 'You' ? 'you' : to} ${formatMoney(t.amount, currency)}.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark paid',
+          onPress: async () => {
+            try {
+              setBalances(await settleUp(trip.id, t));
+            } catch (e) {
+              showAlert("Couldn't save that", e?.message || 'Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmUndoSettlement = (s) => {
+    showAlert(
+      'Undo this repayment?',
+      `${personName(s.fromUserId)} paid ${personName(s.toUserId)} ${formatMoney(s.amount, currency)}. Removing it puts the amount back in the balances.`,
+      [
+        { text: 'Keep', style: 'cancel' },
+        {
+          text: 'Undo',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setBalances(await deleteSettlement(trip.id, s.id));
+            } catch (e) {
+              showAlert("Couldn't undo that", e?.message || 'Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const saveBudget = async (value) => {
@@ -237,6 +313,20 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
   const left = budget - spent;
   const travellers = Math.max(1, trip.travelersCount || members.length || 1);
   const days = dayCount(trip.startDate, trip.endDate);
+  // Split trips: what's yours, not the average.
+  const isGroup = members.length > 1 || people.length > 1;
+  const me = people.find((p) => p.userId === myUserId);
+  const myShareOf = (e) => {
+    // The server's figure when it sends one (amount and percent splits).
+    if (Array.isArray(e.shares)) return Number(e.shares.find((x) => x.userId === myUserId)?.amount) || 0;
+    const split = e.splitWith?.length ? e.splitWith : members.map((m) => m.userId);
+    return split.includes(myUserId) ? (Number(e.amount) || 0) / split.length : 0;
+  };
+  // How many people share it ("split 8 ways").
+  const splitCount = (e) => (Array.isArray(e.shares)
+    ? e.shares.filter((x) => Number(x.amount) > 0).length
+    : (e.splitWith?.length || members.length));
+  const myShare = expenses.reduce((sum, e) => sum + myShareOf(e), 0);
   const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#C94016' : '#327956';
 
   const byCategory = EXPENSE_CATEGORIES
@@ -248,9 +338,10 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
     .filter((c) => c.total > 0)
     .sort((a, b) => b.total - a.total);
 
-  // Newest day first; within a day, newest first.
+  // Newest day first; within a day, newest first. Repayments sit among the
+  // expenses on the day they were made.
   const groups = [];
-  [...expenses]
+  [...expenses, ...(balances?.settlements || []).map((s) => ({ ...s, isSettlement: true }))]
     .sort((a, b) => new Date(b.date) - new Date(a.date) || new Date(b.createdAt) - new Date(a.createdAt))
     .forEach((e) => {
       const key = isoToDay(e.date);
@@ -266,27 +357,67 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
 
   return (
     <View>
-      {/* Summary */}
-      <View style={styles.card}>
-        <View style={styles.headerRow}>
-          <View style={styles.titleRow}>
-            <View style={[styles.headerIcon, { backgroundColor: '#FCE9E3' }]}>
-              <Ionicons name="wallet" size={16} color="#B7421F" />
+      {/* Budget: the plan. Its own card, so a trip with no budget doesn't
+          look like it has one. Viewers see it only once one is set. */}
+      {(budget > 0 || canEdit) && (
+        <View style={styles.card}>
+          <View style={styles.headerRow}>
+            <View style={styles.titleRow}>
+              <View style={[styles.headerIcon, { backgroundColor: '#FCE9E3' }]}>
+                <Ionicons name="wallet" size={16} color="#B7421F" />
+              </View>
+              <Text style={styles.title}>Trip budget</Text>
             </View>
-            <Text style={styles.title}>Budget</Text>
+            {canEdit && (
+              <TouchableOpacity
+                style={styles.outlineButton}
+                onPress={() => setBudgetOpen(true)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={budget ? 'Edit budget' : 'Set budget'}
+              >
+                <Ionicons name={budget ? 'create-outline' : 'add'} size={15} color={COLORS.primary} />
+                <Text style={styles.outlineButtonText}>{budget ? 'Edit' : 'Set budget'}</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          {isOwner && (
-            <TouchableOpacity
-              style={styles.outlineButton}
-              onPress={() => setBudgetOpen(true)}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel={budget ? 'Edit budget' : 'Set budget'}
-            >
-              <Ionicons name={budget ? 'create-outline' : 'add'} size={15} color={COLORS.primary} />
-              <Text style={styles.outlineButtonText}>{budget ? 'Edit' : 'Set budget'}</Text>
-            </TouchableOpacity>
+
+          {budget > 0 ? (
+            <>
+              <View style={styles.spentRow}>
+                <Text style={styles.spentValue}>{formatMoney(budget, currency)}</Text>
+                {!!days && (
+                  <Text style={styles.spentLabel}>{` · ${formatMoney(budget / days, currency)} a day`}</Text>
+                )}
+              </View>
+              {status === 'ready' && (
+                <>
+                  <View style={styles.track}>
+                    <View
+                      style={[styles.fill, { width: `${Math.min(100, Math.round(ratio * 100))}%`, backgroundColor: barColor }]}
+                    />
+                  </View>
+                  <Text style={[styles.leftText, left < 0 && { color: COLORS.error }]}>
+                    {left >= 0
+                      ? `${formatMoney(left, currency)} left · ${Math.round(ratio * 100)}% used`
+                      : `${formatMoney(-left, currency)} over budget`}
+                  </Text>
+                </>
+              )}
+            </>
+          ) : (
+            <Text style={styles.budgetEmpty}>Set a budget to see how much is left as you spend.</Text>
           )}
+        </View>
+      )}
+
+      {/* Spent: what's actually gone out. */}
+      <View style={styles.card}>
+        <View style={styles.titleRow}>
+          <View style={[styles.headerIcon, { backgroundColor: '#EEF3F7' }]}>
+            <Ionicons name="receipt" size={15} color="#6089B0" />
+          </View>
+          <Text style={styles.title}>Spent</Text>
         </View>
 
         {status === 'error' ? (
@@ -300,52 +431,87 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
           <>
             <View style={styles.spentRow}>
               <Text style={styles.spentValue}>{formatMoney(spent, currency)}</Text>
-              <Text style={styles.spentLabel}>
-                {budget ? ` spent of ${formatMoney(budget, currency)}` : ' spent'}
-              </Text>
+              <Text style={styles.spentLabel}> in total</Text>
             </View>
 
-            {budget > 0 && (
-              <>
-                <View style={styles.track}>
-                  <View
-                    style={[styles.fill, { width: `${Math.min(100, Math.round(ratio * 100))}%`, backgroundColor: barColor }]}
-                  />
-                </View>
-                <Text style={[styles.leftText, left < 0 && { color: COLORS.error }]}>
-                  {left >= 0
-                    ? `${formatMoney(left, currency)} left · ${Math.round(ratio * 100)}% used`
-                    : `${formatMoney(-left, currency)} over budget`}
-                </Text>
-              </>
-            )}
-            {!budget && (
-              <Text style={styles.leftText}>
-                {isOwner ? 'Set a budget to track how much is left.' : 'No budget set for this trip yet.'}
-              </Text>
-            )}
-
-            <View style={styles.statsRow}>
-              <View style={styles.stat}>
-                <Text style={styles.statValue}>{formatMoney(spent / travellers, currency)}</Text>
-                <Text style={styles.statLabel}>per person</Text>
+            {spent > 0 && (
+              <View style={styles.statsRow}>
+                {isGroup && me ? (
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{formatMoney(myShare, currency)}</Text>
+                    <Text style={styles.statLabel}>your share</Text>
+                  </View>
+                ) : (
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{formatMoney(spent / travellers, currency)}</Text>
+                    <Text style={styles.statLabel}>per person</Text>
+                  </View>
+                )}
+                {!!days && (
+                  <View style={styles.stat}>
+                    <Text style={styles.statValue}>{formatMoney(spent / days, currency)}</Text>
+                    <Text style={styles.statLabel}>per day</Text>
+                  </View>
+                )}
               </View>
-              {!!days && (
-                <View style={styles.stat}>
-                  <Text style={styles.statValue}>{formatMoney(spent / days, currency)}</Text>
-                  <Text style={styles.statLabel}>per day</Text>
-                </View>
-              )}
-              {budget > 0 && !!days && (
-                <View style={styles.stat}>
-                  <Text style={styles.statValue}>{formatMoney(budget / days, currency)}</Text>
-                  <Text style={styles.statLabel}>daily target</Text>
-                </View>
-              )}
-            </View>
+            )}
           </>
         )}
       </View>
+
+      {/* Balances: who owes whom. Only on trips with more than one person. */}
+      {status === 'ready' && isGroup && balances && (expenses.length > 0 || balances.settlements?.length > 0) && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Balances</Text>
+          {me && (
+            <Text
+              style={[
+                styles.myBalance,
+                me.net >= 0.5 && { color: '#327956' },
+                me.net <= -0.5 && { color: '#C94016' },
+              ]}
+            >
+              {me.net >= 0.5
+                ? `You're owed ${formatMoney(me.net, currency)}`
+                : me.net <= -0.5
+                  ? `You owe ${formatMoney(-me.net, currency)}`
+                  : "You're all settled up"}
+            </Text>
+          )}
+          {balances.transfers.length === 0 ? (
+            <View style={styles.settledRow}>
+              <Ionicons name="checkmark-circle" size={16} color="#327956" />
+              <Text style={styles.settledText}>Everyone's square. Nothing to pay back.</Text>
+            </View>
+          ) : (
+            balances.transfers.map((t) => {
+              const from = personName(t.fromUserId);
+              const to = personName(t.toUserId);
+              return (
+                <View key={`${t.fromUserId}-${t.toUserId}`} style={styles.transferRow}>
+                  <Text style={styles.transferText} numberOfLines={2}>
+                    <Text style={styles.transferName}>{from}</Text>
+                    {from === 'You' ? ' pay ' : ' pays '}
+                    <Text style={styles.transferName}>{to === 'You' ? 'you' : to}</Text>
+                  </Text>
+                  <Text style={styles.transferAmount}>{formatMoney(t.amount, currency)}</Text>
+                  {canSettle(t) && (
+                    <TouchableOpacity
+                      style={styles.settleButton}
+                      onPress={() => confirmSettle(t)}
+                      activeOpacity={0.85}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Mark ${formatMoney(t.amount, currency)} from ${from} to ${to} as paid`}
+                    >
+                      <Text style={styles.settleButtonText}>Settle</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })
+          )}
+        </View>
+      )}
 
       {/* Breakdown */}
       {status === 'ready' && byCategory.length > 0 && (
@@ -401,6 +567,34 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
               <View key={g.key}>
                 <Text style={styles.dayHeading}>{dayHeading(g.date)}</Text>
                 {g.items.map((e) => {
+                  if (e.isSettlement) {
+                    const undoable = isOwner || [e.createdByUserId, e.fromUserId, e.toUserId].includes(myUserId);
+                    const from = personName(e.fromUserId);
+                    const to = personName(e.toUserId);
+                    return (
+                      <TouchableOpacity
+                        key={e.id}
+                        style={styles.expenseRow}
+                        onPress={() => undoable && confirmUndoSettlement(e)}
+                        disabled={!undoable}
+                        activeOpacity={0.8}
+                        accessibilityLabel={`${from} paid ${to} ${formatMoney(e.amount, currency)}`}
+                      >
+                        <View style={[styles.expenseIcon, { backgroundColor: '#E8F5EE' }]}>
+                          <Ionicons name="swap-horizontal" size={16} color="#327956" />
+                        </View>
+                        <View style={styles.expenseText}>
+                          <Text style={styles.expenseTitle} numberOfLines={1}>
+                            {from} paid {to === 'You' ? 'you' : to}
+                          </Text>
+                          <Text style={styles.expenseMeta}>Paid back</Text>
+                        </View>
+                        <Text style={[styles.expenseAmount, styles.settlementAmount]}>
+                          {formatMoney(e.amount, currency)}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  }
                   const c = CATEGORY_BY_KEY[e.category] || CATEGORY_BY_KEY.other;
                   const editable = canChange(e);
                   return (
@@ -420,7 +614,12 @@ export default function BudgetTab({ trip, canEdit, onBudgetSaved, openBudgetShee
                       <View style={styles.expenseText}>
                         <Text style={styles.expenseTitle} numberOfLines={1}>{e.title}</Text>
                         <Text style={styles.expenseMeta} numberOfLines={1}>
-                          {[`Paid by ${e.paidByName || 'someone'}`, e.notes].filter(Boolean).join(' · ')}
+                          {[
+                            e.paidByMemberId === myUserId ? 'Paid by you' : `Paid by ${e.paidByName || 'someone'}`,
+                            isGroup && splitCount(e) > 1 ? `split ${splitCount(e)} ways` : null,
+                            isGroup && myShareOf(e) > 0 ? `your share ${formatMoney(myShareOf(e), currency)}` : null,
+                            e.notes,
+                          ].filter(Boolean).join(' · ')}
                         </Text>
                       </View>
                       <Text style={styles.expenseAmount}>{formatMoney(e.amount, currency)}</Text>
@@ -558,6 +757,12 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 5,
   },
+  budgetEmpty: {
+    marginTop: SIZES.spacing_sm,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
   leftText: {
     marginTop: SIZES.spacing_xs,
     fontSize: SIZES.sm,
@@ -653,6 +858,62 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textMuted,
     textTransform: 'uppercase',
+  },
+  myBalance: {
+    marginTop: SIZES.spacing_xs,
+    fontSize: SIZES.lg,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+  },
+  settledRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_xs,
+    marginTop: SIZES.spacing_sm,
+  },
+  settledText: {
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textSecondary,
+  },
+  transferRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing_sm,
+    paddingVertical: SIZES.spacing_sm,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.borderLight,
+    marginTop: SIZES.spacing_xs,
+  },
+  transferText: {
+    flex: 1,
+    fontSize: SIZES.md,
+    fontFamily: 'Poppins_400Regular',
+    color: COLORS.textSecondary,
+  },
+  transferName: {
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textPrimary,
+  },
+  transferAmount: {
+    fontSize: SIZES.base,
+    fontFamily: 'Poppins_700Bold',
+    color: COLORS.textPrimary,
+  },
+  settleButton: {
+    paddingHorizontal: SIZES.spacing_md,
+    paddingVertical: 6,
+    borderRadius: SIZES.radius_full,
+    backgroundColor: COLORS.primary,
+  },
+  settleButtonText: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.white,
+  },
+  settlementAmount: {
+    color: COLORS.textMuted,
+    fontFamily: 'Poppins_600SemiBold',
   },
   // The "just added by a friend" wash, a little wider than the row.
   expenseGlow: {

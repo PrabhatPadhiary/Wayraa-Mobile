@@ -25,7 +25,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const STORAGE_PREFIX = 'wayraa_cache:';
 const PERSISTED = new Set(['trips', 'favourites', 'profile']);
 // Per-trip keys ("trip:<id>", "itinerary:<id>", ...) that are saved too.
-const TRIP_PREFIXES = ['trip', 'itinerary', 'expenses', 'checklist', 'polls', 'announcements'];
+const TRIP_PREFIXES = ['trip', 'itinerary', 'expenses', 'balances', 'checklist', 'polls', 'announcements'];
 
 const tripIdOf = (key) => {
   const i = key.indexOf(':');
@@ -41,6 +41,7 @@ export const CacheKeys = {
   profile: 'profile',
   itinerary: (tripId) => `itinerary:${tripId}`,
   expenses: (tripId) => `expenses:${tripId}`,
+  balances: (tripId) => `balances:${tripId}`,
   checklist: (tripId) => `checklist:${tripId}`,
   polls: (tripId) => `polls:${tripId}`,
   announcements: (tripId) => `announcements:${tripId}`,

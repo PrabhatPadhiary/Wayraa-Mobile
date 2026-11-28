@@ -36,6 +36,7 @@ import PlaceSearchField from '../components/PlaceSearchField';
 import { startStoryUpload, isStoryUploading, prepareForUpload } from '../services/storyUpload';
 import { showAlert } from '../components/AppDialog';
 import { LoaderOverlay } from '../components/WayraaLoader';
+import { groupDigits, formatAmountInput } from '../utils/money';
 
 const MAX_PHOTOS = 10;
 const MAX_PLACES = 20;
@@ -157,7 +158,7 @@ export default function WriteJournalScreen({ navigation, route }) {
         })));
         setVibes(j.vibes || []);
         setTips(j.proTips || '');
-        setBudget(j.budget ? String(j.budget) : '');
+        setBudget(j.budget ? groupDigits(String(j.budget), j.currency || '₹') : '');
         setVisibility(j.visibility || 'public');
         // Keep "Places you went" searching around the destination.
         if (j.destination) {
@@ -667,7 +668,7 @@ export default function WriteJournalScreen({ navigation, route }) {
             <TextInput
               style={styles.rowInput}
               value={budget}
-              onChangeText={setBudget}
+              onChangeText={(t) => setBudget(formatAmountInput(t, trip?.currency || '₹', true))}
               placeholder="0"
               placeholderTextColor={COLORS.textMuted}
               keyboardType="decimal-pad"

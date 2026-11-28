@@ -21,6 +21,8 @@ import { formatDay } from '../utils/tripDates';
 import useKeyboardHeight from '../hooks/useKeyboardHeight';
 import DateRangeCalendar, { todayDay, dayToIso, isoToDay } from './DateRangeCalendar';
 import { showAlert, AppDialogHost } from './AppDialog';
+import { groupDigits, formatAmountInput } from '../utils/money';
+import SplitEditor, { SplitSummary, splitNumber, splitRemainder } from './SplitEditor';
 
 const WINDOW_HEIGHT = Dimensions.get('window').height;
 const MAX_SHEET_HEIGHT = WINDOW_HEIGHT * 0.9;
@@ -100,6 +102,14 @@ export default function ExpenseSheet({
   const [category, setCategory] = useState('food');
   const [date, setDate] = useState(dayToIso(todayDay()));
   const [payerId, setPayerId] = useState('');
+  // How it's split: equally between `splitWith` (everyone, unless some are
+  // left out), or each person's own amount / percent in `splitValues`
+  // (userId -> text as typed).
+  const [splitMode, setSplitMode] = useState('equal');
+  const [splitWith, setSplitWith] = useState([]);
+  const [splitValues, setSplitValues] = useState({});
+  // The split's full list fills the sheet (like the date picker).
+  const [editingSplit, setEditingSplit] = useState(false);
   const [notes, setNotes] = useState('');
   const [pickingDate, setPickingDate] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -120,12 +130,19 @@ export default function ExpenseSheet({
     setError('');
     setSaving(false);
     setPickingDate(false);
+    setEditingSplit(false);
     if (expense) {
-      setAmount(String(expense.amount ?? ''));
+      setAmount(expense.amount != null ? groupDigits(String(expense.amount), currency) : '');
       setTitle(expense.title || '');
       setCategory(expense.category || 'other');
       setDate(expense.date || dayToIso(todayDay()));
       setPayerId(expense.paidByMemberId || '');
+      // People who have left the trip since aren't in `members`; they stay on
+      // the expense (the server keeps them) but can't be picked here.
+      setSplitWith(expense.splitWith?.length ? expense.splitWith : members.map((m) => m.userId));
+      const mode = expense.splitMode === 'amount' || expense.splitMode === 'percent' ? expense.splitMode : 'equal';
+      setSplitMode(mode);
+      setSplitValues(Object.fromEntries((expense.splitValues || []).map((v) => [v.userId, groupDigits(String(v.value), currency)])));
       setNotes(expense.notes || '');
     } else {
       setAmount('');
@@ -133,6 +150,9 @@ export default function ExpenseSheet({
       setCategory('food');
       setDate(defaultDate || dayToIso(todayDay()));
       setPayerId(defaultPayerId || members[0]?.userId || '');
+      setSplitWith(members.map((m) => m.userId));
+      setSplitMode('equal');
+      setSplitValues({});
       setNotes('');
     }
   }, [visible, expense, defaultPayerId, defaultDate, members]);
@@ -153,6 +173,19 @@ export default function ExpenseSheet({
       setError('Choose who paid.');
       return;
     }
+    const sharers = splitWith.filter((id) => members.some((m) => m.userId === id));
+    const ids = members.map((m) => m.userId);
+    const splitting = members.length > 1;
+    if (splitting && splitMode === 'equal' && sharers.length === 0) {
+      setError('Pick at least one person to split it with.');
+      return;
+    }
+    if (splitting && splitMode !== 'equal' && !splitRemainder(splitMode, value, splitValues, ids).ok) {
+      setError(splitMode === 'percent'
+        ? 'The percentages need to add up to 100%.'
+        : 'Everyone\'s amounts need to add up to the total.');
+      return;
+    }
     setSaving(true);
     try {
       await onSave({
@@ -163,6 +196,16 @@ export default function ExpenseSheet({
         paidByMemberId: payer.userId,
         paidByName: payer.name || 'Traveller',
         notes: notes.trim() || null,
+        splitMode: splitting ? splitMode : 'equal',
+        // Equally: keep anyone who left the trip but was already sharing it.
+        splitWith: splitting && splitMode === 'equal'
+          ? [...splitWith.filter((id) => !members.some((m) => m.userId === id)), ...sharers]
+          : null,
+        splitValues: splitting && splitMode !== 'equal'
+          ? ids
+            .map((id) => ({ userId: id, value: splitNumber(splitValues[id]) }))
+            .filter((v) => v.value > 0)
+          : null,
       });
     } catch (e) {
       setError(e?.message || 'Something went wrong. Please try again.');
@@ -199,25 +242,44 @@ export default function ExpenseSheet({
             styles.sheet,
             { maxHeight: sheetMaxHeight, marginBottom: keyboardHeight },
             pickingDate && { height: MAX_SHEET_HEIGHT },
+            editingSplit && { height: sheetMaxHeight },
             { paddingBottom: (keyboardHeight ? 0 : insets.bottom) + SIZES.spacing_base },
           ]}
         >
           <View style={styles.grabber} />
           <View style={styles.header}>
             <Text style={styles.title}>
-              {pickingDate ? 'Pick a date' : isEdit ? 'Edit expense' : 'Add expense'}
+              {pickingDate ? 'Pick a date' : editingSplit ? 'Split' : isEdit ? 'Edit expense' : 'Add expense'}
             </Text>
             <TouchableOpacity
               style={styles.closeButton}
-              onPress={pickingDate ? () => setPickingDate(false) : onClose}
-              accessibilityLabel={pickingDate ? 'Back' : 'Close'}
+              // From the split: back to the form without its changes.
+              onPress={pickingDate ? () => setPickingDate(false) : editingSplit ? () => { Keyboard.dismiss(); setEditingSplit(false); } : onClose}
+              accessibilityLabel={pickingDate || editingSplit ? 'Back' : 'Close'}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons name={pickingDate ? 'chevron-back' : 'close'} size={20} color={COLORS.textPrimary} />
+              <Ionicons name={pickingDate || editingSplit ? 'chevron-back' : 'close'} size={20} color={COLORS.textPrimary} />
             </TouchableOpacity>
           </View>
 
-          {pickingDate ? (
+          {editingSplit ? (
+            <SplitEditor
+              members={members}
+              currency={currency}
+              total={parseAmount(amount)}
+              mode={splitMode}
+              splitWith={splitWith}
+              values={splitValues}
+              inputAccessoryViewID={KEYBOARD_ACCESSORY_ID}
+              onDone={(next) => {
+                Keyboard.dismiss();
+                setSplitMode(next.mode);
+                setSplitWith(next.splitWith);
+                setSplitValues(next.values);
+                setEditingSplit(false);
+              }}
+            />
+          ) : pickingDate ? (
             // Single-day pick: any tap sets the date and returns to the form.
             <View style={styles.calendarWrap}>
               <DateRangeCalendar
@@ -247,11 +309,11 @@ export default function ExpenseSheet({
                   ref={amountRef}
                   style={styles.amountInput}
                   value={amount}
-                  onChangeText={(t) => setAmount(t.replace(/[^0-9.,]/g, ''))}
+                  onChangeText={(t) => setAmount(formatAmountInput(t, currency, true))}
                   placeholder="0"
                   placeholderTextColor={COLORS.border}
                   keyboardType="decimal-pad"
-                  maxLength={12}
+                  maxLength={16}
                   inputAccessoryViewID={KEYBOARD_ACCESSORY_ID}
                   accessibilityLabel="Amount"
                 />
@@ -328,6 +390,22 @@ export default function ExpenseSheet({
                 </>
               )}
 
+              {/* Split: only when there's someone to split with. */}
+              {members.length > 1 && (
+                <>
+                  <Text style={styles.label}>Split</Text>
+                  <SplitSummary
+                    members={members}
+                    currency={currency}
+                    total={parseAmount(amount)}
+                    mode={splitMode}
+                    splitWith={splitWith}
+                    values={splitValues}
+                    onPress={() => { Keyboard.dismiss(); setEditingSplit(true); }}
+                  />
+                </>
+              )}
+
               {/* Notes */}
               <Text style={styles.label}>Notes</Text>
               <TextInput
@@ -346,7 +424,7 @@ export default function ExpenseSheet({
             </ScrollView>
           )}
 
-          {!pickingDate && (
+          {!pickingDate && !editingSplit && (
             <View style={styles.footer}>
               {isEdit && canDelete && !!onDelete ? (
                 <TouchableOpacity

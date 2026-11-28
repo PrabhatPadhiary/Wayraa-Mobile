@@ -27,6 +27,9 @@ import { COLORS, SIZES, HEADER_TINT } from '../constants';
  * - collapseExtra: px at the bottom of the children that also go away when
  *               collapsed (the screen fades that part out itself), so the
  *               panel ends right under what's left.
+ * - onCollapseDistance: called with how far (px) the panel's bottom edge
+ *               moves up when collapsed, so a screen can wait to collapse
+ *               until it has scrolled that far (no gap under the header).
  *
  * Collapsing only moves and fades things (no height changes), so it runs on
  * the native thread and stays smooth while the list scrolls: the panel slides
@@ -50,6 +53,7 @@ export default function ScreenHeader({
   right,
   left,
   collapseExtra = 0,
+  onCollapseDistance,
 }) {
   const insets = useSafeAreaInsets();
 
@@ -70,6 +74,9 @@ export default function ScreenHeader({
   // bottom edge (also past the children's part that goes away).
   const childShift = titleHeight + (children ? SIZES.spacing_lg : 0);
   const panelShift = childShift + collapseExtra;
+  useEffect(() => {
+    if (titleHeight > 0) onCollapseDistance?.(panelShift);
+  }, [panelShift, titleHeight]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View

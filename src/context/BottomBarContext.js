@@ -12,10 +12,14 @@ import React, { createContext, useContext, useState, useCallback, useMemo, useRe
  *     circle instead. Tabs keep the bar collapsed while registered;
  *   - set `hidden` to slide the whole bar down off screen (Home hides it
  *     while you scroll down and brings it back when you scroll up);
- *   - claimBar(owner, { cta }) / releaseBar(owner): collapse with a CTA on
+ *   - claimBar(owner, { cta, away }) / releaseBar(owner): collapse with a CTA on
  *     behalf of one screen (owner = its route key). releaseBar only clears it
  *     if that screen still owns it, so a screen going into the background
- *     can't wipe the bar the next screen has just set up.
+ *     can't wipe the bar the next screen has just set up. `away: true` keeps
+ *     the bar off screen instead (whatever the scroll does), e.g. while
+ *     choosing places with nothing chosen yet: nothing to show until there is.
+ *     `ctaOnly: true` drops the Home circle and lets the CTA take the whole
+ *     bar (choosing places: the back arrow is the way out, not the tabs).
  *
  * `tabs` is owned: { owner, items: [{ key, label, icon, iconFamily? }], activeKey, onChange }.
  * `iconFamily: 'feather'` draws a Feather line icon; otherwise Ionicons
@@ -32,6 +36,10 @@ export function BottomBarProvider({ children }) {
   const [cta, setCta] = useState(null); // { label, icon, onPress } | null
   const [tabs, setTabs] = useState(null);
   const [hidden, setHidden] = useState(false);
+  // Kept off screen by the screen that owns the bar (claimBar `away`).
+  const [away, setAway] = useState(false);
+  // The CTA alone, full width, no Home circle (claimBar `ctaOnly`).
+  const [ctaOnly, setCtaOnly] = useState(false);
 
   // Screens call this on unmount / blur to clear their collapse + CTA.
   const owner = useRef(null);
@@ -40,12 +48,16 @@ export function BottomBarProvider({ children }) {
     setCollapsed(false);
     setCta(null);
     setHidden(false);
+    setAway(false);
+    setCtaOnly(false);
   }, []);
 
-  const claimBar = useCallback((who, { cta: nextCta = null } = {}) => {
+  const claimBar = useCallback((who, { cta: nextCta = null, away: nextAway = false, ctaOnly: nextCtaOnly = false } = {}) => {
     owner.current = who;
     setCollapsed(true);
     setCta(nextCta);
+    setAway(nextAway);
+    setCtaOnly(nextCtaOnly);
   }, []);
 
   const releaseBar = useCallback((who) => {
@@ -53,6 +65,19 @@ export function BottomBarProvider({ children }) {
     owner.current = null;
     setCollapsed(false);
     setCta(null);
+    setAway(false);
+    setCtaOnly(false);
+  }, []);
+
+  // Scrolling, as a signal (no state: nothing re-renders per scroll). The
+  // tab bar listens to close its opened menu back to the circle + button.
+  const scrollListeners = useRef(new Set());
+  const notifyScroll = useCallback(() => {
+    scrollListeners.current.forEach((fn) => fn());
+  }, []);
+  const onScrollActivity = useCallback((fn) => {
+    scrollListeners.current.add(fn);
+    return () => scrollListeners.current.delete(fn);
   }, []);
 
   const clearTabs = useCallback((owner) => {
@@ -60,8 +85,12 @@ export function BottomBarProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ collapsed, setCollapsed, cta, setCta, tabs, setTabs, clearTabs, hidden, setHidden, reset, claimBar, releaseBar }),
-    [collapsed, cta, tabs, hidden, reset, clearTabs, claimBar, releaseBar]
+    () => ({
+      collapsed, setCollapsed, cta, setCta, tabs, setTabs, clearTabs,
+      hidden: hidden || away, ctaOnly, setHidden, reset, claimBar, releaseBar,
+      notifyScroll, onScrollActivity,
+    }),
+    [collapsed, cta, tabs, hidden, away, ctaOnly, reset, clearTabs, claimBar, releaseBar, notifyScroll, onScrollActivity]
   );
 
   return <BottomBarContext.Provider value={value}>{children}</BottomBarContext.Provider>;
@@ -84,6 +113,8 @@ export function useBottomBar() {
       reset: () => {},
       claimBar: () => {},
       releaseBar: () => {},
+      notifyScroll: () => {},
+      onScrollActivity: () => () => {},
     };
   }
   return ctx;

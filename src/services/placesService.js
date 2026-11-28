@@ -102,6 +102,30 @@ export function journalCategoryFor(types = []) {
 }
 
 /**
+ * Which list a place joins when it's saved to a trip: 'food' | 'stay' |
+ * 'activity'. Restaurants are food and hotels a stay, as before. Homes are
+ * the new case: Google describes a flat or apartment block only as a
+ * building or an address (no "lodging"), so it used to land in activities.
+ * It's a stay when Google knows it as nothing more than a building/address,
+ * or when it has only generic kinds and its name says home ("… Apartments",
+ * "… Residency"). Anything still guessed wrong can be moved on the trip.
+ */
+const ADDRESS_TYPES = ['premise', 'subpremise', 'street_address',
+  'apartment_building', 'apartment_complex', 'condominium_complex', 'housing_complex'];
+const GENERIC_TYPES = [...ADDRESS_TYPES, 'establishment', 'point_of_interest', 'geocode', 'route',
+  'street_number', 'political', 'locality', 'neighborhood', 'postal_code',
+  'sublocality', 'sublocality_level_1', 'sublocality_level_2', 'sublocality_level_3'];
+const HOME_NAME = /\b(apartments?|residency|residences?|enclave|villas?|homes?|homestay|flats?|pg|co-?living)\b/i;
+export function tripCategoryForPlace(types = [], name = '') {
+  const c = journalCategoryFor(types);
+  if (c === 'food') return 'food';
+  if (c === 'stay') return 'stay';
+  const onlyGeneric = types.length > 0 && types.every((t) => GENERIC_TYPES.includes(t));
+  if (onlyGeneric && (types.some((t) => ADDRESS_TYPES.includes(t)) || HOME_NAME.test(name || ''))) return 'stay';
+  return 'activity';
+}
+
+/**
  * What kind of place it is, for search: 'stay' | 'food' | 'activity' | null.
  * Same rule as the backend's category search: lodging is always a stay (a
  * hotel with a restaurant isn't "food"); a plain shop is none of them.

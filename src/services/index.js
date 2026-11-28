@@ -15,6 +15,7 @@ export {
   inPlaceCategory,
   isRegionResult,
   journalCategoryFor,
+  tripCategoryForPlace,
   searchRadiusFor,
   placeCoords,
   searchInDestination,
@@ -31,6 +32,7 @@ export {
   createTrip,
   getTripById,
   addPlaceToTrip,
+  setTripPlaceCategory,
   removeTripPlace,
   addTripDestination,
   removeTripDestination,
@@ -62,6 +64,10 @@ export {
   updateExpense,
   deleteExpense,
   setTripBudget,
+  getBalances,
+  peekBalances,
+  settleUp,
+  deleteSettlement,
 } from './budgetService';
 export {
   getChecklist,
@@ -92,7 +98,7 @@ export {
   changeMemberRole,
   removeMember,
 } from './invitationsService';
-export { getMyProfile, peekMyProfile, updateMyName, updateMyBio, MAX_BIO, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, useMyPhoto, setMyPhoto, seedMyPhoto } from './profileService';
+export { getMyProfile, peekMyProfile, updateMyName, updateMyBio, MAX_BIO, signInMethods, sendPasswordReset, sendPasswordResetTo, deleteMyAccount, uploadProfilePhoto, removeProfilePhoto, uploadCoverPhoto, removeCoverPhoto, useMyPhoto, setMyPhoto, seedMyPhoto } from './profileService';
 export {
   JOURNAL_VIBES,
   vibeLabel,

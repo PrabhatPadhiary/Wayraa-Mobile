@@ -16,11 +16,15 @@ import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES } from '../constants/theme';
+import { auth } from '../config';
+import { getSeen, markSeenOnAccount } from '../services/seenService';
 
 /**
  * One-time tips: the first time you reach a screen, a spotlight on one
- * button and a short line on what it does. Each tip shows once per phone
- * (signed in or not), one at a time, and any tap closes it.
+ * button and a short line on what it does. Each tip shows once per person:
+ * signed in, what you've seen is kept with your account (so reinstalling or
+ * a new phone doesn't repeat them); signed out, on this phone. One at a
+ * time, and any tap closes it.
  *
  *   const searchRef = useRef(null);
  *   useTip('explore_search', searchRef, { title, text });
@@ -29,23 +33,56 @@ import { COLORS, SIZES } from '../constants/theme';
  * Settings → "Show tips again" brings them all back (resetTips).
  */
 
-const SEEN_KEY = 'wayraa_tips_seen';
+// Older versions kept one list for the phone; it's folded into the first
+// account that signs in.
+const LEGACY_KEY = 'wayraa_tips_seen';
+const seenKey = (uid) => `wayraa_tips_seen.${uid || 'guest'}`;
+// "Show tips again" on this phone: don't take the account's list until next time.
+const resetKey = (uid) => `wayraa_tips_reset.${uid || 'guest'}`;
 const HOLE_PAD = 6;
 const GAP = 14; // between the spotlight and the bubble
 const EDGE = 16;
 const BUBBLE_MAX = 320;
 
-// ── Which tips you've seen (on this phone) ──────────────────────────────────
+// ── Which tips you've seen (your account, and this phone) ───────────────────
 let seen = null;
+let seenFor;     // whose list `seen` is (uid, or null signed out)
 let loading = null;
 
+const currentUid = () => auth?.currentUser?.uid || null;
+
 function loadSeen() {
-  if (seen) return Promise.resolve(seen);
-  if (!loading) {
-    loading = AsyncStorage.getItem(SEEN_KEY)
-      .then((raw) => { seen = new Set(raw ? JSON.parse(raw) : []); })
-      .catch(() => { seen = new Set(); })
-      .then(() => seen);
+  const uid = currentUid();
+  if (seen && seenFor === uid) return Promise.resolve(seen);
+  if (!loading || seenFor !== uid) {
+    seenFor = uid;
+    loading = (async () => {
+      const list = new Set();
+      try {
+        const raw = await AsyncStorage.getItem(seenKey(uid));
+        (raw ? JSON.parse(raw) : []).forEach((id) => list.add(id));
+        const legacy = await AsyncStorage.getItem(LEGACY_KEY);
+        if (legacy) {
+          JSON.parse(legacy).forEach((id) => list.add(id));
+          await AsyncStorage.removeItem(LEGACY_KEY);
+        }
+      } catch {
+        // Nothing saved here (or unreadable): the account may still know.
+      }
+      if (uid) {
+        const reset = await AsyncStorage.getItem(resetKey(uid)).catch(() => null);
+        const account = reset ? null : await getSeen();
+        if (account?.tips) {
+          const onlyHere = [...list].filter((id) => !account.tips.includes(id));
+          account.tips.forEach((id) => list.add(id));
+          // Seen here before this was kept with accounts: tell the account.
+          if (onlyHere.length) markSeenOnAccount({ tips: onlyHere });
+        }
+      }
+      AsyncStorage.setItem(seenKey(uid), JSON.stringify([...list])).catch(() => {});
+      if (seenFor === uid) seen = list;
+      return list;
+    })();
   }
   return loading;
 }
@@ -53,14 +90,31 @@ function loadSeen() {
 function markSeen(id) {
   if (!seen) return;
   seen.add(id);
-  AsyncStorage.setItem(SEEN_KEY, JSON.stringify([...seen])).catch(() => {});
+  const uid = seenFor;
+  AsyncStorage.setItem(seenKey(uid), JSON.stringify([...seen])).catch(() => {});
+  if (uid) markSeenOnAccount({ tips: [id] });
 }
 
-/** Settings → Show tips again. */
-export function resetTips() {
+/**
+ * For one-time hints that aren't a tip bubble (e.g. a card nudging to show
+ * it can be swiped): true the first time for this person, and from then on
+ * false. Kept with the tips, so "Show tips again" brings it back too.
+ */
+export async function claimOnce(id) {
+  const list = await loadSeen();
+  if (list.has(id)) return false;
+  markSeen(id);
+  return true;
+}
+
+/** Settings → Show tips again (on this phone). */
+export async function resetTips() {
+  const uid = currentUid();
   seen = new Set();
+  seenFor = uid;
   loading = null;
-  return AsyncStorage.removeItem(SEEN_KEY).catch(() => {});
+  await AsyncStorage.removeItem(seenKey(uid)).catch(() => {});
+  if (uid) await AsyncStorage.setItem(resetKey(uid), '1').catch(() => {});
 }
 
 // ── The one tip on screen (TipsHost draws it) ───────────────────────────────
@@ -92,11 +146,16 @@ function closeActive() {
  * @param {string} [opts.after] - only once this other tip was seen (on an
  *   earlier visit), so two tips never compete on one screen
  * @param {number} [opts.delay=900] - let the screen settle and animate in
+ * @param {object} [opts.shape] - the spotlight's outline, for a target that
+ *   isn't a button (default: a pill). { radius, notches: [{ side: 'top' |
+ *   'bottom' | 'left' | 'right', at, fromEnd?, r }] }: corner radius, and
+ *   half-circle bites into its edges (`at` px along that edge from its start,
+ *   or from its end with fromEnd), e.g. a ticket's notches.
  */
-export function useTip(id, targetRef, { title, text, enabled = true, after, delay = 900 }) {
+export function useTip(id, targetRef, { title, text, enabled = true, after, delay = 900, shape }) {
   const focused = useIsFocused();
-  const copy = useRef({ title, text });
-  copy.current = { title, text };
+  const copy = useRef({ title, text, shape });
+  copy.current = { title, text, shape };
 
   useEffect(() => {
     if (!enabled || !focused) return undefined;
@@ -122,16 +181,51 @@ export function useTip(id, targetRef, { title, text, enabled = true, after, dela
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
 
-/** The whole screen, with a rounded hole cut out (even-odd fill). */
-function dimPath(W, H, { x, y, w, h, r }) {
-  return [
-    `M0 0H${W}V${H}H0Z`,
-    `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}`,
-    `V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}`,
-    `H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}`,
-    `V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`,
-  ].join('');
+/**
+ * The spotlight's outline, clockwise from the top-left corner, shifted by
+ * (dx, dy): a rounded rectangle, with half-circle bites wherever the shape
+ * has notches. `hole` is the target grown by its padding; `rect` the target.
+ * A shaped target has no padding (see TipsHost), so each bite sits exactly
+ * on the target's own notch.
+ */
+function holePath(hole, rect, shape, dx = 0, dy = 0) {
+  const x = hole.x + dx;
+  const y = hole.y + dy;
+  const { w, h } = hole;
+  const r = Math.min(hole.r, w / 2, h / 2);
+  // Notch centres along the hole's edges, the size of the target's notches.
+  const bites = { top: [], bottom: [], left: [], right: [] };
+  (shape?.notches || []).forEach((n) => {
+    const nr = n.r;
+    if (n.side === 'top' || n.side === 'bottom') {
+      const c = rect.x + dx + (n.fromEnd ? rect.width - n.at : n.at);
+      bites[n.side].push({ c, nr });
+    } else {
+      const c = rect.y + dy + (n.fromEnd ? rect.height - n.at : n.at);
+      bites[n.side].push({ c, nr });
+    }
+  });
+  const asc = (a, b) => a.c - b.c;
+  const desc = (a, b) => b.c - a.c;
+  const d = [`M${x + r} ${y}`];
+  bites.top.sort(asc).forEach(({ c, nr }) => d.push(`H${c - nr}A${nr} ${nr} 0 0 0 ${c + nr} ${y}`));
+  d.push(`H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}`);
+  bites.right.sort(asc).forEach(({ c, nr }) => d.push(`V${c - nr}A${nr} ${nr} 0 0 0 ${x + w} ${c + nr}`));
+  d.push(`V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}`);
+  bites.bottom.sort(desc).forEach(({ c, nr }) => d.push(`H${c + nr}A${nr} ${nr} 0 0 0 ${c - nr} ${y + h}`));
+  d.push(`H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}`);
+  bites.left.sort(desc).forEach(({ c, nr }) => d.push(`V${c + nr}A${nr} ${nr} 0 0 0 ${x} ${c - nr}`));
+  d.push(`V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`);
+  return d.join('');
 }
+
+/** The whole screen, with the spotlight cut out (even-odd fill). */
+function dimPath(W, H, hole, rect, shape) {
+  return `M0 0H${W}V${H}H0Z${holePath(hole, rect, shape)}`;
+}
+
+// Room around the shaped ring's outline, so its stroke isn't clipped.
+const RING_PAD = 2;
 
 /** Mount once, next to the NavigationContainer, above the screens. */
 export function TipsHost() {
@@ -199,14 +293,18 @@ export function TipsHost() {
     return <View ref={layerRef} collapsable={false} pointerEvents="none" style={StyleSheet.absoluteFill} />;
   }
 
-  const { rect, W, H } = tip;
+  const { rect, W, H, shape } = tip;
+  // A pill with room round a button. A shaped target (a ticket) is traced
+  // exactly: its notches can't be grown outward evenly (they'd turn into
+  // dots), and a near miss shows as a crescent round each notch.
+  const pad = shape ? 0 : HOLE_PAD;
   const hole = {
-    x: rect.x - HOLE_PAD,
-    y: rect.y - HOLE_PAD,
-    w: rect.width + HOLE_PAD * 2,
-    h: rect.height + HOLE_PAD * 2,
+    x: rect.x - pad,
+    y: rect.y - pad,
+    w: rect.width + pad * 2,
+    h: rect.height + pad * 2,
   };
-  hole.r = Math.min(hole.w, hole.h) / 2;
+  hole.r = shape ? shape.radius : Math.min(hole.w, hole.h) / 2;
 
   const bubbleW = Math.min(W - EDGE * 2, BUBBLE_MAX);
   const centreX = rect.x + rect.width / 2;
@@ -228,11 +326,35 @@ export function TipsHost() {
     >
       <Pressable style={StyleSheet.absoluteFill} onPress={dismiss} accessibilityLabel="Close tip">
         <Svg width={W} height={H} style={StyleSheet.absoluteFill} pointerEvents="none">
-          <Path d={dimPath(W, H, hole)} fill="rgba(18, 28, 37, 0.62)" fillRule="evenodd" />
+          <Path d={dimPath(W, H, hole, rect, shape)} fill="rgba(18, 28, 37, 0.62)" fillRule="evenodd" />
         </Svg>
       </Pressable>
 
-      {/* A soft ring that breathes out from the button. */}
+      {/* A soft ring that breathes out from the button (or, for a shaped
+          target, its outline: a big card only breathes out a little). */}
+      {shape ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: hole.x - RING_PAD,
+            top: hole.y - RING_PAD,
+            width: hole.w + RING_PAD * 2,
+            height: hole.h + RING_PAD * 2,
+            opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.9, 0] }),
+            transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] }) }],
+          }}
+        >
+          <Svg width={hole.w + RING_PAD * 2} height={hole.h + RING_PAD * 2}>
+            <Path
+              d={holePath(hole, rect, shape, RING_PAD - hole.x, RING_PAD - hole.y)}
+              stroke={COLORS.accent}
+              strokeWidth={2}
+              fill="none"
+            />
+          </Svg>
+        </Animated.View>
+      ) : (
       <Animated.View
         pointerEvents="none"
         style={[
@@ -248,6 +370,7 @@ export function TipsHost() {
           },
         ]}
       />
+      )}
 
       <Animated.View style={[styles.bubble, place, { left, width: bubbleW, transform: [{ translateY: lift }] }]}>
         <View style={[styles.arrow, below ? styles.arrowTop : styles.arrowBottom, { left: arrowLeft }]} />

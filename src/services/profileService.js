@@ -12,6 +12,7 @@ import { cachedFetch, peekCache, setCache, clearAllCaches, onClearAllCaches, Cac
 const USER_STORAGE_KEY = 'wayraa_user';
 const PHOTO_SIZE = 600; // px, square crop from the picker
 const PHOTO_QUALITY = 0.85;
+const COVER_WIDTH = 1600; // px, wide crop from the picker
 
 // ── Your profile photo, shared by every screen ─────────────────────────────
 // undefined = not known yet (screens fall back to the Firebase photo),
@@ -111,6 +112,58 @@ export async function removeProfilePhoto() {
   if (response.status === 401) throw new AuthRequiredError();
   if (!response.ok) throw new Error(`Couldn't remove your photo (${response.status})`);
   await syncPhotoElsewhere(null);
+}
+
+// Keep the saved profile's cover in step, so the header changes at once.
+function setCachedCover(url) {
+  const cached = peekCache(CacheKeys.profile);
+  if (cached) setCache(CacheKeys.profile, { ...cached, coverPhotoUrl: url });
+}
+
+/**
+ * Upload a new cover photo (behind your profile header) from a picked image,
+ * already cropped wide by the picker. Resized to 1600 px JPEG first.
+ * Backend: POST /api/users/me/cover (multipart "file")
+ * @returns {Promise<string>} the new cover URL
+ */
+export async function uploadCoverPhoto(asset) {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+
+  const ctx = ImageManipulator.manipulate(asset.uri);
+  if (!asset.width || asset.width > COVER_WIDTH) ctx.resize({ width: COVER_WIDTH });
+  const image = await ctx.renderAsync();
+  const saved = await image.saveAsync({ compress: PHOTO_QUALITY, format: SaveFormat.JPEG });
+
+  const form = new FormData();
+  form.append('file', new File(saved.uri), 'cover.jpg');
+  const response = await fetch(`${API_URL}/users/me/cover`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) {
+    let message = '';
+    try { message = (await response.text()).replace(/^"|"$/g, ''); } catch { /* ignore */ }
+    throw new Error(message || `Couldn't upload your cover photo (${response.status})`);
+  }
+  const { coverPhotoUrl } = await response.json();
+  setCachedCover(coverPhotoUrl);
+  return coverPhotoUrl;
+}
+
+/** Remove the cover photo. Backend: DELETE /api/users/me/cover */
+export async function removeCoverPhoto() {
+  const token = await getAuthToken();
+  if (!token) throw new AuthRequiredError();
+  const response = await fetch(`${API_URL}/users/me/cover`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (response.status === 401) throw new AuthRequiredError();
+  if (!response.ok) throw new Error(`Couldn't remove your cover photo (${response.status})`);
+  setCachedCover(null);
 }
 
 /**

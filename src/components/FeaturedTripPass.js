@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+import { ticketPath } from '../utils/ticketShape';
+import useHoldPress, { HOLD_MS } from '../hooks/useHoldPress';
 import { Image } from 'expo-image';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,6 +17,15 @@ import { getItinerary, peekItinerary } from '../services/itineraryService';
 
 const PHOTO_HEIGHT = 136;
 const NOTCH = 20;
+const RADIUS = 26;
+/** The card's outline, for a tip's spotlight: its corners and its side notches. */
+export const FEATURED_TIP_SHAPE = {
+  radius: RADIUS,
+  notches: [
+    { side: 'left', at: PHOTO_HEIGHT + NOTCH / 2, r: NOTCH / 2 },
+    { side: 'right', at: PHOTO_HEIGHT + NOTCH / 2, r: NOTCH / 2 },
+  ],
+};
 const MAX_PLAN_ROWS = 2;
 const MAX_DAY_SEGMENTS = 14;
 const AVATAR = 24;
@@ -104,9 +116,18 @@ function tilesFor(trip, total) {
  * @param {string|null} imageUri
  * @param {(initialTab?: string) => void} onOpen   opens the trip (on a tab)
  * @param {object} [style]  on the outer view (e.g. no bottom margin in a stack)
+ * @param {() => void} [onLongPress]  the trip's menu (copy, edit, delete)
+ * @param {object} [cardRef]  on the card itself (e.g. for a tip to point at)
  */
-export default function FeaturedTripPass({ trip, imageUri, onOpen, style }) {
+export default function FeaturedTripPass({ trip, imageUri, onOpen, style, onLongPress, cardRef }) {
   const [failed, setFailed] = useState(false);
+  // Pressing the pass (not a tile) shrinks the whole card, frame and all
+  // (shrinking only what's inside left a thin white line of the frame over
+  // the photo), more the longer it's held, with a tick when the menu opens.
+  const hold = useHoldPress();
+  const onHold = hold.held(onLongPress);
+  // The card's size, for its notched white background.
+  const [size, setSize] = useState(null);
   const [items, setItems] = useState(() => peekItinerary(trip.id) || null);
   useEffect(() => { setFailed(false); }, [imageUri]);
   useEffect(() => {
@@ -144,9 +165,37 @@ export default function FeaturedTripPass({ trip, imageUri, onOpen, style }) {
     : `${trip.name}, next trip, starts in ${until} ${until === 1 ? 'day' : 'days'}`;
 
   return (
-    <View style={[styles.shadow, style]}>
-      <View style={styles.card}>
-        <PressScale scale={0.985} onPress={() => onOpen()} accessibilityRole="button" accessibilityLabel={a11y}>
+    <Animated.View ref={cardRef} collapsable={false} style={[styles.shadow, style, hold.style]}>
+      {/* iOS casts one shadow per view: this one's the tight contact shadow
+          under the edge (the outer view's is the soft, far one). */}
+      <View style={styles.contactShadow}>
+      <View
+        style={styles.card}
+        onLayout={(e) => {
+          const w = Math.round(e.nativeEvent.layout.width);
+          const h = Math.round(e.nativeEvent.layout.height);
+          if (!size || size.w !== w || size.h !== h) setSize({ w, h });
+        }}
+      >
+        {/* The white card, with its side notches cut out (see-through). Plain
+            white for the first frame, until its size is known. */}
+        {size ? (
+          <Svg width={size.w} height={size.h} style={styles.fill} pointerEvents="none">
+            <Path d={ticketPath(size.w, size.h, FEATURED_TIP_SHAPE)} fill={COLORS.white} />
+          </Svg>
+        ) : (
+          <View style={[styles.fill, styles.plainWhite]} pointerEvents="none" />
+        )}
+        <PressScale
+          scale={1}
+          onPress={() => onOpen()}
+          onLongPress={onHold}
+          delayLongPress={HOLD_MS}
+          onPressIn={hold.onPressIn}
+          onPressOut={hold.onPressOut}
+          accessibilityRole="button"
+          accessibilityLabel={a11y}
+        >
           {/* Photo half */}
           <View style={styles.photo}>
             {showImage ? (
@@ -257,6 +306,8 @@ export default function FeaturedTripPass({ trip, imageUri, onOpen, style }) {
                   <PressScale
                     style={styles.planIt}
                     onPress={() => onOpen('itinerary')}
+                    onLongPress={onHold}
+                    delayLongPress={HOLD_MS}
                     haptic
                     hitSlop={8}
                     accessibilityRole="button"
@@ -299,6 +350,9 @@ export default function FeaturedTripPass({ trip, imageUri, onOpen, style }) {
               scale={0.95}
               haptic
               onPress={() => onOpen(t.key)}
+              // Holding anywhere on the pass opens its menu, tiles included.
+              onLongPress={onHold}
+              delayLongPress={HOLD_MS}
               accessibilityRole="button"
               accessibilityLabel={`${t.label}, ${t.sub}`}
             >
@@ -316,28 +370,52 @@ export default function FeaturedTripPass({ trip, imageUri, onOpen, style }) {
           ))}
         </View>
       </View>
-
-      {/* Notches cut into the card's edges at the tear line. */}
-      <View style={[styles.notch, styles.notchLeft]} pointerEvents="none" />
-      <View style={[styles.notch, styles.notchRight]} pointerEvents="none" />
-    </View>
+      </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Layered for depth: a soft shadow far below (lifted off the page) and a
+  // tight, darker one right under the edge (where it meets it). The big card
+  // sits a little higher than the tickets in the list.
+  // iOS: the shadows follow what's drawn, notches included. Android's
+  // elevation would show grey through the notches, so it gets outer box
+  // shadows (drawn only outside the card), all three layers in one.
   shadow: {
-    borderRadius: 26,
-    shadowColor: '#1C2833',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 14,
-    elevation: 4,
+    borderRadius: RADIUS,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#1C2833',
+        shadowOffset: { width: 0, height: 16 },
+        shadowOpacity: 0.17,
+        shadowRadius: 24,
+      },
+      default: {
+        boxShadow: '0px 2px 3px rgba(28, 40, 51, 0.13), 0px 6px 12px rgba(28, 40, 51, 0.08), 0px 18px 32px rgba(28, 40, 51, 0.16)',
+      },
+    }),
     marginBottom: SIZES.spacing_base,
   },
+  contactShadow: {
+    borderRadius: RADIUS,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#1C2833',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3.5,
+      },
+      default: {},
+    }),
+  },
   card: {
-    borderRadius: 26,
-    backgroundColor: COLORS.white,
+    borderRadius: RADIUS,
+    // No fill: the notched white shape behind the content is the card.
     overflow: 'hidden',
+  },
+  plainWhite: {
+    backgroundColor: COLORS.white,
   },
   fill: {
     position: 'absolute',
@@ -497,16 +575,6 @@ const styles = StyleSheet.create({
     borderRadius: 1,
     backgroundColor: COLORS.border,
   },
-  notch: {
-    position: 'absolute',
-    top: PHOTO_HEIGHT,
-    width: NOTCH,
-    height: NOTCH,
-    borderRadius: NOTCH / 2,
-    backgroundColor: COLORS.backgroundWarm,
-  },
-  notchLeft: { left: -NOTCH / 2 },
-  notchRight: { right: -NOTCH / 2 },
 
   // Countdown + plan
   body: {

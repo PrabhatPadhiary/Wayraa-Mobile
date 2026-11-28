@@ -40,6 +40,7 @@ import {
   peekMyTrips,
   addTripDestination,
   removeTripPlace,
+  setTripPlaceCategory,
   removeTripDestination,
   updateDestinationDates,
   setPrimaryDestination,
@@ -58,6 +59,7 @@ import TripTicket, { TICKET_TEAR_FROM_RIGHT } from '../components/TripTicket';
 import InviteQrSheet from '../components/InviteQrSheet';
 import TornEdge from '../components/TornEdge';
 import { shareInvite } from '../components/TravellersSheet';
+import { onTripPicksSaving } from '../hooks/useTripPicks';
 import { ripTicket, RIP_FALL_AT } from '../components/TicketRipOverlay';
 import { LoaderOverlay } from '../components/WayraaLoader';
 import LiveToast, { describeTripChange, ViewerFaces } from '../components/LiveToast';
@@ -66,19 +68,20 @@ import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
 import { useTip } from '../components/Tips';
 import { useOnReconnect, loadFailureKind } from '../hooks/useNetwork';
+import { formatMoney } from '../utils/money';
 
 const HERO_HEIGHT = TRIP_HERO_HEIGHT;
 // Scroll offset where the compact top bar is fully in (same as the place page).
 const HEADER_SHOW_AT = 60;
 const SHEET_BG = COLORS.backgroundWarm; // alpine frost (60%)
 /** Trip sections, shown in the bottom bar beside the Home circle. */
-// Feather line icons: one even stroke weight, so they stay crisp and calm
-// (the active tab is shown by color and the capsule, not a filled glyph).
+// Filled Ionicons, the same set and size as the main tabs (Home, My trips…),
+// so the bar looks the same in a trip as everywhere else.
 const TRIP_TABS = [
-  { key: 'overview', label: 'Overview', icon: 'compass', iconFamily: 'feather' },
-  { key: 'itinerary', label: 'Itinerary', icon: 'calendar', iconFamily: 'feather' },
-  { key: 'budget', label: 'Budget', icon: 'credit-card', iconFamily: 'feather' },
-  { key: 'checklist', label: 'Checklist', icon: 'check-square', iconFamily: 'feather' },
+  { key: 'overview', label: 'Overview', icon: 'ticket' },
+  { key: 'itinerary', label: 'Itinerary', icon: 'calendar' },
+  { key: 'budget', label: 'Budget', icon: 'wallet' },
+  { key: 'checklist', label: 'Checklist', icon: 'clipboard' },
 ];
 // Progressive hero blur: one blur layer, masked by a vertical gradient so it
 // goes smoothly from sharp (top) to fully blurred (bottom, at the sheet edge).
@@ -194,8 +197,7 @@ function countdownInfo(trip) {
 
 function formatBudget(amount, currency) {
   if (amount == null) return null;
-  const rounded = Math.round(amount).toLocaleString();
-  return currency ? `${currency} ${rounded}` : rounded;
+  return formatMoney(amount, currency);
 }
 
 /**
@@ -300,12 +302,33 @@ export default function TripDetailScreen({ navigation, route }) {
   const [destSheet, setDestSheet] = useState(null);
   // Destination id currently being removed (shows a spinner on its row).
   // Saved-place id currently being removed (shows a spinner on its row).
-  const [removingPlaceId, setRemovingPlaceId] = useState('');
   // Saved-place ids whose thumbnail failed to load (shows the placeholder).
   const [brokenPlaceImages, setBrokenPlaceImages] = useState({});
   const [loading, setLoading] = useState(() => !peekTrip(tripId));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null); // null | 'load' | 'offline' | 'notFound'
+
+  // Places being saved in the background ("Add N places"): kept on top of
+  // whatever the server sends until they're saved, so a reload that lands
+  // first doesn't make them flicker away.
+  const pendingPicks = useRef({ adds: new Map(), removes: new Set() }); // destId -> [dto]
+  const withPending = useCallback((data) => {
+    const { adds, removes } = pendingPicks.current;
+    if (!data || (!adds.size && !removes.size)) return data;
+    return {
+      ...data,
+      destinations: (data.destinations || []).map((d) => {
+        const extra = (adds.get(d.id) || []).filter((dto) => !(d.places || []).some((p) => p.placeId === dto.placeId));
+        return {
+          ...d,
+          places: [
+            ...(d.places || []).filter((p) => !removes.has(p.id)),
+            ...extra.map((dto) => ({ ...dto, id: `pending-${dto.placeId}`, createdAt: new Date().toISOString() })),
+          ],
+        };
+      }),
+    };
+  }, []);
 
   const loadTrip = useCallback(async () => {
     setError(null);
@@ -318,7 +341,7 @@ export default function TripDetailScreen({ navigation, route }) {
         const mine = (data.members || []).find((m) => me?.id && m.userId === me.id);
         if (mine?.role) data.myRole = mine.role;
       }
-      setTrip(data);
+      setTrip(withPending(data));
       setBrokenPlaceImages({});
     } catch (e) {
       if (e instanceof AuthRequiredError) {
@@ -335,9 +358,33 @@ export default function TripDetailScreen({ navigation, route }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [tripId]);
+  }, [tripId, withPending]);
   // Back online: reload what may have failed.
   useOnReconnect(loadTrip);
+
+  // Places chosen with "Add N places" show here at once (saving runs in the
+  // background, with a small spinner on each until it's saved); once saved,
+  // the trip reloads with the real entries, and any that failed are noted.
+  useEffect(() => onTripPicksSaving((event) => {
+    if (String(event.tripId) !== String(tripId)) return;
+    const pending = pendingPicks.current;
+    if (event.type === 'started') {
+      pending.adds.set(event.destId, [...(pending.adds.get(event.destId) || []), ...event.adds]);
+      event.removes.forEach((id) => pending.removes.add(id));
+      setTrip((prev) => withPending(prev));
+      return;
+    }
+    // Saved (or not): back to what the server says.
+    pending.adds.delete(event.destId);
+    pending.removes.clear();
+    loadTrip();
+    if (event.failed) {
+      showAlert(
+        `Couldn't save ${event.failed} ${event.failed === 1 ? 'place' : 'places'}`,
+        event.error || 'Please try adding them again.',
+      );
+    }
+  }), [tripId, loadTrip, withPending]);
 
   // Reload on focus so places added elsewhere show up when returning here.
   useFocusEffect(
@@ -589,6 +636,8 @@ export default function TripDetailScreen({ navigation, route }) {
   // The trip's traveller count can exceed the joined members (people who
   // haven't signed up), so draw one circle per traveller, not per member.
   const travellerCount = Math.max(members.length, trip?.travelersCount || 1);
+  // Planned seats nobody has taken yet ("1 yet to join").
+  const openSeats = travellerCount - members.length;
   // Travellers with the trip open right now (live): green dot + "Satish is viewing now".
   const viewingIds = new Set(viewers.map((v) => v.userId));
   const hereNames = viewers.map((v) => (v.name || 'Someone').split(' ')[0]);
@@ -825,29 +874,72 @@ export default function TripDetailScreen({ navigation, route }) {
         {
           text: 'Remove',
           style: 'destructive',
+          // Instant: it goes from the list now and the server catches up;
+          // if that fails it comes back where it was, with a note.
           onPress: async () => {
-            setRemovingPlaceId(place.id);
+            if (String(place.id).startsWith('pending-')) return; // still being added
+            const destId = (trip?.destinations || []).find((d) => (d.places || []).some((p) => p.id === place.id))?.id;
+            setTrip((prev) => prev && ({
+              ...prev,
+              destinations: (prev.destinations || []).map((d) => ({
+                ...d,
+                places: (d.places || []).filter((p) => p.id !== place.id),
+              })),
+            }));
             try {
               await removeTripPlace(place.id);
+            } catch (e) {
               setTrip((prev) => prev && ({
                 ...prev,
-                destinations: (prev.destinations || []).map((d) => ({
-                  ...d,
-                  places: (d.places || []).filter((p) => p.id !== place.id),
-                })),
+                destinations: (prev.destinations || []).map((d) => (d.id === destId && !(d.places || []).some((p) => p.id === place.id)
+                  ? { ...d, places: [...(d.places || []), place] }
+                  : d)),
               }));
-            } catch (e) {
               const message = e instanceof AuthRequiredError
                 ? 'Sign in to edit this trip.'
                 : (e?.message || 'Please try again.');
               showAlert('Could not remove place', message);
-            } finally {
-              setRemovingPlaceId('');
             }
           },
         },
       ]
     );
+  };
+
+  // A saved spot's options: move it to another list (a friend's flat
+  // guessed as an activity), or take it off the trip.
+  const MOVE_TARGETS = [
+    { category: 'stay', section: 'stays', label: 'Stays' },
+    { category: 'food', section: 'food', label: 'Food' },
+    { category: 'activity', section: 'activities', label: 'Activities' },
+  ];
+  const movePlace = async (place, category) => {
+    const setCategory = (value) => setTrip((prev) => prev && ({
+      ...prev,
+      destinations: (prev.destinations || []).map((d) => ({
+        ...d,
+        places: (d.places || []).map((p) => (p.id === place.id ? { ...p, category: value } : p)),
+      })),
+    }));
+    // Instant; back where it was if the server says no.
+    setCategory(category);
+    try {
+      await setTripPlaceCategory(place.id, category);
+    } catch (e) {
+      setCategory(place.category);
+      const message = e instanceof AuthRequiredError ? 'Sign in to edit this trip.' : (e?.message || 'Please try again.');
+      showAlert('Could not move it', message);
+    }
+  };
+  const openSpotOptions = (place) => {
+    const current = sectionKeyFor(place.category);
+    showAlert(place.placeName, null, [
+      ...MOVE_TARGETS
+        .filter((t) => t.section !== current)
+        .map((t) => ({ text: `Move to ${t.label}`, onPress: () => movePlace(place, t.category) })),
+      { text: 'Remove from trip', style: 'destructive', onPress: () => confirmRemovePlace(place) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const makePrimary = async (dest) => {
@@ -913,9 +1005,6 @@ export default function TripDetailScreen({ navigation, route }) {
         tripName: trip.name,
         // Already-saved places, so the picker can show its ticks immediately.
         saved: (addTarget.places || []).map((p) => [p.placeId, p.id]),
-        // What was on the stop when adding started, so "Done · 3 added"
-        // counts only this visit (kept as it's passed from screen to screen).
-        initial: (addTarget.places || []).map((p) => p.placeId),
       },
     });
   };
@@ -1107,27 +1196,73 @@ export default function TripDetailScreen({ navigation, route }) {
   ].filter(Boolean).join(', ');
   const renderRemoveSpot = (place, style, iconSize) => {
     if (!canEdit) return null;
-    if (removingPlaceId === place.id) {
+    // Still being added (saved in the background): a small spinner instead.
+    if (String(place.id).startsWith('pending-')) {
       return (
         <View style={style}>
-          <ActivityIndicator size="small" color={COLORS.error} />
+          <ActivityIndicator size="small" color={COLORS.textMuted} />
         </View>
       );
     }
     return (
       <TouchableOpacity
         style={style}
-        onPress={() => confirmRemovePlace(place)}
-        disabled={!!removingPlaceId}
+        onPress={() => openSpotOptions(place)}
         activeOpacity={0.7}
         accessibilityRole="button"
-        accessibilityLabel={`Remove ${place.placeName} from this trip`}
+        accessibilityLabel={`Options for ${place.placeName}: move to another list or remove`}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <Ionicons name="trash-outline" size={iconSize} color={COLORS.error} />
+        <Ionicons name="ellipsis-horizontal" size={iconSize} color={COLORS.textSecondary} />
       </TouchableOpacity>
     );
   };
+
+  // One saved spot's row (Saved spots list).
+  const renderSpotRow = (place, index) => {
+    const { locationLine, section, thumb } = spotInfo(place);
+    return (
+      <FadeInCard key={place.id} index={index}>
+        <TouchableOpacity
+          style={styles.placeRow}
+          onPress={() => openPlace(place)}
+          activeOpacity={0.9}
+          accessibilityRole="button"
+          accessibilityLabel={spotLabel(place, locationLine)}
+        >
+          {thumb ? (
+            <Image
+              source={{ uri: thumb }}
+              style={styles.placeThumb}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={200}
+              onError={() => setBrokenPlaceImages((prev) => ({ ...prev, [place.id]: true }))}
+            />
+          ) : (
+            <View style={[styles.placeThumb, styles.placeImagePlaceholder]}>
+              <Ionicons name={section?.icon || 'bookmark-outline'} size={20} color={COLORS.textMuted} />
+            </View>
+          )}
+          <View style={styles.placeRowBody}>
+            <Text style={styles.placeRowName} numberOfLines={1}>{place.placeName}</Text>
+            {!!locationLine && (
+              <Text style={styles.placeRowArea} numberOfLines={1}>{locationLine}</Text>
+            )}
+            {place.rating > 0 && (
+              <RatingRow rating={place.rating} reviews={place.userRatingsTotal} style={styles.placeRowRating} />
+            )}
+          </View>
+          {renderRemoveSpot(place, styles.removePlaceButton, 17)}
+        </TouchableOpacity>
+      </FadeInCard>
+    );
+  };
+  // The All tab groups its rows under Stays, Food and Activities.
+  const spotGroups = PLACE_FILTERS
+    .filter((f) => f.key !== 'all')
+    .map((f) => ({ ...f, places: shownPlaces.filter((p) => sectionKeyFor(p.category) === f.key) }))
+    .filter((g) => g.places.length > 0);
 
   // The live toast sits under the header on Budget/Checklist, under the hero buttons elsewhere.
   const liveToastTop = activeTab === 'budget' || activeTab === 'checklist'
@@ -1331,7 +1466,7 @@ export default function TripDetailScreen({ navigation, route }) {
               onPress={() => setTravellersOpen(true)}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel={`${travellerCount} ${travellerCount === 1 ? 'traveller' : 'travellers'}${canInvite ? ', invite friends' : ''}`}
+              accessibilityLabel={`${travellerCount} ${travellerCount === 1 ? 'traveller' : 'travellers'}${openSeats > 0 ? `, ${openSeats} yet to join` : ''}${canInvite ? ', invite friends' : ''}`}
             >
               <View style={styles.avatarStack}>
                 {Array.from({ length: Math.min(travellerCount, 4) }, (_, i) => {
@@ -1372,9 +1507,12 @@ export default function TripDetailScreen({ navigation, route }) {
                     <View style={styles.hereRowDot} />
                     <Text style={styles.hereText} numberOfLines={1}>{hereNow}</Text>
                   </View>
-                ) : members.length > 0 && (
+                ) : (members.length > 0 || openSeats > 0) && (
                   <Text style={styles.travellersNames} numberOfLines={1}>
-                    {members.map((m) => (m.name || '').split(' ')[0]).filter(Boolean).join(', ')}
+                    {[
+                      members.map((m) => (m.name || '').split(' ')[0]).filter(Boolean).join(', '),
+                      openSeats > 0 ? `${openSeats} yet to join` : null,
+                    ].filter(Boolean).join(' · ')}
                   </Text>
                 )}
               </View>
@@ -1699,12 +1837,21 @@ export default function TripDetailScreen({ navigation, route }) {
                   <Text style={styles.emptyTitle}>No {activeSection.noun} yet</Text>
                   <Text style={styles.emptySubtitle}>
                     {canEdit
-                      ? `Tap Add to find ${activeSection.noun} for this trip.`
+                      ? `Find ${addSection.noun} in ${addTarget?.name || 'this stop'} and add them to the trip.`
                       : 'Nothing has been saved here yet.'}
                   </Text>
+                  {/* Short on purpose: the stop is already picked above, and a
+                      long stop name in the button wrapped onto two lines. */}
                   {canEdit && !!addTarget?.googlePlaceId && (
-                    <TouchableOpacity style={styles.emptyButton} onPress={openAddPlaces} activeOpacity={0.9}>
-                      <Text style={styles.emptyButtonText}>Add {addSection.noun} in {addTarget.name}</Text>
+                    <TouchableOpacity
+                      style={styles.emptyButton}
+                      onPress={openAddPlaces}
+                      activeOpacity={0.9}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add ${addSection.noun} in ${addTarget.name}`}
+                    >
+                      <Ionicons name="add" size={18} color={COLORS.white} />
+                      <Text style={styles.emptyButtonText} numberOfLines={1}>Add {addSection.noun}</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -1717,45 +1864,21 @@ export default function TripDetailScreen({ navigation, route }) {
                   scrollEnabled={tabPlaces.length > SPOTS_LIST_PREVIEW}
                   showsVerticalScrollIndicator={tabPlaces.length > SPOTS_LIST_PREVIEW}
                 >
-                  {tabPlaces.map((place, index) => {
-                    const { locationLine, section, thumb } = spotInfo(place);
-                    return (
-                      <FadeInCard key={place.id} index={index}>
-                        <TouchableOpacity
-                          style={styles.placeRow}
-                          onPress={() => openPlace(place)}
-                          activeOpacity={0.9}
-                          accessibilityRole="button"
-                          accessibilityLabel={spotLabel(place, locationLine)}
-                        >
-                          {thumb ? (
-                            <Image
-                              source={{ uri: thumb }}
-                              style={styles.placeThumb}
-                              contentFit="cover"
-                              cachePolicy="memory-disk"
-                              transition={200}
-                              onError={() => setBrokenPlaceImages((prev) => ({ ...prev, [place.id]: true }))}
-                            />
-                          ) : (
-                            <View style={[styles.placeThumb, styles.placeImagePlaceholder]}>
-                              <Ionicons name={section?.icon || 'bookmark-outline'} size={20} color={COLORS.textMuted} />
-                            </View>
-                          )}
-                          <View style={styles.placeRowBody}>
-                            <Text style={styles.placeRowName} numberOfLines={1}>{place.placeName}</Text>
-                            {!!locationLine && (
-                              <Text style={styles.placeRowArea} numberOfLines={1}>{locationLine}</Text>
-                            )}
-                            {place.rating > 0 && (
-                              <RatingRow rating={place.rating} reviews={place.userRatingsTotal} style={styles.placeRowRating} />
-                            )}
+                  {placeTab === 'all'
+                    ? (() => {
+                      let index = 0;
+                      return spotGroups.map((g, gi) => (
+                        <View key={g.key} style={styles.spotGroup}>
+                          <View style={[styles.spotGroupHeading, gi === 0 && { marginTop: 0 }]} accessibilityRole="header">
+                            <Ionicons name={g.icon} size={14} color={COLORS.textMuted} />
+                            <Text style={styles.spotGroupTitle}>{g.label}</Text>
+                            <Text style={styles.spotGroupCount}>{g.places.length}</Text>
                           </View>
-                          {renderRemoveSpot(place, styles.removePlaceButton, 17)}
-                        </TouchableOpacity>
-                      </FadeInCard>
-                    );
-                  })}
+                          {g.places.map((place) => renderSpotRow(place, index++))}
+                        </View>
+                      ));
+                    })()
+                    : tabPlaces.map((place, index) => renderSpotRow(place, index))}
                 </ScrollView>
               )}
             </View>
@@ -1763,7 +1886,7 @@ export default function TripDetailScreen({ navigation, route }) {
 
           {/* Budget + Itinerary: compact side-by-side tiles; tap to open the tab. */}
           {(() => {
-            const showBudget = trip.totalBudget > 0 || isOwner || spentTotal > 0;
+            const showBudget = trip.totalBudget > 0 || canEdit || spentTotal > 0;
             const planDays = tripDays(trip, sortedDestinations);
             const showPlan = planDays.length > 0;
             if (!showBudget && !showPlan) return null;
@@ -1774,7 +1897,7 @@ export default function TripDetailScreen({ navigation, route }) {
               const spent = spentTotal || 0;
               const ratio = total > 0 ? spent / total : 0;
               const barColor = ratio >= 1 ? COLORS.error : ratio >= 0.8 ? '#C94016' : '#327956';
-              const setUp = !total && isOwner;
+              const setUp = !total && canEdit;
               budgetTile = (
                 <TouchableOpacity
                   style={[styles.card, styles.tile]}
@@ -2242,16 +2365,16 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   spotFilters: {
-    gap: 6,
+    gap: SIZES.spacing_sm,
     paddingTop: SIZES.spacing_md,
     paddingBottom: SIZES.spacing_sm,
   },
   spotFilter: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: SIZES.spacing_md,
-    paddingVertical: 5,
+    gap: 6,
+    paddingHorizontal: SIZES.spacing_base,
+    paddingVertical: 8,
     borderRadius: SIZES.radius_full,
     backgroundColor: COLORS.cardBackground,
   },
@@ -2259,7 +2382,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
   },
   spotFilterText: {
-    fontSize: SIZES.sm,
+    fontSize: SIZES.md,
     fontFamily: 'Poppins_500Medium',
     color: COLORS.textSecondary,
   },
@@ -2268,7 +2391,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Poppins_600SemiBold',
   },
   spotFilterCount: {
-    fontSize: SIZES.xs,
+    fontSize: SIZES.sm,
     fontFamily: 'Poppins_600SemiBold',
     color: COLORS.textMuted,
   },
@@ -2389,6 +2512,29 @@ const styles = StyleSheet.create({
   placeRows: {
     gap: SIZES.spacing_sm,
   },
+  // All tab: rows under a small heading per kind.
+  spotGroup: {
+    gap: SIZES.spacing_sm,
+  },
+  spotGroupHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: SIZES.spacing_sm,
+    paddingHorizontal: 4,
+  },
+  spotGroupTitle: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_600SemiBold',
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  spotGroupCount: {
+    fontSize: SIZES.sm,
+    fontFamily: 'Poppins_500Medium',
+    color: COLORS.textMuted,
+  },
   placeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2424,7 +2570,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#FCF4F3',
+    backgroundColor: COLORS.cardBackground,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2738,6 +2884,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginTop: SIZES.spacing_lg,
     backgroundColor: COLORS.accent,
     paddingHorizontal: SIZES.spacing_xl,

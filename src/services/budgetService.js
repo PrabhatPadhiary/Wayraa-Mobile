@@ -9,10 +9,14 @@ import { AuthRequiredError, ForbiddenError } from './errors';
  * Expenses: /api/trips/{tripId}/expenses. Everyone on the trip can read;
  * owners can change any expense, editors only the ones they paid.
  * Expense shape: { id, title, amount, category, date, paidByMemberId,
- *   paidByName, notes, createdAt, updatedAt }
+ *   paidByName, notes, splitWith: userId[], splitMode, splitValues,
+ *   shares: [{ userId, amount }], createdAt, updatedAt }
+ * `splitMode`: 'equal' (between `splitWith`), 'amount' or 'percent' (each
+ * person's value in `splitValues`: [{ userId, value }]). `shares` is what
+ * each person's part comes to, in money.
  * `category` is one of: stay | food | activity | transport | other.
  *
- * Budget: PUT /api/Trips/{id}/budget (owner only).
+ * Budget: PUT /api/Trips/{id}/budget (owners and editors).
  */
 
 function expensesUrl(tripId) {
@@ -47,6 +51,9 @@ function expenseBody(expense) {
     paidByMemberId: expense.paidByMemberId,
     paidByName: expense.paidByName,
     notes: expense.notes || null,
+    splitWith: expense.splitWith?.length ? expense.splitWith : null,
+    splitMode: expense.splitMode || null,
+    splitValues: expense.splitValues?.length ? expense.splitValues : null,
   });
 }
 
@@ -101,7 +108,7 @@ export async function deleteExpense(tripId, expenseId) {
   return true;
 }
 
-/** Set the trip's total budget and currency (owner only). Returns { totalBudget, currency }. */
+/** Set the trip's total budget and currency (owners and editors). Returns { totalBudget, currency }. */
 export async function setTripBudget(tripId, { totalBudget, currency }) {
   const response = await fetch(`${API_URL}/Trips/${encodeURIComponent(tripId)}/budget`, {
     method: 'PUT',
@@ -109,5 +116,49 @@ export async function setTripBudget(tripId, { totalBudget, currency }) {
     body: JSON.stringify({ totalBudget, currency }),
   });
   if (!response.ok) throw await toError(response, 'Could not save the budget.');
+  return response.json();
+}
+
+// ── Balances (who owes whom) ─────────────────────────────────────────────
+
+/**
+ * { people: [{ userId, name, photoUrl, onTrip, paid, share, net }],
+ *   transfers: [{ fromUserId, toUserId, amount }],
+ *   settlements: [{ id, fromUserId, toUserId, amount, date, createdByUserId }] }
+ * `net` > 0: they're owed money; < 0: they owe. `transfers` is the fewest
+ * payments that would settle everyone up.
+ */
+export function getBalances(tripId) {
+  return cachedFetch(CacheKeys.balances(tripId), () => fetchBalances(tripId));
+}
+
+export function peekBalances(tripId) {
+  return peekCache(CacheKeys.balances(tripId));
+}
+
+async function fetchBalances(tripId) {
+  const response = await fetch(`${expensesUrl(tripId)}/balances`, { headers: await authHeaders() });
+  if (!response.ok) throw await toError(response, 'Could not load balances.');
+  return response.json();
+}
+
+/** Record a repayment ("Riya paid Arjun ₹600"). Resolves to the new balances. */
+export async function settleUp(tripId, { fromUserId, toUserId, amount }) {
+  const response = await fetch(`${expensesUrl(tripId)}/settlements`, {
+    method: 'POST',
+    headers: await authHeaders(true),
+    body: JSON.stringify({ fromUserId, toUserId, amount }),
+  });
+  if (!response.ok) throw await toError(response, 'Could not record that.');
+  return response.json();
+}
+
+/** Undo a repayment. Resolves to the new balances. */
+export async function deleteSettlement(tripId, settlementId) {
+  const response = await fetch(`${expensesUrl(tripId)}/settlements/${encodeURIComponent(settlementId)}`, {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
+  if (!response.ok) throw await toError(response, 'Could not undo that.');
   return response.json();
 }

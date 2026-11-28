@@ -92,6 +92,27 @@ export default function CreateTripScreen({ navigation, route }) {
   // Missing name: shown under the name field (red border), which gets focus.
   const [nameMissing, setNameMissing] = useState(false);
   const nameRef = useRef(null);
+  // The description grows as you type: keep its last line above the keyboard.
+  const scrollRef = useRef(null);
+  const scrollY = useRef(0);
+  const descriptionRef = useRef(null);
+  const keepDescriptionVisible = useCallback(() => {
+    const scroll = scrollRef.current;
+    const input = descriptionRef.current;
+    if (!scroll || !input?.isFocused?.()) return;
+    // After the new line has been laid out.
+    requestAnimationFrame(() => {
+      scroll.measureInWindow((sx, sy, sw, sh) => {
+        input.measureInWindow((ix, iy, iw, ih) => {
+          // Whichever is higher: the bottom of the scroll area or the keyboard's top.
+          const keyboardTop = Keyboard.metrics()?.screenY;
+          const visibleBottom = keyboardTop ? Math.min(sy + sh, keyboardTop) : sy + sh;
+          const overflow = iy + ih + SIZES.spacing_base - visibleBottom;
+          if (overflow > 0) scroll.scrollTo({ y: scrollY.current + overflow, animated: true });
+        });
+      });
+    });
+  }, []);
 
   // Anything changed from a fresh form? (Only then is there something to save or lose.)
   const dirty = dest.placeId !== initialPlaceId.current
@@ -103,6 +124,11 @@ export default function CreateTripScreen({ navigation, route }) {
   // destinations' unfinished trips are left alone.
   const draftId = useRef(route.params?.resumeDraftId || newDraftId());
   const clearDraft = () => clearTripDraft(draftId.current);
+  // Set while the trip is being created, and for good once it is: no more
+  // saving the draft. (The destination's photo can arrive mid-creation and
+  // count as a change; its save would then land after the draft was cleared
+  // and bring back "Continue your trip" for a trip that exists.)
+  const noMoreSaves = useRef(false);
   const [draftChecked, setDraftChecked] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -169,7 +195,9 @@ export default function CreateTripScreen({ navigation, route }) {
   useEffect(() => {
     if (!draftChecked) return undefined;
     if (!dest?.name) return undefined; // nothing to plan around yet
+    if (noMoreSaves.current) return undefined;
     const t = setTimeout(() => {
+      if (noMoreSaves.current) return;
       saveTripDraft({ id: draftId.current, dest, tripName, startDate, endDate, travelers, description, addPlace });
     }, 400);
     return () => clearTimeout(t);
@@ -290,6 +318,7 @@ export default function CreateTripScreen({ navigation, route }) {
     const endIso = endDate || null;
 
     setSubmitting(true);
+    noMoreSaves.current = true;
     // The boarding pass starts printing straight away (in place of a loader)
     // and always plays in full; it waits near the end until the trip is saved.
     let settle;
@@ -363,6 +392,7 @@ export default function CreateTripScreen({ navigation, route }) {
       await printed;
       if (placeNote) showAlert('Trip created', placeNote);
     } catch (e) {
+      noMoreSaves.current = false; // not created: keep saving what you change
       settle.reject(e); // closes the print
       await printed;
       if (e instanceof AuthRequiredError) {
@@ -422,11 +452,13 @@ export default function CreateTripScreen({ navigation, route }) {
         behavior="padding"
       >
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={{ paddingBottom: bottomPad }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
           onScroll={(e) => {
+            scrollY.current = e.nativeEvent.contentOffset.y;
             const past = e.nativeEvent.contentOffset.y > heroHeight - insets.top - 40;
             if (past !== pastHero) setPastHero(past);
           }}
@@ -566,9 +598,12 @@ export default function CreateTripScreen({ navigation, route }) {
             Description <Text style={styles.optional}>(optional)</Text>
           </Text>
           <TextInput
+            ref={descriptionRef}
             style={[styles.input, styles.multiline]}
             value={description}
             onChangeText={setDescription}
+            onContentSizeChange={keepDescriptionVisible}
+            onFocus={() => setTimeout(keepDescriptionVisible, 300)}
             placeholder="What's the plan? e.g. Beaches, seafood and a day trip to the islands"
             placeholderTextColor={COLORS.textMuted}
             multiline
@@ -759,6 +794,8 @@ const styles = StyleSheet.create({
   },
   multiline: {
     minHeight: 64,
+    // Past about six lines it scrolls inside itself instead of growing.
+    maxHeight: 160,
     textAlignVertical: 'top',
   },
   optional: {

@@ -44,6 +44,7 @@ import { cloudinarySized, IMAGE_WIDTH } from '../utils/cloudinary';
 import RefreshSpinner from '../components/RefreshSpinner';
 import useHideTabBarOnScroll from '../hooks/useHideTabBarOnScroll';
 import { useOnReconnect, loadFailureKind } from '../hooks/useNetwork';
+import { formatMoney } from '../utils/money';
 
 const PHOTO_HEIGHT = 340;
 const PLACE_ICONS = { food: 'coffee', stay: 'home', attraction: 'camera', other: 'map-pin' };
@@ -480,7 +481,7 @@ export default function JournalDetailScreen({ navigation, route }) {
   const facts = [
     when && { icon: 'calendar', text: when },
     journal.travelersCount && { icon: 'users', text: `${journal.travelersCount} ${journal.travelersCount === 1 ? 'traveller' : 'travellers'}` },
-    journal.budget && { icon: 'credit-card', text: `${journal.currency ? `${journal.currency} ` : ''}${Math.round(journal.budget).toLocaleString()}` },
+    journal.budget && { icon: 'credit-card', text: formatMoney(journal.budget, journal.currency) },
   ].filter(Boolean);
   const paragraphs = (journal.body || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
 
